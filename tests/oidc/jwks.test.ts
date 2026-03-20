@@ -4,6 +4,10 @@ import { MemoryKeyRepository } from "../../src/adapters/db/memory/memory-key-rep
 import { MemoryTenantRepository } from "../../src/adapters/db/memory/memory-tenant-repository";
 import { createApp } from "../../src/app/app";
 
+interface JwksResponse {
+  keys: Array<Record<string, unknown>>;
+}
+
 const tenantRepository = new MemoryTenantRepository([
   {
     id: "tenant_acme",
@@ -79,7 +83,7 @@ describe("OIDC JWKS", () => {
     const response = await app.request("https://idp.example.test/t/acme/jwks.json");
 
     expect(response.status).toBe(200);
-    const body = await response.json();
+    const body = (await response.json()) as JwksResponse;
 
     expect(body.keys).toHaveLength(1);
     expect(body.keys[0]).toMatchObject({

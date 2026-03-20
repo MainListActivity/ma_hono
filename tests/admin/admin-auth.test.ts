@@ -4,6 +4,10 @@ import { MemoryAdminRepository } from "../../src/adapters/db/memory/memory-admin
 import { MemoryTenantRepository } from "../../src/adapters/db/memory/memory-tenant-repository";
 import { createApp } from "../../src/app/app";
 
+interface AdminLoginResponse {
+  session_token: string;
+}
+
 describe("admin auth and management api", () => {
   it("allows a whitelist admin to log in and create a tenant", async () => {
     const tenantRepository = new MemoryTenantRepository();
@@ -29,7 +33,7 @@ describe("admin auth and management api", () => {
     });
 
     expect(loginResponse.status).toBe(200);
-    const loginBody = await loginResponse.json();
+    const loginBody = (await loginResponse.json()) as AdminLoginResponse;
 
     expect(loginBody.session_token).toBeTypeOf("string");
 

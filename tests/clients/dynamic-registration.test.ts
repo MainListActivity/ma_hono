@@ -4,6 +4,13 @@ import { MemoryClientRepository } from "../../src/adapters/db/memory/memory-clie
 import { MemoryTenantRepository } from "../../src/adapters/db/memory/memory-tenant-repository";
 import { createApp } from "../../src/app/app";
 
+interface DynamicClientRegistrationResponse {
+  client_id: string;
+  client_secret: string | null;
+  registration_access_token: string;
+  registration_client_uri: string;
+}
+
 const tenantRepository = new MemoryTenantRepository([
   {
     id: "tenant_acme",
@@ -58,7 +65,7 @@ describe("Dynamic Client Registration", () => {
     });
 
     expect(response.status).toBe(201);
-    const body = await response.json();
+    const body = (await response.json()) as DynamicClientRegistrationResponse;
 
     expect(body.client_id).toBeTypeOf("string");
     expect(body.client_secret).toBeTypeOf("string");
@@ -152,7 +159,7 @@ describe("Dynamic Client Registration", () => {
     });
 
     expect(response.status).toBe(201);
-    const body = await response.json();
+    const body = (await response.json()) as DynamicClientRegistrationResponse;
 
     expect(body.registration_client_uri).toBe(
       `https://login.acme.test/connect/register/${body.client_id}`
