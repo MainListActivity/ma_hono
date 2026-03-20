@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { MemoryAuditRepository } from "../../src/adapters/db/memory/memory-audit-repository";
 import { MemoryClientRepository } from "../../src/adapters/db/memory/memory-client-repository";
 import { MemoryTenantRepository } from "../../src/adapters/db/memory/memory-tenant-repository";
 import { createApp } from "../../src/app/app";
@@ -41,7 +42,9 @@ const tenantRepository = new MemoryTenantRepository([
 describe("Dynamic Client Registration", () => {
   it("registers a client with a valid management credential and stores only secret hashes", async () => {
     const clientRepository = new MemoryClientRepository();
+    const auditRepository = new MemoryAuditRepository();
     const app = createApp({
+      auditRepository,
       clientRepository,
       managementApiToken: "manage-acme",
       platformHost: "idp.example.test",
@@ -79,6 +82,9 @@ describe("Dynamic Client Registration", () => {
     expect(storedClient).not.toBeNull();
     expect(storedClient?.clientSecretHash).not.toBe(body.client_secret);
     expect(storedClient?.registrationAccessTokenHash).not.toBe(body.registration_access_token);
+    expect(auditRepository.listEvents().map((event) => event.eventType)).toEqual([
+      "oidc.client.registered"
+    ]);
   });
 
   it("rejects registration without a valid management credential", async () => {

@@ -2,6 +2,8 @@ import { and, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 
+import type { AuditRepository } from "../../../domain/audit/repository";
+import type { AuditEvent } from "../../../domain/audit/types";
 import type { AdminRepository } from "../../../domain/admin-auth/repository";
 import type { AdminSession, AdminUser } from "../../../domain/admin-auth/types";
 import type { ClientRepository } from "../../../domain/clients/repository";
@@ -14,6 +16,7 @@ import type { Tenant, TenantIssuer } from "../../../domain/tenants/types";
 import {
   adminSessions,
   adminUsers,
+  auditEvents,
   oidcClients,
   signingKeys,
   tenantIssuers,
@@ -46,31 +49,33 @@ class DrizzleTenantRepository implements TenantRepository {
   async create(tenant: Tenant): Promise<void> {
     const now = new Date();
 
-    await this.db.insert(tenants).values({
-      id: tenant.id,
-      slug: tenant.slug,
-      displayName: tenant.displayName,
-      status: tenant.status,
-      createdAt: now,
-      updatedAt: now
-    });
+    await this.db.transaction(async (tx) => {
+      await tx.insert(tenants).values({
+        id: tenant.id,
+        slug: tenant.slug,
+        displayName: tenant.displayName,
+        status: tenant.status,
+        createdAt: now,
+        updatedAt: now
+      });
 
-    if (tenant.issuers.length > 0) {
-      await this.db.insert(tenantIssuers).values(
-        tenant.issuers.map((issuer) => ({
-          id: issuer.id,
-          tenantId: tenant.id,
-          issuerType: issuer.issuerType,
-          issuerUrl: issuer.issuerUrl,
-          domain: issuer.domain,
-          isPrimary: issuer.isPrimary,
-          verificationStatus: issuer.verificationStatus,
-          verifiedAt: issuer.verificationStatus === "verified" ? now : null,
-          createdAt: now,
-          updatedAt: now
-        }))
-      );
-    }
+      if (tenant.issuers.length > 0) {
+        await tx.insert(tenantIssuers).values(
+          tenant.issuers.map((issuer) => ({
+            id: issuer.id,
+            tenantId: tenant.id,
+            issuerType: issuer.issuerType,
+            issuerUrl: issuer.issuerUrl,
+            domain: issuer.domain,
+            isPrimary: issuer.isPrimary,
+            verificationStatus: issuer.verificationStatus,
+            verifiedAt: issuer.verificationStatus === "verified" ? now : null,
+            createdAt: now,
+            updatedAt: now
+          }))
+        );
+      }
+    });
   }
 
   async findBySlug(slug: string): Promise<Tenant | null> {
@@ -235,6 +240,24 @@ class DrizzleAdminRepository implements AdminRepository {
   }
 }
 
+class DrizzleAuditRepository implements AuditRepository {
+  constructor(private readonly db: ReturnType<typeof drizzle>) {}
+
+  async record(event: AuditEvent): Promise<void> {
+    await this.db.insert(auditEvents).values({
+      id: event.id,
+      actorType: event.actorType,
+      actorId: event.actorId,
+      tenantId: event.tenantId,
+      eventType: event.eventType,
+      targetType: event.targetType,
+      targetId: event.targetId,
+      payload: event.payload,
+      occurredAt: new Date(event.occurredAt)
+    });
+  }
+}
+
 export const createRuntimeRepositories = async (config: RuntimeConfig) => {
   const sql = postgres(config.databaseUrl, {
     max: 1,
@@ -244,6 +267,7 @@ export const createRuntimeRepositories = async (config: RuntimeConfig) => {
     schema: {
       adminSessions,
       adminUsers,
+      auditEvents,
       oidcClients,
       signingKeys,
       tenantIssuers,
@@ -253,6 +277,7 @@ export const createRuntimeRepositories = async (config: RuntimeConfig) => {
 
   return {
     adminRepository: new DrizzleAdminRepository(db),
+    auditRepository: new DrizzleAuditRepository(db),
     clientRepository: new DrizzleClientRepository(db),
     keyRepository: new DrizzleKeyRepository(db),
     tenantRepository: new DrizzleTenantRepository(db),

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { MemoryAuditRepository } from "../../src/adapters/db/memory/memory-audit-repository";
 import { MemoryAdminRepository } from "../../src/adapters/db/memory/memory-admin-repository";
 import { MemoryTenantRepository } from "../../src/adapters/db/memory/memory-tenant-repository";
 import { createApp } from "../../src/app/app";
@@ -14,10 +15,12 @@ describe("admin auth and management api", () => {
     const adminRepository = new MemoryAdminRepository({
       adminUsers: [{ email: "admin@example.test", id: "admin_1", status: "active" }]
     });
+    const auditRepository = new MemoryAuditRepository();
     const app = createApp({
       adminBootstrapPassword: "bootstrap-secret",
       adminWhitelist: ["admin@example.test"],
       adminRepository,
+      auditRepository,
       platformHost: "idp.example.test",
       tenantRepository
     });
@@ -60,6 +63,10 @@ describe("admin auth and management api", () => {
 
     expect(tenant).not.toBeNull();
     expect(tenant?.displayName).toBe("Acme");
+    expect(auditRepository.listEvents().map((event) => event.eventType)).toEqual([
+      "admin.login.succeeded",
+      "tenant.created"
+    ]);
   });
 
   it("rejects a non-whitelist admin login", async () => {
@@ -85,6 +92,34 @@ describe("admin auth and management api", () => {
     });
 
     expect(loginResponse.status).toBe(403);
+  });
+
+  it("writes an audit event for failed admin login attempts", async () => {
+    const auditRepository = new MemoryAuditRepository();
+    const app = createApp({
+      adminBootstrapPassword: "bootstrap-secret",
+      adminWhitelist: ["admin@example.test"],
+      adminRepository: new MemoryAdminRepository(),
+      auditRepository,
+      platformHost: "idp.example.test",
+      tenantRepository: new MemoryTenantRepository()
+    });
+
+    const loginResponse = await app.request("https://idp.example.test/admin/login", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({
+        email: "not-allowed@example.test",
+        password: "bootstrap-secret"
+      })
+    });
+
+    expect(loginResponse.status).toBe(403);
+    expect(auditRepository.listEvents().map((event) => event.eventType)).toEqual([
+      "admin.login.failed"
+    ]);
   });
 
   it("returns 401 for an unauthenticated tenant create request", async () => {

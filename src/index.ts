@@ -12,6 +12,7 @@ export default {
       adminBootstrapPassword: runtimeConfig.adminBootstrapPassword,
       adminWhitelist: runtimeConfig.adminWhitelist,
       adminRepository: repositories.adminRepository,
+      auditRepository: repositories.auditRepository,
       clientRepository: repositories.clientRepository,
       keyRepository: repositories.keyRepository,
       managementApiToken: runtimeConfig.managementApiToken,

@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { ZodError } from "zod";
 
+import type { AuditRepository } from "../domain/audit/repository";
 import { authenticateAdminSession, loginAdmin } from "../domain/admin-auth/service";
 import type { AdminRepository } from "../domain/admin-auth/repository";
 import { registerClient } from "../domain/clients/register-client";
@@ -55,10 +56,17 @@ class EmptyAdminRepository implements AdminRepository {
   }
 }
 
+class EmptyAuditRepository implements AuditRepository {
+  async record(): Promise<void> {
+    return;
+  }
+}
+
 export interface AppOptions {
   adminBootstrapPassword?: string;
   adminWhitelist?: string[];
   adminRepository?: AdminRepository;
+  auditRepository?: AuditRepository;
   clientRepository?: ClientRepository;
   keyRepository?: KeyRepository;
   managementApiToken?: string;
@@ -71,6 +79,7 @@ export const createApp = (options: AppOptions = {}) => {
   const adminBootstrapPassword = options.adminBootstrapPassword ?? "";
   const adminWhitelist = options.adminWhitelist ?? [];
   const adminRepository = options.adminRepository ?? new EmptyAdminRepository();
+  const auditRepository = options.auditRepository ?? new EmptyAuditRepository();
   const clientRepository = options.clientRepository ?? new EmptyClientRepository();
   const keyRepository = options.keyRepository ?? new EmptyKeyRepository();
   const managementApiToken = options.managementApiToken ?? "";
@@ -153,6 +162,21 @@ export const createApp = (options: AppOptions = {}) => {
         issuerContext
       });
 
+      await auditRepository.record({
+        id: crypto.randomUUID(),
+        actorType: "management_token",
+        actorId: "initial_access_token",
+        tenantId: issuerContext.tenant.id,
+        eventType: "oidc.client.registered",
+        targetType: "oidc_client",
+        targetId: result.client.clientId,
+        payload: {
+          application_type: result.client.applicationType,
+          client_name: result.client.clientName
+        },
+        occurredAt: new Date().toISOString()
+      });
+
       return {
         status: 201 as const,
         body: {
@@ -222,8 +246,33 @@ export const createApp = (options: AppOptions = {}) => {
     });
 
     if (!result.ok) {
+      await auditRepository.record({
+        id: crypto.randomUUID(),
+        actorType: "admin_login_attempt",
+        actorId: payload.email ?? null,
+        tenantId: null,
+        eventType: "admin.login.failed",
+        targetType: "admin_user",
+        targetId: payload.email ?? null,
+        payload: null,
+        occurredAt: new Date().toISOString()
+      });
       return context.json({ error: result.reason }, result.reason === "forbidden" ? 403 : 401);
     }
+
+    await auditRepository.record({
+      id: crypto.randomUUID(),
+      actorType: "admin_user",
+      actorId: result.user.id,
+      tenantId: null,
+      eventType: "admin.login.succeeded",
+      targetType: "admin_user",
+      targetId: result.user.id,
+      payload: {
+        email: result.user.email
+      },
+      occurredAt: new Date().toISOString()
+    });
 
     return context.json({
       email: result.user.email,
@@ -269,6 +318,20 @@ export const createApp = (options: AppOptions = {}) => {
           verificationStatus: "verified"
         }
       ]
+    });
+
+    await auditRepository.record({
+      id: crypto.randomUUID(),
+      actorType: "admin_user",
+      actorId: session.adminUserId,
+      tenantId,
+      eventType: "tenant.created",
+      targetType: "tenant",
+      targetId: tenantId,
+      payload: {
+        slug
+      },
+      occurredAt: new Date().toISOString()
     });
 
     return context.json(
