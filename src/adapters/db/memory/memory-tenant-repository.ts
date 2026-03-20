@@ -2,7 +2,11 @@ import type { TenantRepository } from "../../../domain/tenants/repository";
 import type { Tenant } from "../../../domain/tenants/types";
 
 export class MemoryTenantRepository implements TenantRepository {
-  constructor(private readonly tenants: Tenant[]) {}
+  constructor(private readonly tenants: Tenant[] = []) {}
+
+  async create(tenant: Tenant): Promise<void> {
+    this.tenants.push(tenant);
+  }
 
   async findBySlug(slug: string): Promise<Tenant | null> {
     return this.tenants.find((tenant) => tenant.slug === slug) ?? null;

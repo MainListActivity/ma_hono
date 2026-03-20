@@ -1,6 +1,8 @@
 import { Hono } from "hono";
 import { ZodError } from "zod";
 
+import { authenticateAdminSession, loginAdmin } from "../domain/admin-auth/service";
+import type { AdminRepository } from "../domain/admin-auth/repository";
 import { registerClient } from "../domain/clients/register-client";
 import type { ClientRepository } from "../domain/clients/repository";
 import { buildJwks } from "../domain/keys/jwks";
@@ -10,6 +12,10 @@ import { resolveIssuerContext } from "../domain/tenants/issuer-resolution";
 import { buildDiscoveryMetadata } from "../domain/oidc/discovery";
 
 class EmptyTenantRepository implements TenantRepository {
+  async create(): Promise<void> {
+    return;
+  }
+
   async findBySlug(): Promise<null> {
     return null;
   }
@@ -35,7 +41,23 @@ class EmptyClientRepository implements ClientRepository {
   }
 }
 
+class EmptyAdminRepository implements AdminRepository {
+  async createSession(): Promise<void> {
+    return;
+  }
+
+  async findSessionByTokenHash(): Promise<null> {
+    return null;
+  }
+
+  async findUserByEmail(): Promise<null> {
+    return null;
+  }
+}
+
 export interface AppOptions {
+  adminBootstrapPassword?: string;
+  adminRepository?: AdminRepository;
   clientRepository?: ClientRepository;
   keyRepository?: KeyRepository;
   managementApiToken?: string;
@@ -45,6 +67,8 @@ export interface AppOptions {
 
 export const createApp = (options: AppOptions = {}) => {
   const app = new Hono();
+  const adminBootstrapPassword = options.adminBootstrapPassword ?? "";
+  const adminRepository = options.adminRepository ?? new EmptyAdminRepository();
   const clientRepository = options.clientRepository ?? new EmptyClientRepository();
   const keyRepository = options.keyRepository ?? new EmptyKeyRepository();
   const managementApiToken = options.managementApiToken ?? "";
@@ -183,6 +207,76 @@ export const createApp = (options: AppOptions = {}) => {
     }
 
     return context.json(result.body ?? { error: "unauthorized" }, result.status);
+  });
+
+  app.post("/admin/login", async (context) => {
+    const payload = await context.req.json<{ email?: string; password?: string }>();
+    const result = await loginAdmin({
+      adminBootstrapPassword,
+      adminRepository,
+      email: payload.email ?? "",
+      password: payload.password ?? ""
+    });
+
+    if (result === null) {
+      const userExists = await adminRepository.findUserByEmail(payload.email ?? "");
+      return context.json(
+        { error: userExists === null ? "forbidden" : "unauthorized" },
+        userExists === null ? 403 : 401
+      );
+    }
+
+    return context.json({
+      email: result.user.email,
+      session_token: result.sessionToken
+    });
+  });
+
+  app.post("/admin/tenants", async (context) => {
+    const session = await authenticateAdminSession({
+      adminRepository,
+      authorizationHeader: context.req.header("authorization")
+    });
+
+    if (session === null) {
+      return context.json({ error: "unauthorized" }, 401);
+    }
+
+    const payload = await context.req.json<{ display_name?: string; slug?: string }>();
+    const slug = payload.slug?.trim() ?? "";
+    const displayName = payload.display_name?.trim() ?? "";
+
+    if (slug.length === 0 || displayName.length === 0) {
+      return context.json({ error: "invalid_request" }, 400);
+    }
+
+    const tenantId = crypto.randomUUID();
+    await tenantRepository.create({
+      id: tenantId,
+      slug,
+      displayName,
+      status: "active",
+      issuers: [
+        {
+          id: crypto.randomUUID(),
+          issuerType: "platform_path",
+          issuerUrl: `https://${platformHost}/t/${slug}`,
+          domain: null,
+          isPrimary: true,
+          verificationStatus: "verified"
+        }
+      ]
+    });
+
+    return context.json(
+      {
+        id: tenantId,
+        slug,
+        display_name: displayName,
+        issuer: `https://${platformHost}/t/${slug}`
+      },
+      201
+    );
   });
 
   return app;
