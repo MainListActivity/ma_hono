@@ -25,6 +25,14 @@ const tenantRepository = new MemoryTenantRepository([
         domain: "login.acme.test",
         isPrimary: false,
         verificationStatus: "verified"
+      },
+      {
+        id: "issuer_custom_acme_cn",
+        issuerType: "custom_domain",
+        issuerUrl: "https://login.acme.cn",
+        domain: "login.acme.cn",
+        isPrimary: false,
+        verificationStatus: "verified"
       }
     ]
   }
@@ -75,6 +83,19 @@ describe("OIDC discovery", () => {
 
     const response = await app.request(
       "https://idp.example.test/t/missing/.well-known/openid-configuration"
+    );
+
+    expect(response.status).toBe(404);
+  });
+
+  it("returns 404 for a platform-path discovery route requested on a custom-domain host", async () => {
+    const app = createApp({
+      platformHost: "idp.example.test",
+      tenantRepository
+    });
+
+    const response = await app.request(
+      "https://login.acme.test/t/acme/.well-known/openid-configuration"
     );
 
     expect(response.status).toBe(404);

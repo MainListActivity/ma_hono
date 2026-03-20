@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { getTableName } from "drizzle-orm";
 
 import { readRuntimeConfig } from "../../src/config/env";
+import { createRuntimeRepositories } from "../../src/adapters/db/drizzle/runtime";
 import {
   adminSessions,
   adminUsers,
@@ -17,6 +18,7 @@ describe("readRuntimeConfig", () => {
     const config = readRuntimeConfig({
       ADMIN_BOOTSTRAP_PASSWORD: "bootstrap-secret",
       ADMIN_WHITELIST: "admin@example.test,ops@example.test",
+      DATABASE_URL: "postgres://postgres:postgres@localhost:5432/ma_hono",
       MANAGEMENT_API_TOKEN: "manage-acme",
       PLATFORM_HOST: "idp.example.test"
     });
@@ -24,6 +26,7 @@ describe("readRuntimeConfig", () => {
     expect(config).toEqual({
       adminBootstrapPassword: "bootstrap-secret",
       adminWhitelist: ["admin@example.test", "ops@example.test"],
+      databaseUrl: "postgres://postgres:postgres@localhost:5432/ma_hono",
       managementApiToken: "manage-acme",
       platformHost: "idp.example.test"
     });
@@ -34,6 +37,7 @@ describe("readRuntimeConfig", () => {
       readRuntimeConfig({
         ADMIN_BOOTSTRAP_PASSWORD: "bootstrap-secret",
         ADMIN_WHITELIST: "admin@example.test",
+        DATABASE_URL: "postgres://postgres:postgres@localhost:5432/ma_hono",
         MANAGEMENT_API_TOKEN: "manage-acme"
       })
     ).toThrowError(/PLATFORM_HOST/);
@@ -49,5 +53,24 @@ describe("drizzle schema", () => {
     expect(getTableName(adminUsers)).toBe("admin_users");
     expect(getTableName(adminSessions)).toBe("admin_sessions");
     expect(getTableName(auditEvents)).toBe("audit_events");
+  });
+});
+
+describe("createRuntimeRepositories", () => {
+  it("builds concrete runtime repositories from database config", async () => {
+    const repositories = await createRuntimeRepositories({
+      adminBootstrapPassword: "bootstrap-secret",
+      adminWhitelist: ["admin@example.test"],
+      databaseUrl: "postgres://postgres:postgres@localhost:5432/ma_hono",
+      managementApiToken: "manage-acme",
+      platformHost: "idp.example.test"
+    });
+
+    expect(repositories.adminRepository).toBeDefined();
+    expect(repositories.clientRepository).toBeDefined();
+    expect(repositories.keyRepository).toBeDefined();
+    expect(repositories.tenantRepository).toBeDefined();
+
+    await repositories.close();
   });
 });

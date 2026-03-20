@@ -1,47 +1,58 @@
 import type { AdminRepository } from "./repository";
 import type { AdminSession, AdminUser } from "./types";
 
-const textEncoder = new TextEncoder();
 const sessionLifetimeMs = 1000 * 60 * 60 * 12;
-
-const sha256 = async (value: string) => {
-  const digest = await crypto.subtle.digest("SHA-256", textEncoder.encode(value));
-
-  return Buffer.from(digest).toString("base64url");
-};
+import { sha256Base64Url } from "../../lib/hash";
 
 export const loginAdmin = async ({
   adminBootstrapPassword,
+  adminWhitelist,
   adminRepository,
   email,
   password
 }: {
   adminBootstrapPassword: string;
+  adminWhitelist: string[];
   adminRepository: AdminRepository;
   email: string;
   password: string;
-}): Promise<{ sessionToken: string; user: AdminUser } | null> => {
-  const user = await adminRepository.findUserByEmail(email);
-
-  if (user === null || user.status !== "active") {
-    return null;
+}): Promise<
+  | { ok: true; sessionToken: string; user: AdminUser }
+  | { ok: false; reason: "forbidden" | "unauthorized" }
+> => {
+  if (!adminWhitelist.includes(email)) {
+    return { ok: false, reason: "forbidden" };
   }
 
   if (password !== adminBootstrapPassword) {
-    return null;
+    return { ok: false, reason: "unauthorized" };
   }
+
+  const repositoryUser = await adminRepository.findUserByEmail(email);
+  if (repositoryUser !== null && repositoryUser.status !== "active") {
+    return { ok: false, reason: "forbidden" };
+  }
+
+  const user =
+    repositoryUser ??
+    ({
+      id: `whitelist:${email}`,
+      email,
+      status: "active"
+    } satisfies AdminUser);
 
   const sessionToken = crypto.randomUUID().replaceAll("-", "");
   const session: AdminSession = {
     id: crypto.randomUUID(),
     adminUserId: user.id,
-    sessionTokenHash: await sha256(sessionToken),
+    sessionTokenHash: await sha256Base64Url(sessionToken),
     expiresAt: new Date(Date.now() + sessionLifetimeMs).toISOString()
   };
 
   await adminRepository.createSession(session);
 
   return {
+    ok: true,
     sessionToken,
     user
   };
@@ -62,7 +73,7 @@ export const authenticateAdminSession = async ({
     return null;
   }
 
-  const session = await adminRepository.findSessionByTokenHash(await sha256(token));
+  const session = await adminRepository.findSessionByTokenHash(await sha256Base64Url(token));
 
   if (session === null) {
     return null;

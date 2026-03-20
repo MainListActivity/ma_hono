@@ -25,6 +25,14 @@ const tenantRepository = new MemoryTenantRepository([
         domain: "login.acme.test",
         isPrimary: false,
         verificationStatus: "verified"
+      },
+      {
+        id: "issuer_custom_acme_cn",
+        issuerType: "custom_domain",
+        issuerUrl: "https://login.acme.cn",
+        domain: "login.acme.cn",
+        isPrimary: false,
+        verificationStatus: "verified"
       }
     ]
   }
@@ -59,6 +67,30 @@ describe("resolveIssuerContext", () => {
       source: "custom_domain"
     });
     expect(result?.tenant.slug).toBe("acme");
+  });
+
+  it("returns the exact custom-domain issuer that matched the request host", async () => {
+    const result = await resolveIssuerContext({
+      platformHost: "idp.example.test",
+      requestUrl: "https://login.acme.cn/.well-known/openid-configuration",
+      tenantRepository
+    });
+
+    expect(result).toMatchObject({
+      issuer: "https://login.acme.cn",
+      issuerPathPrefix: "",
+      source: "custom_domain"
+    });
+  });
+
+  it("rejects platform-path aliases on a custom-domain host", async () => {
+    const result = await resolveIssuerContext({
+      platformHost: "idp.example.test",
+      requestUrl: "https://login.acme.test/t/acme/.well-known/openid-configuration",
+      tenantRepository
+    });
+
+    expect(result).toBeNull();
   });
 
   it("returns null when the request host and path do not resolve a known issuer", async () => {

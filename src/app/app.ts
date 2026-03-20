@@ -57,6 +57,7 @@ class EmptyAdminRepository implements AdminRepository {
 
 export interface AppOptions {
   adminBootstrapPassword?: string;
+  adminWhitelist?: string[];
   adminRepository?: AdminRepository;
   clientRepository?: ClientRepository;
   keyRepository?: KeyRepository;
@@ -68,6 +69,7 @@ export interface AppOptions {
 export const createApp = (options: AppOptions = {}) => {
   const app = new Hono();
   const adminBootstrapPassword = options.adminBootstrapPassword ?? "";
+  const adminWhitelist = options.adminWhitelist ?? [];
   const adminRepository = options.adminRepository ?? new EmptyAdminRepository();
   const clientRepository = options.clientRepository ?? new EmptyClientRepository();
   const keyRepository = options.keyRepository ?? new EmptyKeyRepository();
@@ -213,17 +215,14 @@ export const createApp = (options: AppOptions = {}) => {
     const payload = await context.req.json<{ email?: string; password?: string }>();
     const result = await loginAdmin({
       adminBootstrapPassword,
+      adminWhitelist,
       adminRepository,
       email: payload.email ?? "",
       password: payload.password ?? ""
     });
 
-    if (result === null) {
-      const userExists = await adminRepository.findUserByEmail(payload.email ?? "");
-      return context.json(
-        { error: userExists === null ? "forbidden" : "unauthorized" },
-        userExists === null ? 403 : 401
-      );
+    if (!result.ok) {
+      return context.json({ error: result.reason }, result.reason === "forbidden" ? 403 : 401);
     }
 
     return context.json({
@@ -248,6 +247,10 @@ export const createApp = (options: AppOptions = {}) => {
 
     if (slug.length === 0 || displayName.length === 0) {
       return context.json({ error: "invalid_request" }, 400);
+    }
+
+    if ((await tenantRepository.findBySlug(slug)) !== null) {
+      return context.json({ error: "conflict" }, 409);
     }
 
     const tenantId = crypto.randomUUID();

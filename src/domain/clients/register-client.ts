@@ -1,4 +1,5 @@
 import type { ResolvedIssuerContext } from "../tenants/types";
+import { sha256Base64Url } from "../../lib/hash";
 import type { ClientRepository } from "./repository";
 import {
   dynamicClientRegistrationSchema,
@@ -6,15 +7,7 @@ import {
 } from "./registration-schema";
 import type { Client, RegisterClientResult } from "./types";
 
-const textEncoder = new TextEncoder();
-
 const createRandomToken = () => crypto.randomUUID().replaceAll("-", "");
-
-const sha256 = async (value: string) => {
-  const digest = await crypto.subtle.digest("SHA-256", textEncoder.encode(value));
-
-  return Buffer.from(digest).toString("base64url");
-};
 
 const requiresClientSecret = (authMethod: DynamicClientRegistrationInput["token_endpoint_auth_method"]) =>
   authMethod !== "none" && authMethod !== "private_key_jwt";
@@ -45,8 +38,8 @@ export const registerClient = async ({
     redirectUris: payload.redirect_uris,
     responseTypes: payload.response_types,
     tokenEndpointAuthMethod: payload.token_endpoint_auth_method,
-    clientSecretHash: clientSecret === null ? null : await sha256(clientSecret),
-    registrationAccessTokenHash: await sha256(registrationAccessToken)
+    clientSecretHash: clientSecret === null ? null : await sha256Base64Url(clientSecret),
+    registrationAccessTokenHash: await sha256Base64Url(registrationAccessToken)
   };
 
   await clientRepository.create(client);

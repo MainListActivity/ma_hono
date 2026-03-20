@@ -165,4 +165,31 @@ describe("Dynamic Client Registration", () => {
       `https://login.acme.test/connect/register/${body.client_id}`
     );
   });
+
+  it("rejects unsupported response and grant types", async () => {
+    const app = createApp({
+      clientRepository: new MemoryClientRepository(),
+      managementApiToken: "manage-acme",
+      platformHost: "idp.example.test",
+      tenantRepository
+    });
+
+    const response = await app.request("https://idp.example.test/t/acme/connect/register", {
+      method: "POST",
+      headers: {
+        authorization: "Bearer manage-acme",
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({
+        client_name: "Acme SPA",
+        application_type: "web",
+        grant_types: ["implicit"],
+        redirect_uris: ["https://app.acme.test/callback"],
+        response_types: ["token"],
+        token_endpoint_auth_method: "none"
+      })
+    });
+
+    expect(response.status).toBe(400);
+  });
 });

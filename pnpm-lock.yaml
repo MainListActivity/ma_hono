@@ -10,13 +10,16 @@ importers:
     dependencies:
       drizzle-orm:
         specifier: ^0.44.6
-        version: 0.44.7(@cloudflare/workers-types@4.20260317.1)
+        version: 0.44.7(@cloudflare/workers-types@4.20260317.1)(postgres@3.4.8)
       hono:
         specifier: ^4.10.0
         version: 4.12.8
       jose:
         specifier: ^6.1.0
         version: 6.2.2
+      postgres:
+        specifier: ^3.4.7
+        version: 3.4.8
       zod:
         specifier: ^4.1.12
         version: 4.3.6
@@ -1278,6 +1281,10 @@ packages:
     resolution: {integrity: sha512-OW/rX8O/jXnm82Ey1k44pObPtdblfiuWnrd8X7GJ7emImCOstunGbXUpp7HdBrFQX6rJzn3sPT397Wp5aCwCHg==}
     engines: {node: ^10 || ^12 || >=14}
 
+  postgres@3.4.8:
+    resolution: {integrity: sha512-d+JFcLM17njZaOLkv6SCev7uoLaBtfK86vMUXhW1Z4glPWh4jozno9APvW/XKFJ3CCxVoC7OL38BqRydtu5nGg==}
+    engines: {node: '>=12'}
+
   resolve-pkg-maps@1.0.0:
     resolution: {integrity: sha512-seS2Tj26TBVOC2NIc2rOe2y2ZO7efxITtLZcGSOnHHNOQ7CkiUBfw0Iw2ck6xkIhPwLhKNLS8BO+hEpngQlqzw==}
 
@@ -2115,9 +2122,10 @@ snapshots:
       esbuild: 0.25.12
       tsx: 4.21.0
 
-  drizzle-orm@0.44.7(@cloudflare/workers-types@4.20260317.1):
+  drizzle-orm@0.44.7(@cloudflare/workers-types@4.20260317.1)(postgres@3.4.8):
     optionalDependencies:
       '@cloudflare/workers-types': 4.20260317.1
+      postgres: 3.4.8
 
   error-stack-parser-es@1.0.5: {}
 
@@ -2297,6 +2305,8 @@ snapshots:
       nanoid: 3.3.11
       picocolors: 1.1.1
       source-map-js: 1.2.1
+
+  postgres@3.4.8: {}
 
   resolve-pkg-maps@1.0.0: {}
 

@@ -16,6 +16,7 @@ describe("admin auth and management api", () => {
     });
     const app = createApp({
       adminBootstrapPassword: "bootstrap-secret",
+      adminWhitelist: ["admin@example.test"],
       adminRepository,
       platformHost: "idp.example.test",
       tenantRepository
@@ -64,6 +65,7 @@ describe("admin auth and management api", () => {
   it("rejects a non-whitelist admin login", async () => {
     const app = createApp({
       adminBootstrapPassword: "bootstrap-secret",
+      adminWhitelist: ["admin@example.test"],
       adminRepository: new MemoryAdminRepository({
         adminUsers: [{ email: "admin@example.test", id: "admin_1", status: "active" }]
       }),
@@ -88,6 +90,7 @@ describe("admin auth and management api", () => {
   it("returns 401 for an unauthenticated tenant create request", async () => {
     const app = createApp({
       adminBootstrapPassword: "bootstrap-secret",
+      adminWhitelist: ["admin@example.test"],
       adminRepository: new MemoryAdminRepository({
         adminUsers: [{ email: "admin@example.test", id: "admin_1", status: "active" }]
       }),
@@ -107,5 +110,72 @@ describe("admin auth and management api", () => {
     });
 
     expect(createTenantResponse.status).toBe(401);
+  });
+
+  it("rejects login for a seeded admin who is not in the configured whitelist", async () => {
+    const app = createApp({
+      adminBootstrapPassword: "bootstrap-secret",
+      adminWhitelist: ["admin@example.test"],
+      adminRepository: new MemoryAdminRepository({
+        adminUsers: [{ email: "ops@example.test", id: "admin_2", status: "active" }]
+      }),
+      platformHost: "idp.example.test",
+      tenantRepository: new MemoryTenantRepository()
+    });
+
+    const loginResponse = await app.request("https://idp.example.test/admin/login", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({
+        email: "ops@example.test",
+        password: "bootstrap-secret"
+      })
+    });
+
+    expect(loginResponse.status).toBe(403);
+  });
+
+  it("rejects duplicate tenant slugs", async () => {
+    const tenantRepository = new MemoryTenantRepository();
+    const adminRepository = new MemoryAdminRepository({
+      adminUsers: [{ email: "admin@example.test", id: "admin_1", status: "active" }]
+    });
+    const app = createApp({
+      adminBootstrapPassword: "bootstrap-secret",
+      adminWhitelist: ["admin@example.test"],
+      adminRepository,
+      platformHost: "idp.example.test",
+      tenantRepository
+    });
+
+    const loginResponse = await app.request("https://idp.example.test/admin/login", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({
+        email: "admin@example.test",
+        password: "bootstrap-secret"
+      })
+    });
+    const loginBody = (await loginResponse.json()) as AdminLoginResponse;
+
+    const createTenant = () =>
+      app.request("https://idp.example.test/admin/tenants", {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${loginBody.session_token}`,
+          "content-type": "application/json"
+        },
+        body: JSON.stringify({
+          display_name: "Acme",
+          slug: "acme"
+        })
+      });
+
+    expect((await createTenant()).status).toBe(201);
+    expect((await createTenant()).status).toBe(409);
   });
 });

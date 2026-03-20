@@ -3,6 +3,7 @@ import { z } from "zod";
 const runtimeConfigSchema = z.object({
   ADMIN_BOOTSTRAP_PASSWORD: z.string().min(1),
   ADMIN_WHITELIST: z.string().min(1),
+  DATABASE_URL: z.string().min(1),
   MANAGEMENT_API_TOKEN: z.string().min(1),
   PLATFORM_HOST: z.string().min(1)
 });
@@ -10,6 +11,7 @@ const runtimeConfigSchema = z.object({
 export interface RuntimeConfig {
   adminBootstrapPassword: string;
   adminWhitelist: string[];
+  databaseUrl: string;
   managementApiToken: string;
   platformHost: string;
 }
@@ -24,6 +26,7 @@ export const readRuntimeConfig = (
     adminWhitelist: parsed.ADMIN_WHITELIST.split(",")
       .map((value) => value.trim())
       .filter((value) => value.length > 0),
+    databaseUrl: parsed.DATABASE_URL,
     managementApiToken: parsed.MANAGEMENT_API_TOKEN,
     platformHost: parsed.PLATFORM_HOST
   };

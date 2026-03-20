@@ -10,6 +10,14 @@ interface ResolveIssuerContextInput {
 const findIssuerByType = (tenant: Tenant, issuerType: IssuerType) =>
   tenant.issuers.find((issuer) => issuer.issuerType === issuerType) ?? null;
 
+const findCustomDomainIssuer = (tenant: Tenant, requestHost: string) =>
+  tenant.issuers.find(
+    (issuer) =>
+      issuer.issuerType === "custom_domain" &&
+      issuer.domain === requestHost &&
+      issuer.verificationStatus === "verified"
+  ) ?? null;
+
 const toResolvedContext = (
   tenant: Tenant,
   issuer: TenantIssuer,
@@ -33,7 +41,11 @@ export const resolveIssuerContext = async ({
   const customDomainTenant = await tenantRepository.findByCustomDomain(requestHost);
 
   if (customDomainTenant !== null) {
-    const customDomainIssuer = findIssuerByType(customDomainTenant, "custom_domain");
+    if (url.pathname.startsWith("/t/")) {
+      return null;
+    }
+
+    const customDomainIssuer = findCustomDomainIssuer(customDomainTenant, requestHost);
 
     if (customDomainIssuer !== null) {
       return toResolvedContext(customDomainTenant, customDomainIssuer, requestHost);
