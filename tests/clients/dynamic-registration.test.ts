@@ -192,4 +192,31 @@ describe("Dynamic Client Registration", () => {
 
     expect(response.status).toBe(400);
   });
+
+  it("rejects private_key_jwt until client key material is supported", async () => {
+    const app = createApp({
+      clientRepository: new MemoryClientRepository(),
+      managementApiToken: "manage-acme",
+      platformHost: "idp.example.test",
+      tenantRepository
+    });
+
+    const response = await app.request("https://idp.example.test/t/acme/connect/register", {
+      method: "POST",
+      headers: {
+        authorization: "Bearer manage-acme",
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({
+        client_name: "Acme Service",
+        application_type: "web",
+        grant_types: ["authorization_code"],
+        redirect_uris: ["https://app.acme.test/callback"],
+        response_types: ["code"],
+        token_endpoint_auth_method: "private_key_jwt"
+      })
+    });
+
+    expect(response.status).toBe(400);
+  });
 });

@@ -10,7 +10,7 @@ import type { Client, RegisterClientResult } from "./types";
 const createRandomToken = () => crypto.randomUUID().replaceAll("-", "");
 
 const requiresClientSecret = (authMethod: DynamicClientRegistrationInput["token_endpoint_auth_method"]) =>
-  authMethod !== "none" && authMethod !== "private_key_jwt";
+  authMethod !== "none";
 
 export const registerClient = async ({
   clientRepository,

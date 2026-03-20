@@ -30,7 +30,6 @@ export const dynamicClientRegistrationSchema = z.object({
   token_endpoint_auth_method: z.enum([
     "client_secret_basic",
     "client_secret_post",
-    "private_key_jwt",
     "none"
   ])
 }).superRefine((value, context) => {
