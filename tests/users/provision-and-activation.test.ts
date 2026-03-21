@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { MemoryUserRepository } from "../../src/adapters/db/memory/memory-user-repository";
 import { MemoryUserSessionRepository } from "../../src/adapters/db/memory/memory-user-session-repository";
@@ -76,6 +76,7 @@ describe("user provisioning and activation domain", () => {
       displayName: "Activate Me",
       now: provisionedAt
     });
+    const consumeInvitationSpy = vi.spyOn(repository, "consumeInvitationByTokenHash");
 
     const activated = await activateUser({
       userRepository: repository,
@@ -93,6 +94,11 @@ describe("user provisioning and activation domain", () => {
       id: provisioned.user.id,
       status: "active",
       emailVerified: true
+    });
+    expect(consumeInvitationSpy).toHaveBeenCalledTimes(1);
+    expect(consumeInvitationSpy).toHaveBeenCalledWith({
+      tokenHash: await sha256Base64Url(provisioned.invitationToken),
+      now: activationTime
     });
 
     const credential = await repository.findPasswordCredentialByUserId(
@@ -161,6 +167,43 @@ describe("user provisioning and activation domain", () => {
     expect((await repository.findUserById(provisioned.user.tenantId, provisioned.user.id))?.status).toBe(
       "provisioned"
     );
+  });
+
+  it("models invitation consumption as a one-time atomic repository operation", async () => {
+    const repository = new MemoryUserRepository({
+      policies: [tenantPolicy]
+    });
+    const provisioned = await provisionUser({
+      userRepository: repository,
+      tenantId: "tenant_acme",
+      email: "atomic@acme.test",
+      username: "atomicuser",
+      displayName: "Atomic User",
+      now: new Date("2026-03-21T11:30:00.000Z")
+    });
+    const tokenHash = await sha256Base64Url(provisioned.invitationToken);
+
+    await expect(
+      repository.consumeInvitationByTokenHash({
+        tokenHash,
+        now: new Date("2026-03-21T11:31:00.000Z")
+      })
+    ).resolves.toMatchObject({
+      kind: "consumed",
+      invitation: {
+        id: provisioned.invitation.id,
+        consumedAt: "2026-03-21T11:31:00.000Z"
+      }
+    });
+
+    await expect(
+      repository.consumeInvitationByTokenHash({
+        tokenHash,
+        now: new Date("2026-03-21T11:32:00.000Z")
+      })
+    ).resolves.toEqual({
+      kind: "already_used"
+    });
   });
 
   it("creates opaque browser sessions and resolves active sessions by token", async () => {

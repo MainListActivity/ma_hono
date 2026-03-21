@@ -24,30 +24,33 @@ export const activateUser = async ({
   password: string;
   userRepository: UserRepository;
 }): Promise<ActivateUserResult> => {
-  const invitation = await userRepository.findInvitationByTokenHash(
-    await sha256Base64Url(invitationToken)
-  );
+  const consumedInvitation = await userRepository.consumeInvitationByTokenHash({
+    tokenHash: await sha256Base64Url(invitationToken),
+    now
+  });
 
-  if (invitation === null) {
+  if (consumedInvitation.kind === "not_found") {
     return {
       ok: false,
       reason: "invalid_invitation"
     };
   }
 
-  if (invitation.consumedAt !== null) {
+  if (consumedInvitation.kind === "already_used") {
     return {
       ok: false,
       reason: "invitation_already_used"
     };
   }
 
-  if (new Date(invitation.expiresAt).getTime() <= now.getTime()) {
+  if (consumedInvitation.kind === "expired") {
     return {
       ok: false,
       reason: "invitation_expired"
     };
   }
+
+  const { invitation } = consumedInvitation;
 
   const user = await userRepository.findUserById(invitation.tenantId, invitation.userId);
 
@@ -80,10 +83,6 @@ export const activateUser = async ({
 
   await userRepository.upsertPasswordCredential(credential);
   await userRepository.updateUser(activatedUser);
-  await userRepository.updateInvitation({
-    ...invitation,
-    consumedAt: updatedAt
-  });
 
   return {
     ok: true,

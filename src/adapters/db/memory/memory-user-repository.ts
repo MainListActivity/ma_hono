@@ -1,4 +1,8 @@
-import type { UserRepository } from "../../../domain/users/repository";
+import type {
+  ConsumeInvitationByTokenHashInput,
+  ConsumeInvitationByTokenHashResult,
+  UserRepository
+} from "../../../domain/users/repository";
 import type {
   PasswordCredential,
   TenantAuthMethodPolicy,
@@ -33,6 +37,51 @@ export class MemoryUserRepository implements UserRepository {
     this.invitations.push(invitation);
   }
 
+  async consumeInvitationByTokenHash({
+    now,
+    tokenHash
+  }: ConsumeInvitationByTokenHashInput): Promise<ConsumeInvitationByTokenHashResult> {
+    const index = this.invitations.findIndex((invitation) => invitation.tokenHash === tokenHash);
+
+    if (index === -1) {
+      return {
+        kind: "not_found"
+      };
+    }
+
+    const invitation = this.invitations[index];
+
+    if (invitation === undefined) {
+      return {
+        kind: "not_found"
+      };
+    }
+
+    if (invitation.consumedAt !== null) {
+      return {
+        kind: "already_used"
+      };
+    }
+
+    if (new Date(invitation.expiresAt).getTime() <= now.getTime()) {
+      return {
+        kind: "expired"
+      };
+    }
+
+    const consumedInvitation: UserInvitation = {
+      ...invitation,
+      consumedAt: now.toISOString()
+    };
+
+    this.invitations[index] = consumedInvitation;
+
+    return {
+      kind: "consumed",
+      invitation: consumedInvitation
+    };
+  }
+
   async createUser(user: User): Promise<void> {
     if (this.users.some((storedUser) => storedUser.tenantId === user.tenantId && storedUser.email === user.email)) {
       throw new Error(`user email already exists for tenant: ${user.tenantId}`);
@@ -52,10 +101,6 @@ export class MemoryUserRepository implements UserRepository {
 
   async findAuthMethodPolicyByTenantId(tenantId: string): Promise<TenantAuthMethodPolicy | null> {
     return this.policies.find((policy) => policy.tenantId === tenantId) ?? null;
-  }
-
-  async findInvitationByTokenHash(tokenHash: string): Promise<UserInvitation | null> {
-    return this.invitations.find((invitation) => invitation.tokenHash === tokenHash) ?? null;
   }
 
   async findPasswordCredentialByUserId(
@@ -87,16 +132,6 @@ export class MemoryUserRepository implements UserRepository {
 
   listUsers(): User[] {
     return [...this.users];
-  }
-
-  async updateInvitation(invitation: UserInvitation): Promise<void> {
-    const index = this.invitations.findIndex((storedInvitation) => storedInvitation.id === invitation.id);
-
-    if (index === -1) {
-      throw new Error(`invitation not found: ${invitation.id}`);
-    }
-
-    this.invitations[index] = invitation;
   }
 
   async updateUser(user: User): Promise<void> {
