@@ -1,17 +1,18 @@
 import type { AdminRepository } from "./repository";
 import type { AdminSession, AdminUser } from "./types";
+import { verifyPasswordPbkdf2 } from "../../lib/pbkdf2";
 
 const sessionLifetimeMs = 1000 * 60 * 60 * 12;
 import { sha256Base64Url } from "../../lib/hash";
 
 export const loginAdmin = async ({
-  adminBootstrapPassword,
+  adminBootstrapPasswordHash,
   adminWhitelist,
   adminRepository,
   email,
   password
 }: {
-  adminBootstrapPassword: string;
+  adminBootstrapPasswordHash: string;
   adminWhitelist: string[];
   adminRepository: AdminRepository;
   email: string;
@@ -24,7 +25,8 @@ export const loginAdmin = async ({
     return { ok: false, reason: "forbidden" };
   }
 
-  if (password !== adminBootstrapPassword) {
+  const isValid = await verifyPasswordPbkdf2(password, adminBootstrapPasswordHash);
+  if (!isValid) {
     return { ok: false, reason: "unauthorized" };
   }
 
