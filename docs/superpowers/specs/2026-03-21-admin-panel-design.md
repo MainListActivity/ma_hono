@@ -10,10 +10,10 @@ The admin panel is a React SPA deployed to Cloudflare Pages, communicating with 
 
 ```
 Cloudflare Pages (admin/)       Cloudflare Worker (src/)
-  React SPA                  →  /admin/login        POST
-  Vite + TypeScript          →  /admin/tenants       GET, POST
-  Tailwind CSS               →  /admin/tenants/:id   GET (new)
-                             →  /admin/tenants/:id/users  GET (new), POST
+  React SPA                  →  /admin/login              POST (existing)
+  Vite + TypeScript          →  /admin/tenants            GET (new), POST (existing)
+  Tailwind CSS               →  /admin/tenants/:id        GET (new)
+                             →  /admin/tenants/:id/users  GET (new), POST (existing)
 ```
 
 The SPA is entirely static — no server-side rendering. All state lives in the browser. The Worker remains the single source of truth.
@@ -57,12 +57,16 @@ ma_hono/
 ## Authentication
 
 - `POST /admin/login` returns `{ session_token }`.
-- Token stored in `localStorage` under key `admin_session_token`.
+- Token stored in `sessionStorage` under key `admin_session_token`. `sessionStorage` is preferred over `localStorage` because it is not shared across tabs and is cleared when the browser tab closes, limiting the exposure window.
 - All subsequent requests send `Authorization: Bearer <token>` header.
-- `AuthGuard` component wraps all protected routes; redirects to `/login` if no token in localStorage.
-- API client intercepts 401 responses, clears localStorage, and redirects to `/login`.
+- `AuthGuard` component wraps all protected routes; redirects to `/login` if no token in sessionStorage.
+- API client intercepts 401 responses, clears sessionStorage, and redirects to `/login`.
 
 No token refresh or expiry display in this MVP — token is used until it fails.
+
+**Logout:** A "Sign out" link is present in the nav. Clicking it clears `sessionStorage` and redirects to `/login`. No server-side revocation endpoint exists in this MVP — the session record in the admin repository remains valid until it expires or is cleaned up. This is a known limitation: a stolen token remains usable server-side after client-side logout. A `POST /admin/logout` revocation endpoint is deferred to a future iteration.
+
+**XSS note:** `sessionStorage` is still accessible to JavaScript on the same origin and is not immune to XSS. The Cloudflare Pages origin must not load untrusted third-party scripts. A future hardening step could move to short-lived tokens issued as `httpOnly` cookies, but that requires additional CSRF protection and is deferred.
 
 ## Frontend Pages
 
@@ -74,7 +78,7 @@ No token refresh or expiry display in this MVP — token is used until it fails.
 
 ### Tenants Page (`/tenants`)
 
-- Table: tenant id, slug, display name, status, issuer URL.
+- Table: tenant id, slug, display name, status (`active` | `disabled`), issuer URL. `status` is defined on the `Tenant` domain type and must be included in the `GET /admin/tenants` response. The issuer URL displayed is the primary issuer's `issuerUrl` (where `isPrimary: true`); if no primary issuer exists, display an empty cell.
 - "New Tenant" button opens a modal with slug + display name fields.
 - `POST /admin/tenants` on submit; reload list on success.
 - Row click navigates to `/tenants/:id/users`.
@@ -88,7 +92,7 @@ No token refresh or expiry display in this MVP — token is used until it fails.
 
 ## UI Stack
 
-- **React 19** with React Router v7 (file-based or manual routes).
+- **React 19** with React Router v7 in **library mode** (manual routes). Framework/Remix mode is not compatible with a static Cloudflare Pages deployment and must not be used.
 - **Tailwind CSS** for styling — no component library.
 - **Vite** for build tooling.
 - No state management library; React context for auth token only.
@@ -100,21 +104,33 @@ No token refresh or expiry display in this MVP — token is used until it fails.
 | Method | Path | Response |
 |--------|------|----------|
 | `GET` | `/admin/tenants` | `{ tenants: Tenant[] }` |
-| `GET` | `/admin/tenants/:tenantId` | `{ id, slug, display_name, status, issuer }` |
+| `GET` | `/admin/tenants/:tenantId` | `{ id, slug, display_name, status, issuer }` — `issuer` is the primary issuer's `issuerUrl`, or `null` |
 | `GET` | `/admin/tenants/:tenantId/users` | `{ users: User[] }` |
 
-All three require `Authorization: Bearer <token>` (admin session).
+All three endpoints require `Authorization: Bearer <token>` (admin session) and follow the same per-route `authenticateAdminSession` call pattern as the existing `POST /admin/tenants` and `POST /admin/tenants/:tenantId/users` routes — no new Hono middleware group is introduced.
+
+`GET /admin/tenants/:tenantId` is needed by `TenantUsersPage` to load the tenant header on direct URL navigation and page refresh (router state from `TenantsPage` is lost on refresh).
 
 ### Repository Changes
 
-- `TenantRepository`: add `list(): Promise<Tenant[]>`
-- `UserRepository`: add `listByTenantId(tenantId: string): Promise<User[]>`
-- Implement both on `MemoryTenantRepository`, `MemoryUserRepository`, and Drizzle adapters.
+- `TenantRepository` interface: add `list(): Promise<Tenant[]>`
+- `UserRepository` interface: add `listByTenantId(tenantId: string): Promise<User[]>`
+
+All four concrete implementations must be updated:
+
+| Class | File |
+|-------|------|
+| `MemoryTenantRepository` | `src/adapters/db/memory/memory-tenant-repository.ts` |
+| `MemoryUserRepository` | `src/adapters/db/memory/memory-user-repository.ts` |
+| Drizzle `TenantRepository` | `src/adapters/db/drizzle/runtime.ts` |
+| Drizzle `UserRepository` | `src/adapters/db/drizzle/runtime.ts` |
 
 ### CORS
 
 - New environment variable: `ADMIN_ORIGIN` — the Cloudflare Pages URL (e.g. `https://ma-hono-admin.pages.dev`).
-- Added to `runtimeConfigSchema` in `src/config/env.ts`.
+- Declared in `wrangler.toml` under `[vars]` (not a binding — it is a plain string, not a D1/KV/R2 resource).
+- Added as `adminOrigin: z.string().optional()` to `runtimeConfigSchema` in `src/config/env.ts`, and exposed as `adminOrigin?: string` on the `RuntimeConfig` interface.
+- If `ADMIN_ORIGIN` is unset, the CORS middleware omits `Access-Control-Allow-Origin` entirely, blocking all cross-origin requests. This is the safe default. `ADMIN_ORIGIN` is a required deployment variable for the admin panel to function.
 - A Hono middleware on `/admin/*` routes adds:
   - `Access-Control-Allow-Origin: <ADMIN_ORIGIN>`
   - `Access-Control-Allow-Methods: GET, POST, OPTIONS`
@@ -127,14 +143,14 @@ All three require `Authorization: Bearer <token>` (admin session).
 - **Root directory**: `admin/`
 - **Build command**: `pnpm build`
 - **Build output**: `dist/`
-- **SPA fallback**: `admin/public/_redirects` containing `/* /index.html 200`
+- **SPA fallback**: `admin/public/_redirects` containing `/* /index.html 200`. Vite copies `public/` verbatim to `dist/`, so this becomes `admin/dist/_redirects`. This only works when the Pages "Root directory" is set to `admin/` — if the root is misconfigured as the repo root, the `_redirects` file will not be in the build output and SPA routing will break.
 - **Environment variable**: `VITE_API_BASE_URL` set to the Worker URL (e.g. `https://auth.maplayer.top`)
 
 ## Data Flow
 
 ```
 Browser → Pages CDN → (static assets)
-Browser → Worker /admin/login → session_token → localStorage
+Browser → Worker /admin/login → session_token → sessionStorage
 Browser → Worker /admin/tenants (Bearer token) → tenant list
 Browser → Worker /admin/tenants/:id/users (Bearer token) → user list
 ```
