@@ -42,7 +42,7 @@ ma_hono/
 │   ├── tsconfig.json
 │   ├── tailwind.config.ts
 │   └── package.json
-└── wrangler.toml                 # Worker config (unchanged)
+└── wrangler.jsonc                # Worker config (add ADMIN_ORIGIN var)
 ```
 
 ## Frontend Routes
@@ -56,7 +56,7 @@ ma_hono/
 
 ## Authentication
 
-- `POST /admin/login` returns `{ session_token }`.
+- `POST /admin/login` returns `{ email, session_token }`.
 - Token stored in `sessionStorage` under key `admin_session_token`. `sessionStorage` is preferred over `localStorage` because it is not shared across tabs and is cleared when the browser tab closes, limiting the exposure window.
 - All subsequent requests send `Authorization: Bearer <token>` header.
 - `AuthGuard` component wraps all protected routes; redirects to `/login` if no token in sessionStorage.
@@ -97,19 +97,23 @@ No token refresh or expiry display in this MVP — token is used until it fails.
 - **Vite** for build tooling.
 - No state management library; React context for auth token only.
 
+**Package structure:** `admin/` is a standalone package, not a pnpm workspace member. The root `pnpm-workspace.yaml` currently lists only `"."`. `admin/` has its own `package.json` and is installed/built independently (`cd admin && pnpm install && pnpm build`). React Router v7 minimum version: `^7.2.0`. React 19 is compatible with React Router v7 library mode.
+
 ## Worker Changes
 
 ### New Read Endpoints
 
+All new GET endpoints use the same snake_case wire format as the existing POST endpoints. Domain type camelCase fields are mapped to snake_case before serialization.
+
 | Method | Path | Response |
 |--------|------|----------|
-| `GET` | `/admin/tenants` | `{ tenants: Tenant[] }` |
+| `GET` | `/admin/tenants` | `{ tenants: [{ id, slug, display_name, status, issuer }] }` — `issuer` is the primary issuer's `issuerUrl`, or `null` |
 | `GET` | `/admin/tenants/:tenantId` | `{ id, slug, display_name, status, issuer }` — `issuer` is the primary issuer's `issuerUrl`, or `null` |
-| `GET` | `/admin/tenants/:tenantId/users` | `{ users: User[] }` |
+| `GET` | `/admin/tenants/:tenantId/users` | `{ users: [{ id, email, display_name, status }] }` |
 
 All three endpoints require `Authorization: Bearer <token>` (admin session) and follow the same per-route `authenticateAdminSession` call pattern as the existing `POST /admin/tenants` and `POST /admin/tenants/:tenantId/users` routes — no new Hono middleware group is introduced.
 
-`GET /admin/tenants/:tenantId` is needed by `TenantUsersPage` to load the tenant header on direct URL navigation and page refresh (router state from `TenantsPage` is lost on refresh).
+`GET /admin/tenants/:tenantId` is needed by `TenantUsersPage` to load the tenant header on direct URL navigation and page refresh (router state from `TenantsPage` is lost on refresh). `issuer` can only be `null` if all issuers have been removed, which is not currently supported via the API; this is a defensive guard.
 
 ### Repository Changes
 
@@ -128,7 +132,7 @@ All four concrete implementations must be updated:
 ### CORS
 
 - New environment variable: `ADMIN_ORIGIN` — the Cloudflare Pages URL (e.g. `https://ma-hono-admin.pages.dev`).
-- Declared in `wrangler.toml` under `[vars]` (not a binding — it is a plain string, not a D1/KV/R2 resource).
+- Declared in `wrangler.jsonc` under `"vars"` (not a binding — it is a plain string, not a D1/KV/R2 resource).
 - Added as `adminOrigin: z.string().optional()` to `runtimeConfigSchema` in `src/config/env.ts`, and exposed as `adminOrigin?: string` on the `RuntimeConfig` interface.
 - If `ADMIN_ORIGIN` is unset, the CORS middleware omits `Access-Control-Allow-Origin` entirely, blocking all cross-origin requests. This is the safe default. `ADMIN_ORIGIN` is a required deployment variable for the admin panel to function.
 - A Hono middleware on `/admin/*` routes adds:
@@ -169,3 +173,5 @@ Browser → Worker /admin/tenants/:id/users (Bearer token) → user list
 - Audit log viewer.
 - Pagination (initial implementation loads all records; add when needed).
 - Dark mode.
+- `POST /admin/logout` server-side session revocation (client-side sessionStorage clear on sign-out is accepted for MVP).
+- CSRF protection (not needed while using `Authorization: Bearer` header; required if/when switching to `httpOnly` cookie auth).
