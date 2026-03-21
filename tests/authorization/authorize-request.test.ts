@@ -588,6 +588,13 @@ describe("worker entrypoint wiring", () => {
     const readRuntimeConfig = vi.fn(() => ({
       adminBootstrapPassword: "bootstrap",
       adminWhitelist: [],
+      db: {} as D1Database,
+      managementApiToken: "manage-token",
+      platformHost: "idp.example.test"
+    }));
+    const loadPlatformConfig = vi.fn(async () => ({
+      adminBootstrapPasswordHash: "bootstrap",
+      adminWhitelist: [],
       managementApiToken: "manage-token",
       platformHost: "idp.example.test"
     }));
@@ -600,6 +607,9 @@ describe("worker entrypoint wiring", () => {
     }));
     vi.doMock("../../src/config/env", () => ({
       readRuntimeConfig
+    }));
+    vi.doMock("../../src/config/platform-config", () => ({
+      loadPlatformConfig
     }));
 
     try {
@@ -623,6 +633,7 @@ describe("worker entrypoint wiring", () => {
       vi.doUnmock("../../src/app/app");
       vi.doUnmock("../../src/adapters/db/drizzle/runtime");
       vi.doUnmock("../../src/config/env");
+      vi.doUnmock("../../src/config/platform-config");
       vi.resetModules();
     }
   });
@@ -685,12 +696,21 @@ describe("worker entrypoint wiring", () => {
       registrationTokensKv: {} as KVNamespace,
       userSessionsKv
     }));
+    const loadPlatformConfig = vi.fn(async () => ({
+      adminBootstrapPasswordHash: "",
+      adminWhitelist: [],
+      managementApiToken: "manage-token",
+      platformHost: "idp.example.test"
+    }));
 
     vi.doMock("../../src/adapters/db/drizzle/runtime", () => ({
       createRuntimeRepositories
     }));
     vi.doMock("../../src/config/env", () => ({
       readRuntimeConfig
+    }));
+    vi.doMock("../../src/config/platform-config", () => ({
+      loadPlatformConfig
     }));
 
     try {
@@ -727,6 +747,7 @@ describe("worker entrypoint wiring", () => {
     } finally {
       vi.doUnmock("../../src/adapters/db/drizzle/runtime");
       vi.doUnmock("../../src/config/env");
+      vi.doUnmock("../../src/config/platform-config");
       vi.resetModules();
     }
   });
@@ -806,12 +827,21 @@ describe("worker entrypoint wiring", () => {
       registrationTokensKv: {} as KVNamespace,
       userSessionsKv
     }));
+    const loadPlatformConfig = vi.fn(async () => ({
+      adminBootstrapPasswordHash: "",
+      adminWhitelist: [],
+      managementApiToken: "manage-token",
+      platformHost: "idp.example.test"
+    }));
 
     vi.doMock("../../src/adapters/db/drizzle/runtime", () => ({
       createRuntimeRepositories
     }));
     vi.doMock("../../src/config/env", () => ({
       readRuntimeConfig
+    }));
+    vi.doMock("../../src/config/platform-config", () => ({
+      loadPlatformConfig
     }));
 
     try {
@@ -845,6 +875,7 @@ describe("worker entrypoint wiring", () => {
     } finally {
       vi.doUnmock("../../src/adapters/db/drizzle/runtime");
       vi.doUnmock("../../src/config/env");
+      vi.doUnmock("../../src/config/platform-config");
       vi.resetModules();
     }
   });

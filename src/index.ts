@@ -1,6 +1,8 @@
 import { createApp } from "./app/app";
+import { createSetupApp } from "./app/setup-app";
 import { createRuntimeRepositories } from "./adapters/db/drizzle/runtime";
 import { readRuntimeConfig } from "./config/env";
+import { loadPlatformConfig } from "./config/platform-config";
 import type { BrowserSessionRepository } from "./domain/authentication/repository";
 import {
   browserSessionCookieName
@@ -58,11 +60,17 @@ const getCookieValue = (cookieHeader: string | null | undefined, name: string) =
 export default {
   async fetch(request: Request, env: RuntimeEnv, executionContext: ExecutionContext) {
     const runtimeConfig = readRuntimeConfig(env);
+    const platformConfig = await loadPlatformConfig(runtimeConfig.db);
+
+    if (platformConfig === null) {
+      return createSetupApp(runtimeConfig.db).fetch(request);
+    }
+
     const repositories = await createRuntimeRepositories(runtimeConfig);
     const browserSessionRepository = createKvBrowserSessionRepository(runtimeConfig.userSessionsKv);
     const app = createApp({
-      adminBootstrapPasswordHash: typeof env.ADMIN_BOOTSTRAP_PASSWORD === "string" ? env.ADMIN_BOOTSTRAP_PASSWORD : "",
-      adminWhitelist: typeof env.ADMIN_WHITELIST === "string" ? env.ADMIN_WHITELIST.split(",").map((v) => v.trim()).filter(Boolean) : [],
+      adminBootstrapPasswordHash: platformConfig.adminBootstrapPasswordHash,
+      adminWhitelist: platformConfig.adminWhitelist,
       adminRepository: repositories.adminRepository,
       auditRepository: repositories.auditRepository,
       authorizationCodeRepository: repositories.authorizationCodeRepository,
@@ -108,8 +116,8 @@ export default {
       keyRepository: repositories.keyRepository,
       loginChallengeLookupRepository: repositories.authenticationLoginChallengeRepository,
       loginChallengeRepository: repositories.loginChallengeRepository,
-      managementApiToken: typeof env.MANAGEMENT_API_TOKEN === "string" ? env.MANAGEMENT_API_TOKEN : "",
-      platformHost: typeof env.PLATFORM_HOST === "string" ? env.PLATFORM_HOST : "",
+      managementApiToken: platformConfig.managementApiToken,
+      platformHost: platformConfig.platformHost,
       browserSessionRepository,
       registrationAccessTokenRepository: repositories.registrationAccessTokenRepository,
       signer: repositories.signer,
