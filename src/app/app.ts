@@ -4,6 +4,12 @@ import { ZodError } from "zod";
 import type { AuditRepository } from "../domain/audit/repository";
 import { authenticateAdminSession, loginAdmin } from "../domain/admin-auth/service";
 import type { AdminRepository } from "../domain/admin-auth/repository";
+import { authorizeRequest } from "../domain/authorization/authorize-request";
+import type {
+  AuthorizationCodeRepository,
+  LoginChallengeRepository
+} from "../domain/authorization/repository";
+import type { AuthorizeSession } from "../domain/authorization/types";
 import type { RegistrationAccessTokenRepository } from "../domain/clients/registration-access-token-repository";
 import { sha256Base64Url } from "../lib/hash";
 import { registerClient } from "../domain/clients/register-client";
@@ -59,6 +65,18 @@ class EmptyRegistrationAccessTokenRepository implements RegistrationAccessTokenR
   }
 }
 
+class EmptyLoginChallengeRepository implements LoginChallengeRepository {
+  async create(): Promise<void> {
+    return;
+  }
+}
+
+class EmptyAuthorizationCodeRepository implements AuthorizationCodeRepository {
+  async create(): Promise<void> {
+    return;
+  }
+}
+
 class EmptyAdminRepository implements AdminRepository {
   async createSession(): Promise<void> {
     return;
@@ -84,8 +102,11 @@ export interface AppOptions {
   adminWhitelist?: string[];
   adminRepository?: AdminRepository;
   auditRepository?: AuditRepository;
+  authorizationCodeRepository?: AuthorizationCodeRepository;
+  authorizeSessionResolver?: (context: Context) => Promise<AuthorizeSession | null> | AuthorizeSession | null;
   clientRepository?: ClientRepository;
   keyRepository?: KeyRepository;
+  loginChallengeRepository?: LoginChallengeRepository;
   managementApiToken?: string;
   platformHost?: string;
   registrationAccessTokenRepository?: RegistrationAccessTokenRepository;
@@ -99,8 +120,13 @@ export const createApp = (options: AppOptions = {}) => {
   const adminWhitelist = options.adminWhitelist ?? [];
   const adminRepository = options.adminRepository ?? new EmptyAdminRepository();
   const auditRepository = options.auditRepository ?? new EmptyAuditRepository();
+  const authorizationCodeRepository =
+    options.authorizationCodeRepository ?? new EmptyAuthorizationCodeRepository();
+  const authorizeSessionResolver = options.authorizeSessionResolver ?? (async () => null);
   const clientRepository = options.clientRepository ?? new EmptyClientRepository();
   const keyRepository = options.keyRepository ?? new EmptyKeyRepository();
+  const loginChallengeRepository =
+    options.loginChallengeRepository ?? new EmptyLoginChallengeRepository();
   const managementApiToken = options.managementApiToken ?? "";
   const tenantRepository = options.tenantRepository ?? new EmptyTenantRepository();
   const registrationAccessTokenRepository =
@@ -117,6 +143,99 @@ export const createApp = (options: AppOptions = {}) => {
     return issuerContext === null ? null : buildDiscoveryMetadata(issuerContext);
   };
 
+  const handleAuthorize = async (context: Context) => {
+    const issuerContext = await resolveIssuerContext({
+      requestUrl: context.req.url,
+      platformHost,
+      tenantRepository
+    });
+
+    if (issuerContext === null) {
+      return context.notFound();
+    }
+
+    const url = new URL(context.req.url);
+    const session = await authorizeSessionResolver(context);
+    const result = await authorizeRequest({
+      authorizationCodeRepository,
+      clientRepository,
+      issuerContext,
+      loginChallengeRepository,
+      request: {
+        clientId: url.searchParams.get("client_id") ?? "",
+        redirectUri: url.searchParams.get("redirect_uri") ?? "",
+        responseType: url.searchParams.get("response_type") ?? "",
+        scope: url.searchParams.get("scope") ?? "",
+        state: url.searchParams.get("state"),
+        nonce: url.searchParams.get("nonce"),
+        codeChallenge: url.searchParams.get("code_challenge"),
+        codeChallengeMethod: url.searchParams.get("code_challenge_method")
+      },
+      session
+    });
+
+    if (result.kind === "error") {
+      await auditRepository.record({
+        id: crypto.randomUUID(),
+        actorType: session === null ? "anonymous" : "end_user",
+        actorId: session?.userId ?? null,
+        tenantId: issuerContext.tenant.id,
+        eventType: "oidc.authorization.failed",
+        targetType: "oidc_client",
+        targetId: result.clientId,
+        payload: {
+          client_id: result.clientId,
+          reason: result.error,
+          redirect_uri: result.redirectUri
+        },
+        occurredAt: new Date().toISOString()
+      });
+
+      return context.json(
+        result.errorDescription === undefined
+          ? { error: result.error }
+          : { error: result.error, error_description: result.errorDescription },
+        400
+      );
+    }
+
+    if (result.kind === "login_required") {
+      const loginUrl = new URL(`${issuerContext.issuer}/login`);
+
+      loginUrl.searchParams.set("login_challenge", result.loginChallengeToken);
+
+      return context.redirect(loginUrl.toString(), 302);
+    }
+
+    if (result.kind === "consent_required") {
+      return context.json({ error: "consent_required" }, 501);
+    }
+
+    await auditRepository.record({
+      id: crypto.randomUUID(),
+      actorType: "end_user",
+      actorId: result.session.userId,
+      tenantId: issuerContext.tenant.id,
+      eventType: "oidc.authorization.succeeded",
+      targetType: "oidc_client",
+      targetId: result.request.clientId,
+      payload: {
+        user_id: result.session.userId,
+        redirect_uri: result.request.redirectUri
+      },
+      occurredAt: new Date().toISOString()
+    });
+
+    const redirectUrl = new URL(result.request.redirectUri);
+
+    redirectUrl.searchParams.set("code", result.code);
+    if (result.request.state !== null) {
+      redirectUrl.searchParams.set("state", result.request.state);
+    }
+
+    return context.redirect(redirectUrl.toString(), 302);
+  };
+
   const handlePlaceholderEndpoint = async (context: Context) => {
     const issuerContext = await resolveIssuerContext({
       requestUrl: context.req.url,
@@ -124,9 +243,7 @@ export const createApp = (options: AppOptions = {}) => {
       tenantRepository
     });
 
-    return issuerContext === null
-      ? context.notFound()
-      : context.json({ error: "not_implemented" }, 501);
+    return issuerContext === null ? context.notFound() : context.json({ error: "not_implemented" }, 501);
   };
 
   app.get("/.well-known/openid-configuration", async (context) => {
@@ -169,8 +286,8 @@ export const createApp = (options: AppOptions = {}) => {
     return context.json(await buildJwks(keyRepository, issuerContext.tenant.id));
   });
 
-  app.all("/authorize", handlePlaceholderEndpoint);
-  app.all("/t/:tenant/authorize", handlePlaceholderEndpoint);
+  app.get("/authorize", handleAuthorize);
+  app.get("/t/:tenant/authorize", handleAuthorize);
   app.all("/token", handlePlaceholderEndpoint);
   app.all("/t/:tenant/token", handlePlaceholderEndpoint);
 

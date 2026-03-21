@@ -5,6 +5,10 @@ export type ClientTokenEndpointAuthMethod =
   | "client_secret_post"
   | "none";
 
+export type ClientTrustLevel = "first_party_trusted" | "third_party";
+
+export type ClientConsentPolicy = "skip" | "require";
+
 export interface Client {
   id: string;
   tenantId: string;
@@ -16,6 +20,8 @@ export interface Client {
   responseTypes: string[];
   tokenEndpointAuthMethod: ClientTokenEndpointAuthMethod;
   clientSecretHash: string | null;
+  trustLevel: ClientTrustLevel;
+  consentPolicy: ClientConsentPolicy;
 }
 
 export interface RegisterClientResult {

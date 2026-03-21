@@ -8,6 +8,14 @@ import type { AdminSession, AdminUser } from "../../../domain/admin-auth/types";
 import type { RegistrationAccessTokenRepository } from "../../../domain/clients/registration-access-token-repository";
 import type { ClientRepository } from "../../../domain/clients/repository";
 import type { Client } from "../../../domain/clients/types";
+import type {
+  AuthorizationCodeRepository,
+  LoginChallengeRepository
+} from "../../../domain/authorization/repository";
+import type {
+  AuthorizationCode,
+  LoginChallenge
+} from "../../../domain/authorization/types";
 import type { KeyMaterialStore } from "../../../domain/keys/key-material-store";
 import type { KeyRepository } from "../../../domain/keys/repository";
 import { createSigningKeySigner } from "../../../domain/keys/signer";
@@ -284,8 +292,8 @@ class D1ClientRepository implements ClientRepository {
       clientSecretHash: client.clientSecretHash,
       clientName: client.clientName,
       applicationType: client.applicationType,
-      trustLevel: "first_party_trusted",
-      consentPolicy: "skip",
+      trustLevel: client.trustLevel,
+      consentPolicy: client.consentPolicy,
       tokenEndpointAuthMethod: client.tokenEndpointAuthMethod,
       redirectUris: client.redirectUris,
       grantTypes: client.grantTypes,
@@ -319,8 +327,56 @@ class D1ClientRepository implements ClientRepository {
           grantTypes: row.grantTypes as Client["grantTypes"],
           redirectUris: row.redirectUris as Client["redirectUris"],
           responseTypes: row.responseTypes as Client["responseTypes"],
-          tokenEndpointAuthMethod: row.tokenEndpointAuthMethod as Client["tokenEndpointAuthMethod"]
+          tokenEndpointAuthMethod: row.tokenEndpointAuthMethod as Client["tokenEndpointAuthMethod"],
+          trustLevel: row.trustLevel as Client["trustLevel"],
+          consentPolicy: row.consentPolicy as Client["consentPolicy"]
         };
+  }
+}
+
+class D1LoginChallengeRepository implements LoginChallengeRepository {
+  constructor(private readonly db: ReturnType<typeof drizzle>) {}
+
+  async create(challenge: LoginChallenge): Promise<void> {
+    await this.db.insert(loginChallenges).values({
+      id: challenge.id,
+      tenantId: challenge.tenantId,
+      issuer: challenge.issuer,
+      clientId: challenge.clientId,
+      redirectUri: challenge.redirectUri,
+      scope: challenge.scope,
+      state: challenge.state,
+      codeChallenge: challenge.codeChallenge,
+      codeChallengeMethod: challenge.codeChallengeMethod,
+      nonce: challenge.nonce,
+      tokenHash: challenge.tokenHash,
+      expiresAt: challenge.expiresAt,
+      consumedAt: challenge.consumedAt,
+      createdAt: challenge.createdAt
+    });
+  }
+}
+
+class D1AuthorizationCodeRepository implements AuthorizationCodeRepository {
+  constructor(private readonly db: ReturnType<typeof drizzle>) {}
+
+  async create(code: AuthorizationCode): Promise<void> {
+    await this.db.insert(authorizationCodes).values({
+      id: code.id,
+      tenantId: code.tenantId,
+      issuer: code.issuer,
+      clientId: code.clientId,
+      userId: code.userId,
+      redirectUri: code.redirectUri,
+      scope: code.scope,
+      nonce: code.nonce,
+      codeChallenge: code.codeChallenge,
+      codeChallengeMethod: code.codeChallengeMethod,
+      tokenHash: code.tokenHash,
+      expiresAt: code.expiresAt,
+      consumedAt: code.consumedAt,
+      createdAt: code.createdAt
+    });
   }
 }
 
@@ -449,9 +505,11 @@ export const createRuntimeRepositories = async (config: RuntimeConfig) => {
   return {
     adminRepository: new D1KvAdminRepository(db, config.adminSessionsKv),
     auditRepository: new D1AuditRepository(db),
+    authorizationCodeRepository: new D1AuthorizationCodeRepository(db),
     clientRepository: new D1ClientRepository(db),
     keyMaterialStore,
     keyRepository,
+    loginChallengeRepository: new D1LoginChallengeRepository(db),
     signer,
     registrationAccessTokenRepository: new KvRegistrationAccessTokenRepository(
       config.registrationTokensKv

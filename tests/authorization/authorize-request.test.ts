@@ -1,0 +1,348 @@
+import { describe, expect, it } from "vitest";
+
+import { MemoryAuditRepository } from "../../src/adapters/db/memory/memory-audit-repository";
+import { MemoryAuthorizationCodeRepository } from "../../src/adapters/db/memory/memory-authorization-code-repository";
+import { MemoryClientRepository } from "../../src/adapters/db/memory/memory-client-repository";
+import { MemoryLoginChallengeRepository } from "../../src/adapters/db/memory/memory-login-challenge-repository";
+import { MemoryTenantRepository } from "../../src/adapters/db/memory/memory-tenant-repository";
+import { createApp } from "../../src/app/app";
+import type { Client } from "../../src/domain/clients/types";
+import { sha256Base64Url } from "../../src/lib/hash";
+
+const tenantRepository = new MemoryTenantRepository([
+  {
+    id: "tenant_acme",
+    slug: "acme",
+    displayName: "Acme",
+    status: "active",
+    issuers: [
+      {
+        id: "issuer_platform_acme",
+        issuerType: "platform_path",
+        issuerUrl: "https://idp.example.test/t/acme",
+        domain: null,
+        isPrimary: true,
+        verificationStatus: "verified"
+      },
+      {
+        id: "issuer_custom_acme",
+        issuerType: "custom_domain",
+        issuerUrl: "https://login.acme.test",
+        domain: "login.acme.test",
+        isPrimary: false,
+        verificationStatus: "verified"
+      }
+    ]
+  },
+  {
+    id: "tenant_disabled",
+    slug: "disabled",
+    displayName: "Disabled",
+    status: "disabled",
+    issuers: [
+      {
+        id: "issuer_platform_disabled",
+        issuerType: "platform_path",
+        issuerUrl: "https://idp.example.test/t/disabled",
+        domain: null,
+        isPrimary: true,
+        verificationStatus: "verified"
+      }
+    ]
+  },
+  {
+    id: "tenant_beta",
+    slug: "beta",
+    displayName: "Beta",
+    status: "active",
+    issuers: [
+      {
+        id: "issuer_platform_beta",
+        issuerType: "platform_path",
+        issuerUrl: "https://idp.example.test/t/beta",
+        domain: null,
+        isPrimary: true,
+        verificationStatus: "verified"
+      }
+    ]
+  }
+]);
+
+const clients: Client[] = [
+  {
+    id: "client_record_acme_first_party",
+    tenantId: "tenant_acme",
+    clientId: "client_acme_first_party",
+    clientName: "Acme Web",
+    applicationType: "web",
+    grantTypes: ["authorization_code"],
+    redirectUris: ["https://app.acme.test/callback"],
+    responseTypes: ["code"],
+    tokenEndpointAuthMethod: "client_secret_basic",
+    clientSecretHash: "hashed-secret",
+    trustLevel: "first_party_trusted",
+    consentPolicy: "skip"
+  },
+  {
+    id: "client_record_acme_third_party",
+    tenantId: "tenant_acme",
+    clientId: "client_acme_third_party",
+    clientName: "Partner App",
+    applicationType: "web",
+    grantTypes: ["authorization_code"],
+    redirectUris: ["https://partner.example.test/callback"],
+    responseTypes: ["code"],
+    tokenEndpointAuthMethod: "client_secret_basic",
+    clientSecretHash: "hashed-secret",
+    trustLevel: "third_party",
+    consentPolicy: "require"
+  },
+  {
+    id: "client_record_beta",
+    tenantId: "tenant_beta",
+    clientId: "client_beta",
+    clientName: "Beta Web",
+    applicationType: "web",
+    grantTypes: ["authorization_code"],
+    redirectUris: ["https://app.beta.test/callback"],
+    responseTypes: ["code"],
+    tokenEndpointAuthMethod: "client_secret_basic",
+    clientSecretHash: "hashed-secret",
+    trustLevel: "first_party_trusted",
+    consentPolicy: "skip"
+  }
+];
+
+const authorizeQuery =
+  "client_id=client_acme_first_party&redirect_uri=https%3A%2F%2Fapp.acme.test%2Fcallback&response_type=code&scope=openid%20profile&state=opaque-state&code_challenge=pkce-challenge&code_challenge_method=S256";
+
+describe("/authorize", () => {
+  it("creates a login challenge and redirects an unauthenticated platform-path request to login", async () => {
+    const loginChallengeRepository = new MemoryLoginChallengeRepository();
+    const auditRepository = new MemoryAuditRepository();
+    const app = createApp({
+      auditRepository,
+      clientRepository: new MemoryClientRepository(clients),
+      loginChallengeRepository,
+      platformHost: "idp.example.test",
+      tenantRepository
+    });
+
+    const response = await app.request(
+      `https://idp.example.test/t/acme/authorize?${authorizeQuery}`
+    );
+
+    expect(response.status).toBe(302);
+    expect(response.headers.get("location")).toMatch(
+      /^https:\/\/idp\.example\.test\/t\/acme\/login\?login_challenge=/
+    );
+
+    const location = new URL(response.headers.get("location") ?? "");
+    const loginChallengeToken = location.searchParams.get("login_challenge");
+
+    expect(loginChallengeToken).not.toBeNull();
+    expect(loginChallengeRepository.listChallenges()).toHaveLength(1);
+    expect(loginChallengeRepository.listChallenges()[0]).toMatchObject({
+      issuer: "https://idp.example.test/t/acme",
+      tenantId: "tenant_acme",
+      clientId: "client_acme_first_party",
+      redirectUri: "https://app.acme.test/callback",
+      scope: "openid profile",
+      state: "opaque-state",
+      codeChallenge: "pkce-challenge",
+      codeChallengeMethod: "S256",
+      nonce: null
+    });
+    expect(loginChallengeRepository.listChallenges()[0]?.tokenHash).toBe(
+      await sha256Base64Url(loginChallengeToken ?? "")
+    );
+    expect(auditRepository.listEvents()).toEqual([]);
+  });
+
+  it("uses the resolved custom-domain issuer when creating a login challenge", async () => {
+    const loginChallengeRepository = new MemoryLoginChallengeRepository();
+    const app = createApp({
+      clientRepository: new MemoryClientRepository(clients),
+      loginChallengeRepository,
+      platformHost: "idp.example.test",
+      tenantRepository
+    });
+
+    const response = await app.request(
+      `https://login.acme.test/authorize?${authorizeQuery}`
+    );
+
+    expect(response.status).toBe(302);
+    expect(response.headers.get("location")).toMatch(
+      /^https:\/\/login\.acme\.test\/login\?login_challenge=/
+    );
+    expect(loginChallengeRepository.listChallenges()[0]?.issuer).toBe("https://login.acme.test");
+  });
+
+  it("rejects authorization for a disabled tenant issuer", async () => {
+    const app = createApp({
+      clientRepository: new MemoryClientRepository(clients),
+      loginChallengeRepository: new MemoryLoginChallengeRepository(),
+      platformHost: "idp.example.test",
+      tenantRepository
+    });
+
+    const response = await app.request(
+      "https://idp.example.test/t/disabled/authorize?client_id=client_acme_first_party&redirect_uri=https%3A%2F%2Fapp.acme.test%2Fcallback&response_type=code&scope=openid&state=opaque-state&code_challenge=pkce-challenge&code_challenge_method=S256"
+    );
+
+    expect(response.status).toBe(404);
+  });
+
+  it("rejects a client that does not belong to the resolved tenant and audits the failure", async () => {
+    const auditRepository = new MemoryAuditRepository();
+    const app = createApp({
+      auditRepository,
+      clientRepository: new MemoryClientRepository(clients),
+      loginChallengeRepository: new MemoryLoginChallengeRepository(),
+      platformHost: "idp.example.test",
+      tenantRepository
+    });
+
+    const response = await app.request(
+      "https://idp.example.test/t/acme/authorize?client_id=client_beta&redirect_uri=https%3A%2F%2Fapp.beta.test%2Fcallback&response_type=code&scope=openid&state=opaque-state&code_challenge=pkce-challenge&code_challenge_method=S256"
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: "invalid_client" });
+    expect(auditRepository.listEvents()).toHaveLength(1);
+    expect(auditRepository.listEvents()[0]).toMatchObject({
+      tenantId: "tenant_acme",
+      eventType: "oidc.authorization.failed",
+      payload: {
+        client_id: "client_beta",
+        reason: "invalid_client"
+      }
+    });
+  });
+
+  it("requires an exact redirect uri match", async () => {
+    const app = createApp({
+      auditRepository: new MemoryAuditRepository(),
+      clientRepository: new MemoryClientRepository(clients),
+      loginChallengeRepository: new MemoryLoginChallengeRepository(),
+      platformHost: "idp.example.test",
+      tenantRepository
+    });
+
+    const response = await app.request(
+      "https://idp.example.test/t/acme/authorize?client_id=client_acme_first_party&redirect_uri=https%3A%2F%2Fapp.acme.test%2Fcallback%2Fextra&response_type=code&scope=openid&state=opaque-state&code_challenge=pkce-challenge&code_challenge_method=S256"
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: "invalid_redirect_uri" });
+  });
+
+  it("requires response_type=code and PKCE", async () => {
+    const app = createApp({
+      auditRepository: new MemoryAuditRepository(),
+      clientRepository: new MemoryClientRepository(clients),
+      loginChallengeRepository: new MemoryLoginChallengeRepository(),
+      platformHost: "idp.example.test",
+      tenantRepository
+    });
+
+    const unsupportedResponseType = await app.request(
+      "https://idp.example.test/t/acme/authorize?client_id=client_acme_first_party&redirect_uri=https%3A%2F%2Fapp.acme.test%2Fcallback&response_type=token&scope=openid&state=opaque-state&code_challenge=pkce-challenge&code_challenge_method=S256"
+    );
+
+    expect(unsupportedResponseType.status).toBe(400);
+    expect(await unsupportedResponseType.json()).toEqual({
+      error: "unsupported_response_type"
+    });
+
+    const missingPkce = await app.request(
+      "https://idp.example.test/t/acme/authorize?client_id=client_acme_first_party&redirect_uri=https%3A%2F%2Fapp.acme.test%2Fcallback&response_type=code&scope=openid&state=opaque-state"
+    );
+
+    expect(missingPkce.status).toBe(400);
+    expect(await missingPkce.json()).toEqual({
+      error: "invalid_request",
+      error_description: "PKCE is required"
+    });
+  });
+
+  it("auto-continues only trusted first-party clients with skip consent and persists the authorization code", async () => {
+    const auditRepository = new MemoryAuditRepository();
+    const authorizationCodeRepository = new MemoryAuthorizationCodeRepository();
+    const app = createApp({
+      auditRepository,
+      authorizationCodeRepository,
+      authorizeSessionResolver: async (context) =>
+        context.req.header("x-user-id") === "user_123" ? { userId: "user_123" } : null,
+      clientRepository: new MemoryClientRepository(clients),
+      loginChallengeRepository: new MemoryLoginChallengeRepository(),
+      platformHost: "idp.example.test",
+      tenantRepository
+    });
+
+    const response = await app.request(
+      `https://idp.example.test/t/acme/authorize?${authorizeQuery}`,
+      {
+        headers: {
+          "x-user-id": "user_123"
+        }
+      }
+    );
+
+    expect(response.status).toBe(302);
+    const location = new URL(response.headers.get("location") ?? "");
+
+    expect(location.origin + location.pathname).toBe("https://app.acme.test/callback");
+    expect(location.searchParams.get("code")).toBeTruthy();
+    expect(location.searchParams.get("state")).toBe("opaque-state");
+
+    const authorizationCode = authorizationCodeRepository.listAuthorizationCodes()[0];
+
+    expect(authorizationCodeRepository.listAuthorizationCodes()).toHaveLength(1);
+    expect(authorizationCode).toMatchObject({
+      issuer: "https://idp.example.test/t/acme",
+      tenantId: "tenant_acme",
+      clientId: "client_acme_first_party",
+      userId: "user_123",
+      redirectUri: "https://app.acme.test/callback",
+      codeChallenge: "pkce-challenge",
+      codeChallengeMethod: "S256",
+      scope: "openid profile",
+      nonce: ""
+    });
+    expect(authorizationCode?.tokenHash).toBe(
+      await sha256Base64Url(location.searchParams.get("code") ?? "")
+    );
+    expect(auditRepository.listEvents()).toHaveLength(1);
+    expect(auditRepository.listEvents()[0]).toMatchObject({
+      tenantId: "tenant_acme",
+      eventType: "oidc.authorization.succeeded",
+      targetType: "oidc_client",
+      targetId: "client_acme_first_party",
+      payload: {
+        user_id: "user_123"
+      }
+    });
+  });
+
+  it("does not auto-continue when the client requires consent", async () => {
+    const authorizationCodeRepository = new MemoryAuthorizationCodeRepository();
+    const app = createApp({
+      authorizationCodeRepository,
+      authorizeSessionResolver: async () => ({ userId: "user_123" }),
+      clientRepository: new MemoryClientRepository(clients),
+      loginChallengeRepository: new MemoryLoginChallengeRepository(),
+      platformHost: "idp.example.test",
+      tenantRepository
+    });
+
+    const response = await app.request(
+      "https://idp.example.test/t/acme/authorize?client_id=client_acme_third_party&redirect_uri=https%3A%2F%2Fpartner.example.test%2Fcallback&response_type=code&scope=openid&state=opaque-state&code_challenge=pkce-challenge&code_challenge_method=S256"
+    );
+
+    expect(response.status).toBe(501);
+    expect(await response.json()).toEqual({ error: "consent_required" });
+    expect(authorizationCodeRepository.listAuthorizationCodes()).toEqual([]);
+  });
+});
