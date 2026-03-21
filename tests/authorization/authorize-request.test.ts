@@ -586,11 +586,11 @@ describe("worker entrypoint wiring", () => {
       tenantRepository: {}
     }));
     const readRuntimeConfig = vi.fn(() => ({
-      adminBootstrapPassword: "bootstrap",
-      adminWhitelist: [],
+      adminSessionsKv: {} as KVNamespace,
       db: {} as D1Database,
-      managementApiToken: "manage-token",
-      platformHost: "idp.example.test"
+      keyMaterialBucket: {} as R2Bucket,
+      registrationTokensKv: {} as KVNamespace,
+      userSessionsKv: {} as KVNamespace
     }));
     const loadPlatformConfig = vi.fn(async () => ({
       adminBootstrapPasswordHash: "bootstrap",
@@ -874,6 +874,48 @@ describe("worker entrypoint wiring", () => {
       expect(close).toHaveBeenCalled();
     } finally {
       vi.doUnmock("../../src/adapters/db/drizzle/runtime");
+      vi.doUnmock("../../src/config/env");
+      vi.doUnmock("../../src/config/platform-config");
+      vi.resetModules();
+    }
+  });
+
+  it("routes to the setup wizard when loadPlatformConfig returns null", async () => {
+    vi.resetModules();
+
+    const setupAppFetch = vi.fn(async () => new Response("Setup", { status: 200 }));
+    const createSetupApp = vi.fn(() => ({ fetch: setupAppFetch }));
+    const createApp = vi.fn(() => ({ fetch: vi.fn() }));
+    const readRuntimeConfig = vi.fn(() => ({
+      adminSessionsKv: {} as KVNamespace,
+      db: {} as D1Database,
+      keyMaterialBucket: {} as R2Bucket,
+      registrationTokensKv: {} as KVNamespace,
+      userSessionsKv: {} as KVNamespace
+    }));
+    const loadPlatformConfig = vi.fn(async () => null);
+
+    vi.doMock("../../src/app/app", () => ({ createApp }));
+    vi.doMock("../../src/app/setup-app", () => ({ createSetupApp }));
+    vi.doMock("../../src/config/env", () => ({ readRuntimeConfig }));
+    vi.doMock("../../src/config/platform-config", () => ({ loadPlatformConfig }));
+
+    try {
+      const worker = (await import("../../src/index")).default;
+
+      const response = await worker.fetch(
+        new Request("https://idp.example.test/"),
+        {} as Record<string, unknown>,
+        {} as ExecutionContext
+      );
+
+      expect(response.status).toBe(200);
+      expect(await response.text()).toBe("Setup");
+      expect(createSetupApp).toHaveBeenCalled();
+      expect(createApp).not.toHaveBeenCalled();
+    } finally {
+      vi.doUnmock("../../src/app/app");
+      vi.doUnmock("../../src/app/setup-app");
       vi.doUnmock("../../src/config/env");
       vi.doUnmock("../../src/config/platform-config");
       vi.resetModules();
