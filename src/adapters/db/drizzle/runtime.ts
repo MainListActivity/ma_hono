@@ -12,6 +12,7 @@ import type {
   AuthorizationCodeRepository,
   LoginChallengeRepository
 } from "../../../domain/authorization/repository";
+import type { AuthenticationLoginChallengeRepository } from "../../../domain/authentication/login-challenge-repository";
 import type {
   AuthorizationCode,
   LoginChallenge
@@ -361,7 +362,9 @@ class D1ClientRepository implements ClientRepository {
   }
 }
 
-class D1LoginChallengeRepository implements LoginChallengeRepository {
+class D1LoginChallengeRepository
+  implements LoginChallengeRepository, AuthenticationLoginChallengeRepository
+{
   constructor(private readonly db: ReturnType<typeof drizzle>) {}
 
   async create(challenge: LoginChallenge): Promise<void> {
@@ -381,6 +384,54 @@ class D1LoginChallengeRepository implements LoginChallengeRepository {
       consumedAt: challenge.consumedAt,
       createdAt: challenge.createdAt
     });
+  }
+
+  async consume(challengeId: string, consumedAt: string): Promise<void> {
+    await this.db
+      .update(loginChallenges)
+      .set({
+        consumedAt
+      })
+      .where(
+        and(
+          eq(loginChallenges.id, challengeId),
+          isNull(loginChallenges.consumedAt)
+        )
+      );
+  }
+
+  async findByTokenHash(tokenHash: string): Promise<LoginChallenge | null> {
+    const [row] = await this.db
+      .select()
+      .from(loginChallenges)
+      .where(
+        and(
+          eq(loginChallenges.tokenHash, tokenHash),
+          isNull(loginChallenges.consumedAt)
+        )
+      )
+      .limit(1);
+
+    if (row === undefined) {
+      return null;
+    }
+
+    return {
+      id: row.id,
+      tenantId: row.tenantId,
+      issuer: row.issuer,
+      clientId: row.clientId,
+      redirectUri: row.redirectUri,
+      scope: row.scope,
+      state: row.state,
+      codeChallenge: row.codeChallenge,
+      codeChallengeMethod: row.codeChallengeMethod as LoginChallenge["codeChallengeMethod"],
+      nonce: row.nonce,
+      tokenHash: row.tokenHash,
+      expiresAt: row.expiresAt,
+      consumedAt: row.consumedAt,
+      createdAt: row.createdAt
+    };
   }
 }
 
@@ -900,6 +951,8 @@ export const createRuntimeRepositories = async (config: RuntimeConfig) => {
     await signer.ensureActiveSigningKeyMaterial(null);
   }
 
+  const loginChallengeRepository = new D1LoginChallengeRepository(db);
+
   return {
     adminRepository: new D1KvAdminRepository(db, config.adminSessionsKv),
     auditRepository: new D1AuditRepository(db),
@@ -907,7 +960,8 @@ export const createRuntimeRepositories = async (config: RuntimeConfig) => {
     clientRepository: new D1ClientRepository(db),
     keyMaterialStore,
     keyRepository,
-    loginChallengeRepository: new D1LoginChallengeRepository(db),
+    loginChallengeRepository,
+    authenticationLoginChallengeRepository: loginChallengeRepository,
     userRepository: new D1UserRepository(db),
     signer,
     registrationAccessTokenRepository: new KvRegistrationAccessTokenRepository(

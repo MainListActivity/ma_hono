@@ -2,9 +2,34 @@ import { sha256Base64Url } from "../../lib/hash";
 import type { BrowserSessionRepository } from "./repository";
 import type { BrowserSession } from "./types";
 
-const defaultBrowserSessionLifetimeMs = 30 * 24 * 60 * 60 * 1000;
+export const browserSessionCookieName = "user_session";
+export const defaultBrowserSessionLifetimeMs = 30 * 24 * 60 * 60 * 1000;
 
 const createOpaqueToken = () => crypto.randomUUID().replaceAll("-", "");
+
+export const buildBrowserSessionCookie = ({
+  expiresAt,
+  secure = true,
+  sessionToken
+}: {
+  expiresAt: string;
+  secure?: boolean;
+  sessionToken: string;
+}) => {
+  const segments = [
+    `${browserSessionCookieName}=${sessionToken}`,
+    "Path=/",
+    "HttpOnly",
+    "SameSite=Lax",
+    `Expires=${new Date(expiresAt).toUTCString()}`
+  ];
+
+  if (secure) {
+    segments.push("Secure");
+  }
+
+  return segments.join("; ");
+};
 
 export const createBrowserSession = async ({
   lifetimeMs = defaultBrowserSessionLifetimeMs,

@@ -1,9 +1,16 @@
 import { Hono, type Context } from "hono";
 import { ZodError } from "zod";
 
+import { authenticateWithPassword } from "../adapters/auth/local-auth/password-auth-service";
 import type { AuditRepository } from "../domain/audit/repository";
 import { authenticateAdminSession, loginAdmin } from "../domain/admin-auth/service";
 import type { AdminRepository } from "../domain/admin-auth/repository";
+import type { AuthenticationLoginChallengeRepository } from "../domain/authentication/login-challenge-repository";
+import type { BrowserSessionRepository } from "../domain/authentication/repository";
+import {
+  buildBrowserSessionCookie,
+  createBrowserSession
+} from "../domain/authentication/session-service";
 import { authorizeRequest } from "../domain/authorization/authorize-request";
 import type {
   AuthorizationCodeRepository,
@@ -76,6 +83,28 @@ class EmptyRegistrationAccessTokenRepository implements RegistrationAccessTokenR
 class EmptyLoginChallengeRepository implements LoginChallengeRepository {
   async create(): Promise<void> {
     return;
+  }
+}
+
+class EmptyAuthenticationLoginChallengeRepository
+  implements AuthenticationLoginChallengeRepository
+{
+  async consume(): Promise<void> {
+    return;
+  }
+
+  async findByTokenHash(): Promise<null> {
+    return null;
+  }
+}
+
+class EmptyBrowserSessionRepository implements BrowserSessionRepository {
+  async create(): Promise<void> {
+    return;
+  }
+
+  async findByTokenHash(): Promise<null> {
+    return null;
   }
 }
 
@@ -160,8 +189,10 @@ export interface AppOptions {
   auditRepository?: AuditRepository;
   authorizationCodeRepository?: AuthorizationCodeRepository;
   authorizeSessionResolver?: (context: Context) => Promise<AuthorizeSession | null> | AuthorizeSession | null;
+  browserSessionRepository?: BrowserSessionRepository;
   clientRepository?: ClientRepository;
   keyRepository?: KeyRepository;
+  loginChallengeLookupRepository?: AuthenticationLoginChallengeRepository;
   loginChallengeRepository?: LoginChallengeRepository;
   managementApiToken?: string;
   platformHost?: string;
@@ -180,8 +211,12 @@ export const createApp = (options: AppOptions = {}) => {
   const authorizationCodeRepository =
     options.authorizationCodeRepository ?? new EmptyAuthorizationCodeRepository();
   const authorizeSessionResolver = options.authorizeSessionResolver ?? (async () => null);
+  const browserSessionRepository =
+    options.browserSessionRepository ?? new EmptyBrowserSessionRepository();
   const clientRepository = options.clientRepository ?? new EmptyClientRepository();
   const keyRepository = options.keyRepository ?? new EmptyKeyRepository();
+  const loginChallengeLookupRepository =
+    options.loginChallengeLookupRepository ?? new EmptyAuthenticationLoginChallengeRepository();
   const loginChallengeRepository =
     options.loginChallengeRepository ?? new EmptyLoginChallengeRepository();
   const managementApiToken = options.managementApiToken ?? "";
@@ -225,6 +260,9 @@ export const createApp = (options: AppOptions = {}) => {
 
     return redirectUrl.toString();
   };
+
+  const createOpaqueToken = () => crypto.randomUUID().replaceAll("-", "");
+  const authorizationCodeLifetimeMs = 5 * 60 * 1000;
 
   const recordAuthorizeAuditEvent = async ({
     actorId,
@@ -433,6 +471,127 @@ export const createApp = (options: AppOptions = {}) => {
     );
   };
 
+  const handlePasswordLogin = async (context: Context) => {
+    const issuerContext = await resolveIssuerContext({
+      requestUrl: context.req.url,
+      platformHost,
+      tenantRepository
+    });
+
+    if (issuerContext === null) {
+      return context.notFound();
+    }
+
+    let formData: FormData;
+    try {
+      formData = await context.req.formData();
+    } catch {
+      return context.json(
+        {
+          error: "invalid_request"
+        },
+        400
+      );
+    }
+
+    const result = await authenticateWithPassword({
+      loginChallengeRepository: loginChallengeLookupRepository,
+      loginChallengeToken: String(formData.get("login_challenge") ?? ""),
+      password: String(formData.get("password") ?? ""),
+      tenantId: issuerContext.tenant.id,
+      userRepository,
+      username: String(formData.get("username") ?? "")
+    });
+
+    if (result.kind === "rejected") {
+      const status =
+        result.reason === "password_login_disabled"
+          ? 403
+          : result.reason === "invalid_login_challenge"
+            ? 400
+            : 401;
+      const error =
+        result.reason === "password_login_disabled"
+          ? "password_login_disabled"
+          : result.reason === "invalid_login_challenge"
+            ? "invalid_request"
+            : "invalid_credentials";
+
+      await recordAuditEventBestEffort({
+        actorType: "anonymous",
+        actorId: null,
+        tenantId: issuerContext.tenant.id,
+        eventType: "user.password_login.failed",
+        targetType: "user",
+        targetId: null,
+        payload: {
+          reason: result.reason
+        }
+      });
+
+      return context.json(
+        {
+          error
+        },
+        status
+      );
+    }
+
+    const { session, sessionToken } = await createBrowserSession({
+      sessionRepository: browserSessionRepository,
+      tenantId: result.user.tenantId,
+      userId: result.user.id
+    });
+    const authorizationCodeToken = createOpaqueToken();
+
+    await authorizationCodeRepository.create({
+      id: crypto.randomUUID(),
+      tenantId: result.challenge.tenantId,
+      issuer: result.challenge.issuer,
+      clientId: result.challenge.clientId,
+      userId: result.user.id,
+      redirectUri: result.challenge.redirectUri,
+      scope: result.challenge.scope,
+      nonce: result.challenge.nonce,
+      codeChallenge: result.challenge.codeChallenge,
+      codeChallengeMethod: result.challenge.codeChallengeMethod,
+      tokenHash: await sha256Base64Url(authorizationCodeToken),
+      expiresAt: new Date(Date.now() + authorizationCodeLifetimeMs).toISOString(),
+      consumedAt: null,
+      createdAt: new Date().toISOString()
+    });
+
+    await recordAuditEventBestEffort({
+      actorType: "end_user",
+      actorId: result.user.id,
+      tenantId: issuerContext.tenant.id,
+      eventType: "user.password_login.succeeded",
+      targetType: "user",
+      targetId: result.user.id,
+      payload: {
+        client_id: result.challenge.clientId
+      }
+    });
+
+    const redirectUrl = new URL(result.challenge.redirectUri);
+
+    redirectUrl.searchParams.set("code", authorizationCodeToken);
+    if (result.challenge.state.length > 0) {
+      redirectUrl.searchParams.set("state", result.challenge.state);
+    }
+
+    context.header(
+      "Set-Cookie",
+      buildBrowserSessionCookie({
+        expiresAt: session.expiresAt,
+        secure: new URL(issuerContext.issuer).protocol === "https:",
+        sessionToken
+      })
+    );
+
+    return context.redirect(redirectUrl.toString(), 302);
+  };
+
   const handlePlaceholderEndpoint = async (context: Context) => {
     const issuerContext = await resolveIssuerContext({
       requestUrl: context.req.url,
@@ -594,6 +753,8 @@ export const createApp = (options: AppOptions = {}) => {
 
   app.get("/login", handleLoginEntry);
   app.get("/t/:tenant/login", handleLoginEntry);
+  app.post("/login/password", handlePasswordLogin);
+  app.post("/t/:tenant/login/password", handlePasswordLogin);
   app.get("/authorize", handleAuthorize);
   app.get("/t/:tenant/authorize", handleAuthorize);
   app.post("/token", handleToken);

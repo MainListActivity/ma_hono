@@ -1,17 +1,48 @@
 import { createApp } from "./app/app";
 import { createRuntimeRepositories } from "./adapters/db/drizzle/runtime";
 import { readRuntimeConfig } from "./config/env";
+import type { BrowserSessionRepository } from "./domain/authentication/repository";
+import {
+  browserSessionCookieName
+} from "./domain/authentication/session-service";
+import type { BrowserSession } from "./domain/authentication/types";
 import { sha256Base64Url } from "./lib/hash";
 
 type RuntimeEnv = Record<string, unknown>;
 
-const userSessionCookieName = "user_session";
 const userSessionPrefix = "user_session:";
 
 interface RuntimeAuthorizeSessionRecord {
   userId: string;
   expiresAt: string;
 }
+
+const createKvBrowserSessionRepository = (kv: KVNamespace): BrowserSessionRepository => ({
+  async create(session: BrowserSession): Promise<void> {
+    const expirationTtl = Math.max(
+      60,
+      Math.ceil((new Date(session.expiresAt).getTime() - Date.now()) / 1000)
+    );
+
+    await kv.put(`${userSessionPrefix}${session.tokenHash}`, JSON.stringify(session), {
+      expirationTtl
+    });
+  },
+
+  async findByTokenHash(tokenHash: string): Promise<BrowserSession | null> {
+    const storedSession = await kv.get(`${userSessionPrefix}${tokenHash}`);
+
+    if (storedSession === null) {
+      return null;
+    }
+
+    try {
+      return JSON.parse(storedSession) as BrowserSession;
+    } catch {
+      return null;
+    }
+  }
+});
 
 const getCookieValue = (cookieHeader: string | null | undefined, name: string) => {
   if (cookieHeader === undefined || cookieHeader === null) {
@@ -33,6 +64,7 @@ export default {
   async fetch(request: Request, env: RuntimeEnv, executionContext: ExecutionContext) {
     const runtimeConfig = readRuntimeConfig(env);
     const repositories = await createRuntimeRepositories(runtimeConfig);
+    const browserSessionRepository = createKvBrowserSessionRepository(runtimeConfig.userSessionsKv);
     const app = createApp({
       adminBootstrapPassword: runtimeConfig.adminBootstrapPassword,
       adminWhitelist: runtimeConfig.adminWhitelist,
@@ -40,7 +72,7 @@ export default {
       auditRepository: repositories.auditRepository,
       authorizationCodeRepository: repositories.authorizationCodeRepository,
       authorizeSessionResolver: async (context) => {
-        const sessionToken = getCookieValue(context.req.header("cookie"), userSessionCookieName);
+        const sessionToken = getCookieValue(context.req.header("cookie"), browserSessionCookieName);
 
         if (sessionToken === null || sessionToken.length === 0) {
           return null;
@@ -70,9 +102,11 @@ export default {
       },
       clientRepository: repositories.clientRepository,
       keyRepository: repositories.keyRepository,
+      loginChallengeLookupRepository: repositories.authenticationLoginChallengeRepository,
       loginChallengeRepository: repositories.loginChallengeRepository,
       managementApiToken: runtimeConfig.managementApiToken,
       platformHost: runtimeConfig.platformHost,
+      browserSessionRepository,
       registrationAccessTokenRepository: repositories.registrationAccessTokenRepository,
       signer: repositories.signer,
       tenantRepository: repositories.tenantRepository,
