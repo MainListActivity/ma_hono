@@ -288,6 +288,20 @@ Suggested columns:
 
 Private key material should not be stored inline in D1 rows. The `private_key_ref` should point to an R2 object key or equivalent Cloudflare-native object reference.
 
+### `platform_config`
+
+Purpose: key-value store for platform-level configuration (admin bootstrap password hash, admin email whitelist, management API token, platform host).
+
+Suggested columns:
+
+- `id`
+- `key` (unique)
+- `value`
+- `created_at`
+- `updated_at`
+
+This table stores configuration that is set once during platform initialization and used by the setup wizard to guide initial operator configuration.
+
 ### `admin_users`
 
 Purpose: fixed-whitelist admin identities.
@@ -463,6 +477,7 @@ The admin console is intentionally separate from future end-user authentication.
 Initial admin auth rules:
 
 - only preconfigured whitelist accounts may log in
+- admin credentials (hashed bootstrap password and email whitelist) are stored in the `platform_config` D1 table, not Worker secrets
 - no self-service signup
 - no tenant-driven admin federation in this phase
 - admin sessions are scoped to management access only and stored in KV
@@ -571,13 +586,14 @@ This is especially important for custom domains. A request received on a tenant 
 Recommended implementation order:
 
 1. Bootstrap the workspace with `pnpm`, TypeScript strict mode, Hono, Vitest, Zod, Drizzle D1 schema support, Workers bindings, and Wrangler configuration.
-2. Implement tenant and issuer models with host/path resolution.
-3. Implement discovery metadata and JWKS endpoints.
-4. Implement signing key metadata in D1 and private key material storage in R2.
-5. Implement Dynamic Client Registration with strict validation, KV-backed registration tokens, and audited writes.
-6. Implement fixed-whitelist admin auth with KV-backed admin sessions.
-7. Implement admin UI and APIs for tenants and clients.
-8. Add documentation and Cloudflare binding setup.
+2. Implement platform configuration storage in the `platform_config` D1 table with a setup wizard for initial operator configuration of admin credentials and whitelist.
+3. Implement tenant and issuer models with host/path resolution.
+4. Implement discovery metadata and JWKS endpoints.
+5. Implement signing key metadata in D1 and private key material storage in R2.
+6. Implement Dynamic Client Registration with strict validation, KV-backed registration tokens, and audited writes.
+7. Implement fixed-whitelist admin auth with KV-backed admin sessions and credentials loaded from the `platform_config` D1 table.
+8. Implement admin UI and APIs for tenants and clients.
+9. Add documentation and Cloudflare binding setup.
 
 Each step should produce working, testable software rather than placeholders.
 
