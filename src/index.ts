@@ -74,7 +74,8 @@ export default {
       managementApiToken: runtimeConfig.managementApiToken,
       platformHost: runtimeConfig.platformHost,
       registrationAccessTokenRepository: repositories.registrationAccessTokenRepository,
-      tenantRepository: repositories.tenantRepository
+      tenantRepository: repositories.tenantRepository,
+      userRepository: repositories.userRepository
     });
 
     try {

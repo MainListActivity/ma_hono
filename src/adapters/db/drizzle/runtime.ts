@@ -23,6 +23,18 @@ import type { SigningKey, SigningKeyMaterial } from "../../../domain/keys/types"
 import type { RuntimeConfig } from "../../../config/env";
 import type { TenantRepository } from "../../../domain/tenants/repository";
 import type { Tenant, TenantIssuer } from "../../../domain/tenants/types";
+import type {
+  ActivateUserByInvitationTokenInput,
+  ActivateUserByInvitationTokenResult,
+  CreateProvisionedUserWithInvitationInput,
+  UserRepository
+} from "../../../domain/users/repository";
+import type {
+  PasswordCredential,
+  TenantAuthMethodPolicy,
+  User,
+  UserInvitation
+} from "../../../domain/users/types";
 import { R2KeyMaterialStore } from "../../r2/r2-key-material-store";
 import {
   adminUsers,
@@ -438,6 +450,275 @@ class D1AuditRepository implements AuditRepository {
   }
 }
 
+const toUser = (row: typeof users.$inferSelect): User => ({
+  id: row.id,
+  tenantId: row.tenantId,
+  email: row.email,
+  emailVerified: row.emailVerified,
+  username: row.username,
+  displayName: row.displayName,
+  status: row.status as User["status"],
+  createdAt: row.createdAt,
+  updatedAt: row.updatedAt
+});
+
+const toInvitation = (row: typeof userInvitations.$inferSelect): UserInvitation => ({
+  id: row.id,
+  tenantId: row.tenantId,
+  userId: row.userId,
+  tokenHash: row.tokenHash,
+  purpose: row.purpose as UserInvitation["purpose"],
+  expiresAt: row.expiresAt,
+  consumedAt: row.consumedAt,
+  createdAt: row.createdAt
+});
+
+const toPasswordCredential = (
+  row: typeof userPasswordCredentials.$inferSelect
+): PasswordCredential => ({
+  id: row.id,
+  tenantId: row.tenantId,
+  userId: row.userId,
+  passwordHash: row.passwordHash,
+  createdAt: row.createdAt,
+  updatedAt: row.updatedAt
+});
+
+class D1UserRepository implements UserRepository {
+  constructor(private readonly db: ReturnType<typeof drizzle>) {}
+
+  async activateUserByInvitationToken({
+    createPasswordHash,
+    now,
+    tokenHash
+  }: ActivateUserByInvitationTokenInput): Promise<ActivateUserByInvitationTokenResult> {
+    return this.db.transaction(async (tx) => {
+      const [invitationRow] = await tx
+        .select()
+        .from(userInvitations)
+        .where(eq(userInvitations.tokenHash, tokenHash))
+        .limit(1);
+
+      if (invitationRow === undefined) {
+        return { kind: "not_found" };
+      }
+
+      if (invitationRow.consumedAt !== null) {
+        return { kind: "already_used" };
+      }
+
+      if (new Date(invitationRow.expiresAt).getTime() <= now.getTime()) {
+        return { kind: "expired" };
+      }
+
+      const [userRow] = await tx
+        .select()
+        .from(users)
+        .where(and(eq(users.tenantId, invitationRow.tenantId), eq(users.id, invitationRow.userId)))
+        .limit(1);
+
+      if (userRow === undefined) {
+        return { kind: "not_found" };
+      }
+
+      if (userRow.status === "disabled") {
+        return { kind: "user_disabled" };
+      }
+
+      const [credentialRow] = await tx
+        .select()
+        .from(userPasswordCredentials)
+        .where(
+          and(
+            eq(userPasswordCredentials.tenantId, invitationRow.tenantId),
+            eq(userPasswordCredentials.userId, invitationRow.userId)
+          )
+        )
+        .limit(1);
+
+      if (userRow.status !== "provisioned" || credentialRow !== undefined) {
+        return { kind: "already_initialized" };
+      }
+
+      const updatedAt = now.toISOString();
+      const passwordHash = await createPasswordHash();
+      const credential: PasswordCredential = {
+        id: crypto.randomUUID(),
+        tenantId: invitationRow.tenantId,
+        userId: invitationRow.userId,
+        passwordHash,
+        createdAt: updatedAt,
+        updatedAt
+      };
+
+      await tx
+        .update(userInvitations)
+        .set({ consumedAt: updatedAt })
+        .where(eq(userInvitations.id, invitationRow.id));
+      await tx
+        .update(users)
+        .set({
+          emailVerified: true,
+          status: "active",
+          updatedAt
+        })
+        .where(and(eq(users.tenantId, invitationRow.tenantId), eq(users.id, invitationRow.userId)));
+      await tx.insert(userPasswordCredentials).values({
+        id: credential.id,
+        tenantId: credential.tenantId,
+        userId: credential.userId,
+        passwordHash: credential.passwordHash,
+        createdAt: credential.createdAt,
+        updatedAt: credential.updatedAt
+      });
+
+      return {
+        kind: "activated",
+        invitation: {
+          ...toInvitation(invitationRow),
+          consumedAt: updatedAt
+        },
+        user: {
+          ...toUser(userRow),
+          emailVerified: true,
+          status: "active",
+          updatedAt
+        },
+        credential
+      };
+    });
+  }
+
+  async createProvisionedUserWithInvitation({
+    invitation,
+    user
+  }: CreateProvisionedUserWithInvitationInput): Promise<void> {
+    await this.db.transaction(async (tx) => {
+      await tx.insert(users).values({
+        id: user.id,
+        tenantId: user.tenantId,
+        email: user.email,
+        emailVerified: user.emailVerified,
+        username: user.username,
+        displayName: user.displayName,
+        status: user.status,
+        createdAt: user.createdAt,
+        updatedAt: user.updatedAt
+      });
+      await tx.insert(userInvitations).values({
+        id: invitation.id,
+        tenantId: invitation.tenantId,
+        userId: invitation.userId,
+        tokenHash: invitation.tokenHash,
+        purpose: invitation.purpose,
+        expiresAt: invitation.expiresAt,
+        consumedAt: invitation.consumedAt,
+        createdAt: invitation.createdAt
+      });
+    });
+  }
+
+  async findAuthMethodPolicyByTenantId(tenantId: string): Promise<TenantAuthMethodPolicy | null> {
+    const [row] = await this.db
+      .select()
+      .from(tenantAuthMethodPolicies)
+      .where(eq(tenantAuthMethodPolicies.tenantId, tenantId))
+      .limit(1);
+
+    return row === undefined
+      ? null
+      : {
+          tenantId: row.tenantId,
+          password: {
+            enabled: row.passwordEnabled
+          },
+          emailMagicLink: {
+            enabled: row.emailMagicLinkEnabled
+          },
+          passkey: {
+            enabled: row.passkeyEnabled
+          }
+        };
+  }
+
+  async findPasswordCredentialByUserId(
+    tenantId: string,
+    userId: string
+  ): Promise<PasswordCredential | null> {
+    const [row] = await this.db
+      .select()
+      .from(userPasswordCredentials)
+      .where(and(eq(userPasswordCredentials.tenantId, tenantId), eq(userPasswordCredentials.userId, userId)))
+      .limit(1);
+
+    return row === undefined ? null : toPasswordCredential(row);
+  }
+
+  async findUserByEmail(tenantId: string, email: string): Promise<User | null> {
+    const [row] = await this.db
+      .select()
+      .from(users)
+      .where(and(eq(users.tenantId, tenantId), eq(users.email, email)))
+      .limit(1);
+
+    return row === undefined ? null : toUser(row);
+  }
+
+  async findUserById(tenantId: string, userId: string): Promise<User | null> {
+    const [row] = await this.db
+      .select()
+      .from(users)
+      .where(and(eq(users.tenantId, tenantId), eq(users.id, userId)))
+      .limit(1);
+
+    return row === undefined ? null : toUser(row);
+  }
+
+  async findUserByUsername(tenantId: string, username: string): Promise<User | null> {
+    const [row] = await this.db
+      .select()
+      .from(users)
+      .where(and(eq(users.tenantId, tenantId), eq(users.username, username)))
+      .limit(1);
+
+    return row === undefined ? null : toUser(row);
+  }
+
+  async updateUser(user: User): Promise<void> {
+    await this.db
+      .update(users)
+      .set({
+        email: user.email,
+        emailVerified: user.emailVerified,
+        username: user.username,
+        displayName: user.displayName,
+        status: user.status,
+        updatedAt: user.updatedAt
+      })
+      .where(and(eq(users.tenantId, user.tenantId), eq(users.id, user.id)));
+  }
+
+  async upsertPasswordCredential(credential: PasswordCredential): Promise<void> {
+    await this.db
+      .insert(userPasswordCredentials)
+      .values({
+        id: credential.id,
+        tenantId: credential.tenantId,
+        userId: credential.userId,
+        passwordHash: credential.passwordHash,
+        createdAt: credential.createdAt,
+        updatedAt: credential.updatedAt
+      })
+      .onConflictDoUpdate({
+        target: userPasswordCredentials.userId,
+        set: {
+          passwordHash: credential.passwordHash,
+          updatedAt: credential.updatedAt
+        }
+      });
+  }
+}
+
 class KvRegistrationAccessTokenRepository
   implements RegistrationAccessTokenRepository
 {
@@ -510,6 +791,7 @@ export const createRuntimeRepositories = async (config: RuntimeConfig) => {
     keyMaterialStore,
     keyRepository,
     loginChallengeRepository: new D1LoginChallengeRepository(db),
+    userRepository: new D1UserRepository(db),
     signer,
     registrationAccessTokenRepository: new KvRegistrationAccessTokenRepository(
       config.registrationTokensKv

@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 
+import { MemoryAuditRepository } from "../../src/adapters/db/memory/memory-audit-repository";
+import { MemoryAdminRepository } from "../../src/adapters/db/memory/memory-admin-repository";
 import { MemoryUserRepository } from "../../src/adapters/db/memory/memory-user-repository";
 import { MemoryUserSessionRepository } from "../../src/adapters/db/memory/memory-user-session-repository";
+import { createApp } from "../../src/app/app";
 import { activateUser } from "../../src/domain/users/activate-user";
 import { hashPassword, verifyPassword } from "../../src/domain/users/passwords";
 import * as passwords from "../../src/domain/users/passwords";
@@ -12,6 +15,10 @@ import {
   createBrowserSession
 } from "../../src/domain/authentication/session-service";
 import { sha256Base64Url } from "../../src/lib/hash";
+
+interface AdminLoginResponse {
+  session_token: string;
+}
 
 const tenantPolicy: TenantAuthMethodPolicy = {
   tenantId: "tenant_acme",
@@ -421,5 +428,140 @@ describe("user provisioning and activation domain", () => {
         now: new Date("2026-03-21T12:06:00.000Z")
       })
     ).toBeNull();
+  });
+});
+
+describe("user provisioning and activation routes", () => {
+  it("allows an authenticated admin to provision a tenant user and returns invitation token + activation url", async () => {
+    const userRepository = new MemoryUserRepository({
+      policies: [tenantPolicy]
+    });
+    const app = createApp({
+      adminBootstrapPassword: "bootstrap-secret",
+      adminWhitelist: ["admin@example.test"],
+      adminRepository: new MemoryAdminRepository({
+        adminUsers: [{ email: "admin@example.test", id: "admin_1", status: "active" }]
+      }),
+      platformHost: "idp.example.test",
+      userRepository
+    });
+
+    const loginResponse = await app.request("https://idp.example.test/admin/login", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({
+        email: "admin@example.test",
+        password: "bootstrap-secret"
+      })
+    });
+    const loginBody = (await loginResponse.json()) as AdminLoginResponse;
+
+    const response = await app.request("https://idp.example.test/admin/tenants/tenant_acme/users", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${loginBody.session_token}`,
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({
+        email: "invitee@acme.test",
+        username: "invitee",
+        display_name: "Invited User"
+      })
+    });
+
+    expect(response.status).toBe(201);
+    const body = (await response.json()) as {
+      activation_url: string;
+      invitation_token: string;
+      user: { email: string; status: string; tenant_id: string };
+    };
+
+    expect(body.user).toMatchObject({
+      tenant_id: "tenant_acme",
+      email: "invitee@acme.test",
+      status: "provisioned"
+    });
+    expect(body.invitation_token).toBeTypeOf("string");
+    expect(body.activation_url).toContain("/activate-account");
+    expect(body.activation_url).toContain(`token=${body.invitation_token}`);
+    expect(userRepository.listUsers()).toHaveLength(1);
+    expect(userRepository.listInvitations()).toHaveLength(1);
+  });
+
+  it("activates a provisioned account, consumes the invitation, and emits audit events", async () => {
+    const userRepository = new MemoryUserRepository({
+      policies: [tenantPolicy]
+    });
+    const auditRepository = new MemoryAuditRepository();
+    const app = createApp({
+      adminBootstrapPassword: "bootstrap-secret",
+      adminWhitelist: ["admin@example.test"],
+      adminRepository: new MemoryAdminRepository({
+        adminUsers: [{ email: "admin@example.test", id: "admin_1", status: "active" }]
+      }),
+      auditRepository,
+      platformHost: "idp.example.test",
+      userRepository
+    });
+
+    const loginResponse = await app.request("https://idp.example.test/admin/login", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({
+        email: "admin@example.test",
+        password: "bootstrap-secret"
+      })
+    });
+    const loginBody = (await loginResponse.json()) as AdminLoginResponse;
+
+    const provisionResponse = await app.request(
+      "https://idp.example.test/admin/tenants/tenant_acme/users",
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${loginBody.session_token}`,
+          "content-type": "application/json"
+        },
+        body: JSON.stringify({
+          email: "activate-route@acme.test",
+          username: "activateroute",
+          display_name: "Activate Route"
+        })
+      }
+    );
+
+    const provisionBody = (await provisionResponse.json()) as { invitation_token: string };
+
+    const activationResponse = await app.request("https://idp.example.test/activate-account", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({
+        invitation_token: provisionBody.invitation_token,
+        password: "CorrectHorseBatteryStaple!42"
+      })
+    });
+
+    expect(activationResponse.status).toBe(200);
+    await expect(activationResponse.json()).resolves.toMatchObject({
+      user: {
+        email_verified: true,
+        status: "active"
+      }
+    });
+
+    const invitations = userRepository.listInvitations();
+    expect(invitations).toHaveLength(1);
+    expect(invitations[0]?.consumedAt).not.toBeNull();
+    expect(auditRepository.listEvents().map((event) => event.eventType)).toEqual([
+      "admin.login.succeeded",
+      "user.provisioned",
+      "user.activation.succeeded"
+    ]);
   });
 });

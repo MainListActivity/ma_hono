@@ -6,6 +6,10 @@ export type AuditEventType =
   | "oidc.authorization.succeeded"
   | "oidc.client.registered"
   | "tenant.created"
+  | "user.activation.failed"
+  | "user.activation.succeeded"
+  | "user.provision.failed"
+  | "user.provisioned"
   | (string & {});
 
 export interface AuditEvent {

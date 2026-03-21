@@ -20,6 +20,9 @@ import type { KeyRepository } from "../domain/keys/repository";
 import type { TenantRepository } from "../domain/tenants/repository";
 import { resolveIssuerContext } from "../domain/tenants/issuer-resolution";
 import { buildDiscoveryMetadata } from "../domain/oidc/discovery";
+import { activateUser } from "../domain/users/activate-user";
+import { provisionUser } from "../domain/users/provision-user";
+import type { UserRepository } from "../domain/users/repository";
 
 class EmptyTenantRepository implements TenantRepository {
   async create(): Promise<void> {
@@ -97,6 +100,46 @@ class EmptyAuditRepository implements AuditRepository {
   }
 }
 
+class EmptyUserRepository implements UserRepository {
+  async activateUserByInvitationToken() {
+    return {
+      kind: "not_found" as const
+    };
+  }
+
+  async createProvisionedUserWithInvitation(): Promise<void> {
+    return;
+  }
+
+  async findAuthMethodPolicyByTenantId(): Promise<null> {
+    return null;
+  }
+
+  async findPasswordCredentialByUserId(): Promise<null> {
+    return null;
+  }
+
+  async findUserByEmail(): Promise<null> {
+    return null;
+  }
+
+  async findUserById(): Promise<null> {
+    return null;
+  }
+
+  async findUserByUsername(): Promise<null> {
+    return null;
+  }
+
+  async updateUser(): Promise<void> {
+    return;
+  }
+
+  async upsertPasswordCredential(): Promise<void> {
+    return;
+  }
+}
+
 export interface AppOptions {
   adminBootstrapPassword?: string;
   adminWhitelist?: string[];
@@ -112,6 +155,7 @@ export interface AppOptions {
   registrationAccessTokenRepository?: RegistrationAccessTokenRepository;
   signer?: SigningKeySigner;
   tenantRepository?: TenantRepository;
+  userRepository?: UserRepository;
 }
 
 export const createApp = (options: AppOptions = {}) => {
@@ -129,6 +173,7 @@ export const createApp = (options: AppOptions = {}) => {
     options.loginChallengeRepository ?? new EmptyLoginChallengeRepository();
   const managementApiToken = options.managementApiToken ?? "";
   const tenantRepository = options.tenantRepository ?? new EmptyTenantRepository();
+  const userRepository = options.userRepository ?? new EmptyUserRepository();
   const registrationAccessTokenRepository =
     options.registrationAccessTokenRepository ?? new EmptyRegistrationAccessTokenRepository();
   const platformHost = options.platformHost ?? "localhost";
@@ -615,6 +660,161 @@ export const createApp = (options: AppOptions = {}) => {
       },
       201
     );
+  });
+
+  app.post("/admin/tenants/:tenantId/users", async (context) => {
+    const session = await authenticateAdminSession({
+      adminRepository,
+      authorizationHeader: context.req.header("authorization")
+    });
+
+    if (session === null) {
+      return context.json({ error: "unauthorized" }, 401);
+    }
+
+    const tenantId = context.req.param("tenantId");
+    const payload = await context.req.json<{
+      display_name?: string;
+      email?: string;
+      username?: string | null;
+    }>();
+    const email = payload.email?.trim() ?? "";
+    const displayName = payload.display_name?.trim() ?? "";
+    const username = payload.username?.trim();
+
+    if (email.length === 0 || displayName.length === 0) {
+      return context.json({ error: "invalid_request" }, 400);
+    }
+
+    try {
+      const result = await provisionUser({
+        userRepository,
+        tenantId,
+        email,
+        username,
+        displayName
+      });
+      const activationUrl = new URL("/activate-account", context.req.url);
+
+      activationUrl.searchParams.set("token", result.invitationToken);
+
+      await auditRepository.record({
+        id: crypto.randomUUID(),
+        actorType: "admin_user",
+        actorId: session.adminUserId,
+        tenantId,
+        eventType: "user.provisioned",
+        targetType: "user",
+        targetId: result.user.id,
+        payload: {
+          email: result.user.email
+        },
+        occurredAt: new Date().toISOString()
+      });
+
+      return context.json(
+        {
+          user: {
+            id: result.user.id,
+            tenant_id: result.user.tenantId,
+            email: result.user.email,
+            username: result.user.username,
+            display_name: result.user.displayName,
+            status: result.user.status,
+            email_verified: result.user.emailVerified
+          },
+          invitation_token: result.invitationToken,
+          activation_url: activationUrl.toString()
+        },
+        201
+      );
+    } catch (error) {
+      await auditRepository.record({
+        id: crypto.randomUUID(),
+        actorType: "admin_user",
+        actorId: session.adminUserId,
+        tenantId,
+        eventType: "user.provision.failed",
+        targetType: "user",
+        targetId: null,
+        payload: {
+          error: error instanceof Error ? error.message : "unknown_error",
+          email
+        },
+        occurredAt: new Date().toISOString()
+      });
+
+      return context.json({ error: "conflict" }, 409);
+    }
+  });
+
+  app.post("/activate-account", async (context) => {
+    const payload = await context.req.json<{
+      invitation_token?: string;
+      password?: string;
+    }>();
+    const invitationToken = payload.invitation_token?.trim() ?? "";
+    const password = payload.password ?? "";
+
+    if (invitationToken.length === 0 || password.length === 0) {
+      return context.json({ error: "invalid_request" }, 400);
+    }
+
+    const result = await activateUser({
+      userRepository,
+      invitationToken,
+      password
+    });
+
+    if (!result.ok) {
+      await auditRepository.record({
+        id: crypto.randomUUID(),
+        actorType: "anonymous",
+        actorId: null,
+        tenantId: null,
+        eventType: "user.activation.failed",
+        targetType: "activation_invitation",
+        targetId: null,
+        payload: {
+          reason: result.reason
+        },
+        occurredAt: new Date().toISOString()
+      });
+
+      if (result.reason === "invalid_invitation" || result.reason === "invitation_expired") {
+        return context.json({ error: result.reason }, 400);
+      }
+
+      if (result.reason === "invitation_already_used" || result.reason === "user_already_initialized") {
+        return context.json({ error: result.reason }, 409);
+      }
+
+      return context.json({ error: result.reason }, 403);
+    }
+
+    await auditRepository.record({
+      id: crypto.randomUUID(),
+      actorType: "end_user",
+      actorId: result.user.id,
+      tenantId: result.user.tenantId,
+      eventType: "user.activation.succeeded",
+      targetType: "user",
+      targetId: result.user.id,
+      payload: null,
+      occurredAt: new Date().toISOString()
+    });
+
+    return context.json({
+      user: {
+        id: result.user.id,
+        tenant_id: result.user.tenantId,
+        email: result.user.email,
+        username: result.user.username,
+        display_name: result.user.displayName,
+        status: result.user.status,
+        email_verified: result.user.emailVerified
+      }
+    });
   });
 
   return app;
