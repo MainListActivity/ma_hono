@@ -16,7 +16,6 @@ WRANGLER_FILE="$SCRIPT_DIR/../wrangler.jsonc"
 
 WORKER_NAME="ma-auth"
 D1_NAME="ma-hono"
-R2_BUCKET="ma-hono-key-material"
 KV_NAMES=("ADMIN_SESSIONS_KV" "USER_SESSIONS_KV" "REGISTRATION_TOKENS_KV")
 
 # --- D1 ---
@@ -43,15 +42,6 @@ for KV_NAME in "${KV_NAMES[@]}"; do
   KV_IDS[$KV_NAME]=$KV_ID
   echo "[KV] ${KV_NAME}_ID=$KV_ID"
 done
-
-# --- R2 ---
-echo "[R2] 查找或创建 $R2_BUCKET ..."
-R2_EXISTS=$(npx wrangler r2 bucket list --json 2>/dev/null | jq -r ".[] | select(.name==\"$R2_BUCKET\") | .name // empty")
-if [ -z "$R2_EXISTS" ]; then
-  echo "[R2] 不存在，创建中..."
-  npx wrangler r2 bucket create "$R2_BUCKET" > /dev/null
-fi
-echo "[R2] bucket=$R2_BUCKET"
 
 # --- 更新 wrangler.jsonc ---
 echo "[config] 写入真实 ID 到 wrangler.jsonc ..."
