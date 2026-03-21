@@ -11,7 +11,7 @@ import type { Client } from "../../../domain/clients/types";
 import type { KeyMaterialStore } from "../../../domain/keys/key-material-store";
 import type { KeyRepository } from "../../../domain/keys/repository";
 import { createSigningKeySigner } from "../../../domain/keys/signer";
-import type { SigningKey } from "../../../domain/keys/types";
+import type { SigningKey, SigningKeyMaterial } from "../../../domain/keys/types";
 import type { RuntimeConfig } from "../../../config/env";
 import type { TenantRepository } from "../../../domain/tenants/repository";
 import type { Tenant, TenantIssuer } from "../../../domain/tenants/types";
@@ -35,8 +35,16 @@ import {
 
 const adminSessionPrefix = "admin_session:";
 const registrationTokenPrefix = "registration_access_token:";
+const wait = async (milliseconds: number) =>
+  new Promise<void>((resolve) => {
+    setTimeout(resolve, milliseconds);
+  });
+
 class D1SigningKeyBootstrapper {
-  constructor(private readonly db: ReturnType<typeof drizzle>) {}
+  constructor(
+    private readonly db: ReturnType<typeof drizzle>,
+    private readonly keyMaterialStore: KeyMaterialStore
+  ) {}
 
   async bootstrapSigningKey(input: {
     alg: string;
@@ -44,8 +52,9 @@ class D1SigningKeyBootstrapper {
     kty: string;
     privateKeyRef: string;
     publicJwk: SigningKey["publicJwk"];
+    privateJwk: SigningKey["publicJwk"];
     tenantId: string | null;
-  }): Promise<SigningKey> {
+  }): Promise<SigningKeyMaterial> {
     const now = new Date().toISOString();
     const key: SigningKey = {
       id: crypto.randomUUID(),
@@ -58,21 +67,79 @@ class D1SigningKeyBootstrapper {
       publicJwk: input.publicJwk
     };
 
-    await this.db.insert(signingKeys).values({
-      id: key.id,
-      tenantId: key.tenantId,
-      kid: key.kid,
-      alg: key.alg,
-      kty: key.kty,
-      publicJwk: key.publicJwk as Record<string, unknown>,
-      privateKeyRef: key.privateKeyRef,
-      status: key.status,
-      activatedAt: now,
-      retireAt: null,
-      createdAt: now
-    });
+    try {
+      await this.db.insert(signingKeys).values({
+        id: key.id,
+        tenantId: key.tenantId,
+        kid: key.kid,
+        alg: key.alg,
+        kty: key.kty,
+        publicJwk: key.publicJwk as Record<string, unknown>,
+        privateKeyRef: key.privateKeyRef,
+        status: key.status,
+        activatedAt: now,
+        retireAt: null,
+        createdAt: now
+      });
+    } catch (error) {
+      const [existingRow] = await this.db
+        .select()
+        .from(signingKeys)
+        .where(eq(signingKeys.kid, input.kid))
+        .limit(1);
 
-    return key;
+      if (existingRow === undefined) {
+        throw error;
+      }
+
+      const privateJwk = await this.loadPrivateJwk(existingRow.privateKeyRef ?? input.privateKeyRef);
+
+      if (privateJwk === null) {
+        throw error;
+      }
+
+      return {
+        key: {
+          id: existingRow.id,
+          tenantId: existingRow.tenantId,
+          kid: existingRow.kid,
+          alg: existingRow.alg,
+          kty: existingRow.kty,
+          privateKeyRef: existingRow.privateKeyRef,
+          status: existingRow.status as SigningKey["status"],
+          publicJwk: existingRow.publicJwk as SigningKey["publicJwk"]
+        },
+        privateJwk
+      };
+    }
+
+    try {
+      await this.keyMaterialStore.put(input.privateKeyRef, JSON.stringify(input.privateJwk));
+    } catch (error) {
+      await this.db.delete(signingKeys).where(eq(signingKeys.kid, input.kid));
+      throw error;
+    }
+
+    return {
+      key,
+      privateJwk: input.privateJwk
+    };
+  }
+
+  private async loadPrivateJwk(privateKeyRef: string): Promise<SigningKey["publicJwk"] | null> {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const privateJwkJson = await this.keyMaterialStore.get(privateKeyRef);
+
+      if (privateJwkJson !== null) {
+        return JSON.parse(privateJwkJson) as SigningKey["publicJwk"];
+      }
+
+      if (attempt < 2) {
+        await wait((attempt + 1) * 10);
+      }
+    }
+
+    return null;
   }
 }
 
@@ -363,7 +430,7 @@ export const createRuntimeRepositories = async (config: RuntimeConfig) => {
   });
   const keyMaterialStore = new R2KeyMaterialStore(config.keyMaterialBucket);
   const keyRepository = new D1KeyRepository(db);
-  const signingKeyBootstrapper = new D1SigningKeyBootstrapper(db);
+  const signingKeyBootstrapper = new D1SigningKeyBootstrapper(db, keyMaterialStore);
   const signer = createSigningKeySigner({
     bootstrapSigningKey: signingKeyBootstrapper.bootstrapSigningKey.bind(signingKeyBootstrapper),
     keyMaterialStore,

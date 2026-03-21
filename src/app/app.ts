@@ -157,6 +157,11 @@ export const createApp = (options: AppOptions = {}) => {
     return context.json(await buildJwks(keyRepository, issuerContext.tenant.id));
   });
 
+  app.all("/authorize", (context) => context.json({ error: "not_implemented" }, 501));
+  app.all("/t/:tenant/authorize", (context) => context.json({ error: "not_implemented" }, 501));
+  app.all("/token", (context) => context.json({ error: "not_implemented" }, 501));
+  app.all("/t/:tenant/token", (context) => context.json({ error: "not_implemented" }, 501));
+
   const handleDynamicClientRegistration = async (
     authorizationHeader: string | undefined,
     requestUrl: string,

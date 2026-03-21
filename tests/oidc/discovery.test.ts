@@ -151,4 +151,28 @@ describe("OIDC discovery", () => {
 
     expect(response.status).toBe(404);
   });
+
+  it("returns temporary-unavailable placeholders for discovered authorize and token endpoints", async () => {
+    const app = createApp({
+      platformHost: "idp.example.test",
+      tenantRepository
+    });
+
+    const authorizeResponse = await app.request(
+      "https://idp.example.test/t/acme/authorize"
+    );
+    const tokenResponse = await app.request("https://login.acme.test/token", {
+      method: "POST"
+    });
+
+    expect(authorizeResponse.status).toBe(501);
+    await expect(authorizeResponse.json()).resolves.toMatchObject({
+      error: "not_implemented"
+    });
+
+    expect(tokenResponse.status).toBe(501);
+    await expect(tokenResponse.json()).resolves.toMatchObject({
+      error: "not_implemented"
+    });
+  });
 });

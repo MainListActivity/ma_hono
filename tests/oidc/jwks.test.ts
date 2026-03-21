@@ -6,7 +6,7 @@ import { createApp } from "../../src/app/app";
 import { createSigningKeySigner } from "../../src/domain/keys/signer";
 import type { KeyMaterialStore } from "../../src/domain/keys/key-material-store";
 import type { KeyRepository } from "../../src/domain/keys/repository";
-import type { SigningKey } from "../../src/domain/keys/types";
+import type { SigningKey, SigningKeyMaterial } from "../../src/domain/keys/types";
 
 interface JwksResponse {
   keys: Array<Record<string, unknown>>;
@@ -206,15 +206,20 @@ describe("OIDC JWKS", () => {
           tenantId: input.tenantId
         });
 
+        await keyMaterialStore.put(input.privateKeyRef, JSON.stringify(input.privateJwk));
+
         return {
-          id: "key_bootstrap_acme",
-          tenantId: input.tenantId,
-          kid: input.kid,
-          alg: input.alg,
-          kty: input.kty,
-          status: "active",
-          privateKeyRef: input.privateKeyRef,
-          publicJwk: input.publicJwk
+          key: {
+            id: "key_bootstrap_acme",
+            tenantId: input.tenantId,
+            kid: input.kid,
+            alg: input.alg,
+            kty: input.kty,
+            status: "active",
+            privateKeyRef: input.privateKeyRef,
+            publicJwk: input.publicJwk
+          },
+          privateJwk: input.privateJwk
         };
       }
     });
@@ -224,6 +229,11 @@ describe("OIDC JWKS", () => {
     expect(material.key.status).toBe("active");
     expect(material.key.tenantId).toBe("tenant_acme");
     expect(material.key.privateKeyRef).toContain("signing-keys/tenant_acme/");
+    expect(material.key.publicJwk).toMatchObject({
+      kid: material.key.kid,
+      alg: "ES256",
+      use: "sig"
+    });
     expect(material.privateJwk).toMatchObject({
       kty: "EC",
       crv: "P-256"
@@ -235,5 +245,94 @@ describe("OIDC JWKS", () => {
     await expect(
       keyMaterialStore.get(material.key.privateKeyRef as string)
     ).resolves.toContain('"kty":"EC"');
+  });
+
+  it("does not mint duplicate signing keys when bootstrap is already in flight", async () => {
+    const activeKeys: SigningKey[] = [];
+    let resolveBootstrap: ((value: SigningKeyMaterial) => void) | null = null;
+    const bootstrapStarted: Array<string> = [];
+    const keyMaterialStore = createMemoryKeyMaterialStore();
+
+    const signer = createSigningKeySigner({
+      keyMaterialStore,
+      keyRepository: {
+        async listActiveKeysForTenant(tenantId: string) {
+          return activeKeys.filter((key) => key.tenantId === tenantId && key.status === "active");
+        }
+      },
+      bootstrapSigningKey: async (input) => {
+        bootstrapStarted.push(input.kid);
+
+        const key: SigningKey = {
+          id: "key_bootstrap_concurrent",
+          tenantId: input.tenantId,
+          kid: input.kid,
+          alg: input.alg,
+          kty: input.kty,
+          status: "active",
+          privateKeyRef: input.privateKeyRef,
+          publicJwk: input.publicJwk
+        };
+
+        activeKeys.push(key);
+
+        return await new Promise<SigningKeyMaterial>((resolve) => {
+          resolveBootstrap = resolve;
+        });
+      }
+    });
+
+    const first = signer.ensureActiveSigningKeyMaterial("tenant_acme");
+    const second = signer.ensureActiveSigningKeyMaterial("tenant_acme");
+
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    expect(bootstrapStarted).toHaveLength(1);
+
+    if (resolveBootstrap === null) {
+      throw new Error("bootstrap promise was not captured");
+    }
+
+    const bootstrapResolver: (value: SigningKeyMaterial) => void = resolveBootstrap;
+
+    bootstrapResolver({
+      key: activeKeys[0],
+      privateJwk: {
+        kty: "EC",
+        crv: "P-256",
+        d: "concurrent-private",
+        x: "concurrent-x",
+        y: "concurrent-y"
+      }
+    });
+
+    await expect(first).resolves.toHaveProperty("key.kid", activeKeys[0]?.kid);
+    await expect(second).resolves.toHaveProperty("key.kid", activeKeys[0]?.kid);
+  });
+
+  it("does not leave orphaned private material when bootstrap fails", async () => {
+    const keyMaterialStore = createMemoryKeyMaterialStore();
+    let capturedPrivateKeyRef: string | null = null;
+    const signer = createSigningKeySigner({
+      keyMaterialStore,
+      keyRepository: {
+        async listActiveKeysForTenant() {
+          return [];
+        }
+      },
+      bootstrapSigningKey: async (input) => {
+        capturedPrivateKeyRef = input.privateKeyRef;
+        throw new Error("bootstrap failed");
+      }
+    });
+
+    await expect(signer.ensureActiveSigningKeyMaterial("tenant_acme")).rejects.toThrowError(
+      /bootstrap failed/
+    );
+    expect(capturedPrivateKeyRef).not.toBeNull();
+    if (capturedPrivateKeyRef === null) {
+      throw new Error("expected bootstrap to capture a private key ref");
+    }
+
+    await expect(keyMaterialStore.get(capturedPrivateKeyRef)).resolves.toBeNull();
   });
 });
