@@ -53,4 +53,9 @@ sed -i.bak \
 rm -f "${WRANGLER_FILE}.bak"
 echo "[config] 完成，wrangler.jsonc 已更新"
 
+# --- Apply D1 migrations ---
+echo "[D1] Applying migrations ..."
+npx wrangler d1 migrations apply "$D1_NAME" --remote
+echo "[D1] Migrations applied"
+
 npx wrangler deploy
