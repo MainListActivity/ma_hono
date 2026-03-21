@@ -18,10 +18,18 @@ import { R2KeyMaterialStore } from "../../r2/r2-key-material-store";
 import {
   adminUsers,
   auditEvents,
+  authorizationCodes,
+  emailLoginTokens,
+  loginChallenges,
   oidcClients,
   signingKeys,
+  tenantAuthMethodPolicies,
   tenantIssuers,
-  tenants
+  tenants,
+  userInvitations,
+  userPasswordCredentials,
+  users,
+  webauthnCredentials
 } from "./schema";
 
 const adminSessionPrefix = "admin_session:";
@@ -160,6 +168,8 @@ class D1ClientRepository implements ClientRepository {
       clientSecretHash: client.clientSecretHash,
       clientName: client.clientName,
       applicationType: client.applicationType,
+      trustLevel: "first_party_trusted",
+      consentPolicy: "skip",
       tokenEndpointAuthMethod: client.tokenEndpointAuthMethod,
       redirectUris: client.redirectUris,
       grantTypes: client.grantTypes,
@@ -288,10 +298,18 @@ export const createRuntimeRepositories = async (config: RuntimeConfig) => {
     schema: {
       adminUsers,
       auditEvents,
+      authorizationCodes,
+      emailLoginTokens,
+      loginChallenges,
       oidcClients,
       signingKeys,
+      tenantAuthMethodPolicies,
       tenantIssuers,
-      tenants
+      tenants,
+      userInvitations,
+      userPasswordCredentials,
+      users,
+      webauthnCredentials
     }
   });
 

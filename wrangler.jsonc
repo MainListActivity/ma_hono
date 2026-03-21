@@ -16,6 +16,10 @@
       "id": "replace-with-admin-sessions-kv-id"
     },
     {
+      "binding": "USER_SESSIONS_KV",
+      "id": "replace-with-user-sessions-kv-id"
+    },
+    {
       "binding": "REGISTRATION_TOKENS_KV",
       "id": "replace-with-registration-tokens-kv-id"
     }

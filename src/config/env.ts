@@ -23,7 +23,8 @@ const runtimeConfigSchema = z.object({
   KEY_MATERIAL_R2: r2BindingSchema,
   MANAGEMENT_API_TOKEN: z.string().min(1),
   PLATFORM_HOST: z.string().min(1),
-  REGISTRATION_TOKENS_KV: kvBindingSchema
+  REGISTRATION_TOKENS_KV: kvBindingSchema,
+  USER_SESSIONS_KV: kvBindingSchema
 });
 
 export interface RuntimeConfig {
@@ -35,6 +36,7 @@ export interface RuntimeConfig {
   managementApiToken: string;
   platformHost: string;
   registrationTokensKv: KVNamespace;
+  userSessionsKv: KVNamespace;
 }
 
 export const readRuntimeConfig = (
@@ -52,6 +54,7 @@ export const readRuntimeConfig = (
     keyMaterialBucket: parsed.KEY_MATERIAL_R2,
     managementApiToken: parsed.MANAGEMENT_API_TOKEN,
     platformHost: parsed.PLATFORM_HOST,
-    registrationTokensKv: parsed.REGISTRATION_TOKENS_KV
+    registrationTokensKv: parsed.REGISTRATION_TOKENS_KV,
+    userSessionsKv: parsed.USER_SESSIONS_KV
   };
 };

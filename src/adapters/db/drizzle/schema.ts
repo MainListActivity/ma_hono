@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import { index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 export const tenants = sqliteTable(
@@ -50,6 +51,8 @@ export const oidcClients = sqliteTable(
     clientSecretHash: text("client_secret_hash"),
     clientName: text("client_name").notNull(),
     applicationType: text("application_type").notNull(),
+    trustLevel: text("trust_level").notNull().default("first_party_trusted"),
+    consentPolicy: text("consent_policy").notNull().default("skip"),
     tokenEndpointAuthMethod: text("token_endpoint_auth_method").notNull(),
     redirectUris: text("redirect_uris", { mode: "json" }).$type<string[]>().notNull(),
     grantTypes: text("grant_types", { mode: "json" }).$type<string[]>().notNull(),
@@ -114,5 +117,201 @@ export const auditEvents = sqliteTable(
   (table) => ({
     tenantIdIdx: index("audit_events_tenant_id_idx").on(table.tenantId),
     eventTypeIdx: index("audit_events_event_type_idx").on(table.eventType)
+  })
+);
+
+export const users = sqliteTable(
+  "users",
+  {
+    id: text("id").primaryKey(),
+    tenantId: text("tenant_id")
+      .notNull()
+      .references(() => tenants.id, { onDelete: "cascade" }),
+    email: text("email").notNull(),
+    emailVerified: integer("email_verified", { mode: "boolean" }).notNull(),
+    username: text("username"),
+    displayName: text("display_name").notNull(),
+    status: text("status").notNull(),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull()
+  },
+  (table) => ({
+    tenantIdIdx: index("users_tenant_id_idx").on(table.tenantId),
+    tenantEmailUnique: uniqueIndex("users_tenant_id_email_unique").on(table.tenantId, table.email),
+    tenantUsernameUnique: uniqueIndex("users_tenant_id_username_unique").on(table.tenantId, table.username)
+  })
+);
+
+export const userPasswordCredentials = sqliteTable(
+  "user_password_credentials",
+  {
+    id: text("id").primaryKey(),
+    tenantId: text("tenant_id")
+      .notNull()
+      .references(() => tenants.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    passwordHash: text("password_hash").notNull(),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull()
+  },
+  (table) => ({
+    tenantIdIdx: index("user_password_credentials_tenant_id_idx").on(table.tenantId),
+    userIdUnique: uniqueIndex("user_password_credentials_user_id_unique").on(table.userId)
+  })
+);
+
+export const webauthnCredentials = sqliteTable(
+  "webauthn_credentials",
+  {
+    id: text("id").primaryKey(),
+    tenantId: text("tenant_id")
+      .notNull()
+      .references(() => tenants.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    credentialId: text("credential_id").notNull(),
+    publicKey: text("public_key").notNull(),
+    counter: integer("counter").notNull(),
+    transports: text("transports", { mode: "json" }).$type<string[] | null>(),
+    deviceType: text("device_type").notNull(),
+    backedUp: integer("backed_up", { mode: "boolean" }).notNull(),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull()
+  },
+  (table) => ({
+    tenantIdIdx: index("webauthn_credentials_tenant_id_idx").on(table.tenantId),
+    userIdIdx: index("webauthn_credentials_user_id_idx").on(table.userId),
+    credentialIdUnique: uniqueIndex("webauthn_credentials_credential_id_unique").on(table.credentialId)
+  })
+);
+
+export const tenantAuthMethodPolicies = sqliteTable(
+  "tenant_auth_method_policies",
+  {
+    tenantId: text("tenant_id")
+      .primaryKey()
+      .references(() => tenants.id, { onDelete: "cascade" }),
+    passwordEnabled: integer("password_enabled", { mode: "boolean" }).notNull(),
+    emailMagicLinkEnabled: integer("email_magic_link_enabled", { mode: "boolean" }).notNull(),
+    passkeyEnabled: integer("passkey_enabled", { mode: "boolean" }).notNull(),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull()
+  },
+  (table) => ({
+    passwordEnabledIdx: index("tenant_auth_method_policies_password_enabled_idx").on(
+      table.passwordEnabled
+    )
+  })
+);
+
+export const userInvitations = sqliteTable(
+  "user_invitations",
+  {
+    id: text("id").primaryKey(),
+    tenantId: text("tenant_id")
+      .notNull()
+      .references(() => tenants.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    tokenHash: text("token_hash").notNull(),
+    purpose: text("purpose").notNull(),
+    expiresAt: text("expires_at").notNull(),
+    consumedAt: text("consumed_at"),
+    createdAt: text("created_at").notNull()
+  },
+  (table) => ({
+    tenantIdIdx: index("user_invitations_tenant_id_idx").on(table.tenantId),
+    userIdIdx: index("user_invitations_user_id_idx").on(table.userId),
+    tokenHashActiveUnique: uniqueIndex("user_invitations_token_hash_active_unique")
+      .on(table.tokenHash)
+      .where(sql`${table.consumedAt} IS NULL`)
+  })
+);
+
+export const loginChallenges = sqliteTable(
+  "login_challenges",
+  {
+    id: text("id").primaryKey(),
+    tenantId: text("tenant_id")
+      .notNull()
+      .references(() => tenants.id, { onDelete: "cascade" }),
+    issuer: text("issuer").notNull(),
+    clientId: text("client_id").notNull(),
+    redirectUri: text("redirect_uri").notNull(),
+    scope: text("scope").notNull(),
+    state: text("state").notNull(),
+    codeChallenge: text("code_challenge").notNull(),
+    codeChallengeMethod: text("code_challenge_method").notNull(),
+    tokenHash: text("token_hash").notNull(),
+    expiresAt: text("expires_at").notNull(),
+    consumedAt: text("consumed_at"),
+    createdAt: text("created_at").notNull()
+  },
+  (table) => ({
+    tenantIdIdx: index("login_challenges_tenant_id_idx").on(table.tenantId),
+    tokenHashActiveUnique: uniqueIndex("login_challenges_token_hash_active_unique")
+      .on(table.tokenHash)
+      .where(sql`${table.consumedAt} IS NULL`)
+  })
+);
+
+export const authorizationCodes = sqliteTable(
+  "authorization_codes",
+  {
+    id: text("id").primaryKey(),
+    tenantId: text("tenant_id")
+      .notNull()
+      .references(() => tenants.id, { onDelete: "cascade" }),
+    issuer: text("issuer").notNull(),
+    clientId: text("client_id").notNull(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    redirectUri: text("redirect_uri").notNull(),
+    scope: text("scope").notNull(),
+    nonce: text("nonce").notNull(),
+    codeChallenge: text("code_challenge").notNull(),
+    codeChallengeMethod: text("code_challenge_method").notNull(),
+    tokenHash: text("token_hash").notNull(),
+    expiresAt: text("expires_at").notNull(),
+    consumedAt: text("consumed_at"),
+    createdAt: text("created_at").notNull()
+  },
+  (table) => ({
+    tenantIdIdx: index("authorization_codes_tenant_id_idx").on(table.tenantId),
+    userIdIdx: index("authorization_codes_user_id_idx").on(table.userId),
+    tokenHashActiveUnique: uniqueIndex("authorization_codes_token_hash_active_unique")
+      .on(table.tokenHash)
+      .where(sql`${table.consumedAt} IS NULL`)
+  })
+);
+
+export const emailLoginTokens = sqliteTable(
+  "email_login_tokens",
+  {
+    id: text("id").primaryKey(),
+    tenantId: text("tenant_id")
+      .notNull()
+      .references(() => tenants.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    issuer: text("issuer").notNull(),
+    tokenHash: text("token_hash").notNull(),
+    redirectAfterLogin: text("redirect_after_login").notNull(),
+    expiresAt: text("expires_at").notNull(),
+    consumedAt: text("consumed_at"),
+    createdAt: text("created_at").notNull()
+  },
+  (table) => ({
+    tenantIdIdx: index("email_login_tokens_tenant_id_idx").on(table.tenantId),
+    userIdIdx: index("email_login_tokens_user_id_idx").on(table.userId),
+    tokenHashActiveUnique: uniqueIndex("email_login_tokens_token_hash_active_unique")
+      .on(table.tokenHash)
+      .where(sql`${table.consumedAt} IS NULL`)
   })
 );

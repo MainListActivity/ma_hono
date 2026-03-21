@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "db:generate": "drizzle-kit generate",
+    "db:check": "drizzle-kit check",
     "db:migrate:local": "wrangler d1 migrations apply DB --local",
     "db:migrate:remote": "wrangler d1 migrations apply DB --remote",
     "dev": "wrangler dev",
