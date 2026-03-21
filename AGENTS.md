@@ -190,7 +190,6 @@ When working in this repository:
 
 - Treat Hono as mandatory, not optional.
 - Treat TypeScript as mandatory, not optional.
-- Treat Rust as out of scope.
 - Prefer standards-based identity design over framework magic.
 - Prefer Cloudflare-native infrastructure choices when they simplify the design.
 - Keep Cloudflare-specific binding access in adapters and runtime entrypoints.
@@ -198,14 +197,6 @@ When working in this repository:
 - If a library is not compatible with Cloudflare Workers, do not adopt it by default.
 - If a library assumes self-hosted Node.js or direct TCP/database drivers, do not adopt it by default.
 
-## Non-Goals
-
-The following are not default goals unless the user later asks for them:
-
-- building a generic consumer IAM platform for every enterprise use case on day one
-- supporting every OAuth grant type immediately
-- coupling relying-party trust to custom proprietary auth contracts
-- optimizing prematurely for Rust, native binaries, or non-Hono runtimes
 
 ## Short Decision Summary
 
