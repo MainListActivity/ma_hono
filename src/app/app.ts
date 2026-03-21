@@ -342,9 +342,7 @@ export const createApp = (options: AppOptions = {}) => {
     const url = new URL(context.req.url);
     const resolvedSession = await authorizeSessionResolver(context);
     const session =
-      resolvedSession !== null &&
-      resolvedSession.tenantId !== undefined &&
-      resolvedSession.tenantId !== issuerContext.tenant.id
+      resolvedSession !== null && resolvedSession.tenantId !== issuerContext.tenant.id
         ? null
         : resolvedSession;
     const result = await authorizeRequest({

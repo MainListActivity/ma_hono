@@ -376,7 +376,9 @@ describe("/authorize", () => {
       auditRepository,
       authorizationCodeRepository,
       authorizeSessionResolver: async (context) =>
-        context.req.header("x-user-id") === "user_123" ? { userId: "user_123" } : null,
+        context.req.header("x-user-id") === "user_123"
+          ? { tenantId: "tenant_acme", userId: "user_123" }
+          : null,
       clientRepository: new MemoryClientRepository(clients),
       loginChallengeRepository: new MemoryLoginChallengeRepository(),
       platformHost: "idp.example.test",
@@ -434,7 +436,7 @@ describe("/authorize", () => {
     const app = createApp({
       auditRepository,
       authorizationCodeRepository,
-      authorizeSessionResolver: async () => ({ userId: "user_123" }),
+      authorizeSessionResolver: async () => ({ tenantId: "tenant_acme", userId: "user_123" }),
       clientRepository: new MemoryClientRepository(clients),
       loginChallengeRepository: new MemoryLoginChallengeRepository(),
       platformHost: "idp.example.test",
@@ -467,7 +469,7 @@ describe("/authorize", () => {
     const authorizationCodeRepository = new MemoryAuthorizationCodeRepository();
     const app = createApp({
       authorizationCodeRepository,
-      authorizeSessionResolver: async () => ({ userId: "user_123" }),
+      authorizeSessionResolver: async () => ({ tenantId: "tenant_acme", userId: "user_123" }),
       clientRepository: new MemoryClientRepository(clients),
       loginChallengeRepository: new MemoryLoginChallengeRepository(),
       platformHost: "idp.example.test",

@@ -84,6 +84,14 @@ export default {
         try {
           const session = JSON.parse(storedSession) as BrowserSession;
 
+          if (typeof session.tenantId !== "string" || session.tenantId.trim().length === 0) {
+            return null;
+          }
+
+          if (typeof session.userId !== "string" || session.userId.trim().length === 0) {
+            return null;
+          }
+
           if (new Date(session.expiresAt).getTime() <= Date.now()) {
             return null;
           }
