@@ -4,6 +4,13 @@
 # 本地和 CI 通用，CI 需设置 CLOUDFLARE_API_TOKEN 环境变量。
 set -euo pipefail
 
+API_TOKEN_TMP="${CLOUDFLARE_API_TOKEN:-}"
+ACCOUNT_ID_TMP="${CLOUDFLARE_ACCOUNT_ID:-}"
+echo "=== Cloudflare Credentials ==="
+echo "CLOUDFLARE_API_TOKEN 前3位: ${API_TOKEN_TMP:0:3}"
+echo "CLOUDFLARE_ACCOUNT_ID 前3位: ${ACCOUNT_ID_TMP:0:3}"
+echo "=============================="
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WRANGLER_FILE="$SCRIPT_DIR/../wrangler.jsonc"
 
