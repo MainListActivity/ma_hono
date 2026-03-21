@@ -3,7 +3,14 @@ import { ZodError } from "zod";
 
 import { authenticateWithPassword } from "../adapters/auth/local-auth/password-auth-service";
 import { consumeMagicLink, requestMagicLink } from "../adapters/auth/local-auth/magic-link-service";
+import {
+  finishPasskeyEnrollment,
+  finishPasskeyLogin,
+  startPasskeyEnrollment,
+  startPasskeyLogin
+} from "../adapters/auth/webauthn/webauthn-service";
 import type { MagicLinkRepository } from "../domain/authentication/magic-link-repository";
+import type { PasskeyRepository } from "../domain/authentication/passkey-repository";
 import type { AuditRepository } from "../domain/audit/repository";
 import { authenticateAdminSession, loginAdmin } from "../domain/admin-auth/service";
 import type { AdminRepository } from "../domain/admin-auth/repository";
@@ -158,6 +165,18 @@ class EmptyMagicLinkRepository implements MagicLinkRepository {
   }
 }
 
+class EmptyPasskeyRepository implements PasskeyRepository {
+  async createEnrollmentSession(): Promise<void> { return; }
+  async findEnrollmentSessionById(): Promise<null> { return null; }
+  async consumeEnrollmentSession(): Promise<false> { return false; }
+  async createCredential(): Promise<void> { return; }
+  async findCredentialByCredentialId(): Promise<null> { return null; }
+  async updateCredentialSignCount(): Promise<void> { return; }
+  async createAssertionSession(): Promise<void> { return; }
+  async findAssertionSessionById(): Promise<null> { return null; }
+  async consumeAssertionSession(): Promise<false> { return false; }
+}
+
 class EmptyUserRepository implements UserRepository {
   async activateUserByInvitationToken() {
     return {
@@ -212,6 +231,7 @@ export interface AppOptions {
   loginChallengeRepository?: LoginChallengeRepository;
   magicLinkRepository?: MagicLinkRepository;
   managementApiToken?: string;
+  passkeyRepository?: PasskeyRepository;
   platformHost?: string;
   registrationAccessTokenRepository?: RegistrationAccessTokenRepository;
   signer?: SigningKeySigner;
@@ -238,6 +258,7 @@ export const createApp = (options: AppOptions = {}) => {
     options.loginChallengeRepository ?? new EmptyLoginChallengeRepository();
   const magicLinkRepository = options.magicLinkRepository ?? new EmptyMagicLinkRepository();
   const managementApiToken = options.managementApiToken ?? "";
+  const passkeyRepository = options.passkeyRepository ?? new EmptyPasskeyRepository();
   const tenantRepository = options.tenantRepository ?? new EmptyTenantRepository();
   const userRepository = options.userRepository ?? new EmptyUserRepository();
   const signer = options.signer;
@@ -900,6 +921,305 @@ export const createApp = (options: AppOptions = {}) => {
     return context.redirect(redirectUrl.toString(), 302);
   };
 
+  const handlePasskeyEnrollStart = async (context: Context) => {
+    const issuerContext = await resolveIssuerContext({
+      requestUrl: context.req.url,
+      platformHost,
+      tenantRepository
+    });
+
+    if (issuerContext === null) {
+      return context.notFound();
+    }
+
+    let payload: { user_id?: string };
+    try {
+      payload = await context.req.json<{ user_id?: string }>();
+    } catch {
+      return context.json({ error: "invalid_request" }, 400);
+    }
+
+    const result = await startPasskeyEnrollment({
+      passkeyRepository,
+      tenantId: issuerContext.tenant.id,
+      userId: payload.user_id ?? "",
+      userRepository
+    });
+
+    if (result.kind === "rejected") {
+      if (result.reason === "passkey_disabled") {
+        return context.json({ error: "passkey_disabled" }, 403);
+      }
+      return context.json({ error: "user_not_found" }, 404);
+    }
+
+    return context.json({
+      challenge: result.challenge,
+      enrollment_session_id: result.enrollmentSessionId
+    });
+  };
+
+  const handlePasskeyEnrollFinish = async (context: Context) => {
+    const issuerContext = await resolveIssuerContext({
+      requestUrl: context.req.url,
+      platformHost,
+      tenantRepository
+    });
+
+    if (issuerContext === null) {
+      return context.notFound();
+    }
+
+    let payload: {
+      enrollment_session_id?: string;
+      credential_id?: string;
+      public_key_cbor?: string;
+      sign_count?: number;
+    };
+    try {
+      payload = await context.req.json();
+    } catch {
+      return context.json({ error: "invalid_request" }, 400);
+    }
+
+    const result = await finishPasskeyEnrollment({
+      credentialId: payload.credential_id ?? "",
+      enrollmentSessionId: payload.enrollment_session_id ?? "",
+      passkeyRepository,
+      publicKeyCbor: payload.public_key_cbor ?? "",
+      signCount: payload.sign_count ?? 0
+    });
+
+    if (result.kind === "rejected") {
+      if (result.reason === "duplicate_credential") {
+        return context.json({ error: "duplicate_credential" }, 409);
+      }
+      return context.json({ error: "invalid_session" }, 400);
+    }
+
+    await recordAuditEventBestEffort({
+      actorType: "end_user",
+      actorId: null,
+      tenantId: issuerContext.tenant.id,
+      eventType: "user.passkey.enrollment.succeeded",
+      targetType: "user",
+      targetId: null,
+      payload: { credential_id: payload.credential_id }
+    });
+
+    return context.json({ enrolled: true });
+  };
+
+  const handlePasskeyLoginStart = async (context: Context) => {
+    const issuerContext = await resolveIssuerContext({
+      requestUrl: context.req.url,
+      platformHost,
+      tenantRepository
+    });
+
+    if (issuerContext === null) {
+      return context.notFound();
+    }
+
+    let formData: FormData;
+    try {
+      formData = await context.req.formData();
+    } catch {
+      return context.json({ error: "invalid_request" }, 400);
+    }
+
+    const result = await startPasskeyLogin({
+      issuer: issuerContext.issuer,
+      loginChallengeRepository: loginChallengeLookupRepository,
+      loginChallengeToken: String(formData.get("login_challenge") ?? ""),
+      passkeyRepository,
+      tenantId: issuerContext.tenant.id,
+      userRepository
+    });
+
+    if (result.kind === "rejected") {
+      if (result.reason === "passkey_disabled") {
+        return context.json({ error: "passkey_disabled" }, 403);
+      }
+      return context.json({ error: "invalid_request" }, 400);
+    }
+
+    return context.json({
+      challenge: result.challenge,
+      assertion_session_id: result.assertionSessionId
+    });
+  };
+
+  const handlePasskeyLoginFinish = async (context: Context) => {
+    const issuerContext = await resolveIssuerContext({
+      requestUrl: context.req.url,
+      platformHost,
+      tenantRepository
+    });
+
+    if (issuerContext === null) {
+      return context.notFound();
+    }
+
+    let payload: {
+      assertion_session_id?: string;
+      credential_id?: string;
+      sign_count?: number;
+    };
+    try {
+      payload = await context.req.json();
+    } catch {
+      return context.json({ error: "invalid_request" }, 400);
+    }
+
+    const result = await finishPasskeyLogin({
+      assertionSessionId: payload.assertion_session_id ?? "",
+      credentialId: payload.credential_id ?? "",
+      loginChallengeRepository: loginChallengeLookupRepository,
+      passkeyRepository,
+      signCount: payload.sign_count ?? 0,
+      userRepository
+    });
+
+    if (result.kind === "rejected") {
+      await recordAuditEventBestEffort({
+        actorType: "anonymous",
+        actorId: null,
+        tenantId: issuerContext.tenant.id,
+        eventType: "user.passkey.login.failed",
+        targetType: "user",
+        targetId: null,
+        payload: { reason: result.reason }
+      });
+
+      const status = result.reason === "invalid_credentials" ? 401 : 400;
+      return context.json({ error: result.reason }, status);
+    }
+
+    const { session, sessionToken } = await createBrowserSession({
+      sessionRepository: browserSessionRepository,
+      tenantId: result.user.tenantId,
+      userId: result.user.id
+    });
+
+    await recordAuditEventBestEffort({
+      actorType: "end_user",
+      actorId: result.user.id,
+      tenantId: issuerContext.tenant.id,
+      eventType: "user.passkey.login.succeeded",
+      targetType: "user",
+      targetId: result.user.id,
+      payload: { client_id: result.challenge.clientId }
+    });
+
+    context.header(
+      "Set-Cookie",
+      buildBrowserSessionCookie({
+        expiresAt: session.expiresAt,
+        secure: new URL(issuerContext.issuer).protocol === "https:",
+        sessionToken
+      })
+    );
+
+    const authorizationResult = await authorizeRequest({
+      authorizationCodeRepository,
+      clientRepository,
+      issuerContext,
+      loginChallengeRepository,
+      request: {
+        clientId: result.challenge.clientId,
+        redirectUri: result.challenge.redirectUri,
+        responseType: "code",
+        scope: result.challenge.scope,
+        state: result.challenge.state.length === 0 ? null : result.challenge.state,
+        nonce: result.challenge.nonce,
+        codeChallenge: result.challenge.codeChallenge,
+        codeChallengeMethod: result.challenge.codeChallengeMethod
+      },
+      session: {
+        userId: result.user.id,
+        tenantId: result.user.tenantId
+      }
+    });
+
+    if (authorizationResult.kind === "error") {
+      await recordAuthorizeAuditEvent({
+        actorType: "end_user",
+        actorId: result.user.id,
+        tenantId: issuerContext.tenant.id,
+        eventType: "oidc.authorization.failed",
+        targetId: authorizationResult.clientId,
+        payload: {
+          client_id: authorizationResult.clientId,
+          reason: authorizationResult.error,
+          redirect_uri: authorizationResult.redirectUri
+        }
+      });
+
+      if (authorizationResult.shouldRedirect && authorizationResult.redirectUri !== null) {
+        return context.redirect(
+          buildClientErrorRedirectUrl({
+            error: authorizationResult.error,
+            errorDescription: authorizationResult.errorDescription,
+            redirectUri: authorizationResult.redirectUri,
+            state: authorizationResult.state
+          }),
+          302
+        );
+      }
+
+      return context.json({ error: authorizationResult.error }, 400);
+    }
+
+    if (authorizationResult.kind === "consent_required") {
+      await recordAuthorizeAuditEvent({
+        actorType: "end_user",
+        actorId: result.user.id,
+        tenantId: issuerContext.tenant.id,
+        eventType: "oidc.authorization.deferred",
+        targetId: authorizationResult.request.clientId,
+        payload: {
+          client_id: authorizationResult.request.clientId,
+          reason: "consent_required",
+          redirect_uri: authorizationResult.request.redirectUri
+        }
+      });
+
+      return context.redirect(
+        buildClientErrorRedirectUrl({
+          error: "consent_required",
+          redirectUri: authorizationResult.request.redirectUri,
+          state: authorizationResult.request.state
+        }),
+        302
+      );
+    }
+
+    if (authorizationResult.kind !== "authorization_granted") {
+      return context.json({ error: "invalid_request" }, 400);
+    }
+
+    await recordAuthorizeAuditEvent({
+      actorType: "end_user",
+      actorId: authorizationResult.session.userId,
+      tenantId: issuerContext.tenant.id,
+      eventType: "oidc.authorization.succeeded",
+      targetId: authorizationResult.request.clientId,
+      payload: {
+        user_id: authorizationResult.session.userId,
+        redirect_uri: authorizationResult.request.redirectUri
+      }
+    });
+
+    const redirectUrl = new URL(authorizationResult.request.redirectUri);
+    redirectUrl.searchParams.set("code", authorizationResult.code);
+    if (authorizationResult.request.state !== null) {
+      redirectUrl.searchParams.set("state", authorizationResult.request.state);
+    }
+
+    return context.redirect(redirectUrl.toString(), 302);
+  };
+
   const handlePlaceholderEndpoint = async (context: Context) => {
     const issuerContext = await resolveIssuerContext({
       requestUrl: context.req.url,
@@ -1067,6 +1387,14 @@ export const createApp = (options: AppOptions = {}) => {
   app.post("/t/:tenant/login/magic-link/request", handleMagicLinkRequest);
   app.post("/login/magic-link/consume", handleMagicLinkConsume);
   app.post("/t/:tenant/login/magic-link/consume", handleMagicLinkConsume);
+  app.post("/passkey/enroll/start", handlePasskeyEnrollStart);
+  app.post("/t/:tenant/passkey/enroll/start", handlePasskeyEnrollStart);
+  app.post("/passkey/enroll/finish", handlePasskeyEnrollFinish);
+  app.post("/t/:tenant/passkey/enroll/finish", handlePasskeyEnrollFinish);
+  app.post("/login/passkey/start", handlePasskeyLoginStart);
+  app.post("/t/:tenant/login/passkey/start", handlePasskeyLoginStart);
+  app.post("/login/passkey/finish", handlePasskeyLoginFinish);
+  app.post("/t/:tenant/login/passkey/finish", handlePasskeyLoginFinish);
   app.get("/authorize", handleAuthorize);
   app.get("/t/:tenant/authorize", handleAuthorize);
   app.post("/token", handleToken);
