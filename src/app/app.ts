@@ -753,7 +753,10 @@ export const createApp = (options: AppOptions = {}) => {
       invitation_token?: string;
       password?: string;
     }>();
-    const invitationToken = payload.invitation_token?.trim() ?? "";
+    const invitationTokenFromBody = payload.invitation_token?.trim() ?? "";
+    const invitationTokenFromQuery = new URL(context.req.url).searchParams.get("token")?.trim() ?? "";
+    const invitationToken =
+      invitationTokenFromBody.length > 0 ? invitationTokenFromBody : invitationTokenFromQuery;
     const password = payload.password ?? "";
 
     if (invitationToken.length === 0 || password.length === 0) {

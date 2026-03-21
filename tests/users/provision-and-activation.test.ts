@@ -564,4 +564,67 @@ describe("user provisioning and activation routes", () => {
       "user.activation.succeeded"
     ]);
   });
+
+  it("accepts invitation token from the published activation url query format", async () => {
+    const userRepository = new MemoryUserRepository({
+      policies: [tenantPolicy]
+    });
+    const app = createApp({
+      adminBootstrapPassword: "bootstrap-secret",
+      adminWhitelist: ["admin@example.test"],
+      adminRepository: new MemoryAdminRepository({
+        adminUsers: [{ email: "admin@example.test", id: "admin_1", status: "active" }]
+      }),
+      platformHost: "idp.example.test",
+      userRepository
+    });
+
+    const loginResponse = await app.request("https://idp.example.test/admin/login", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({
+        email: "admin@example.test",
+        password: "bootstrap-secret"
+      })
+    });
+    const loginBody = (await loginResponse.json()) as AdminLoginResponse;
+
+    const provisionResponse = await app.request(
+      "https://idp.example.test/admin/tenants/tenant_acme/users",
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${loginBody.session_token}`,
+          "content-type": "application/json"
+        },
+        body: JSON.stringify({
+          email: "activate-url@acme.test",
+          username: "activateurl",
+          display_name: "Activate Url"
+        })
+      }
+    );
+    const provisionBody = (await provisionResponse.json()) as { activation_url: string };
+
+    const activationUrl = new URL(provisionBody.activation_url);
+    const activationResponse = await app.request(activationUrl.toString(), {
+      method: "POST",
+      headers: {
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({
+        password: "CorrectHorseBatteryStaple!42"
+      })
+    });
+
+    expect(activationResponse.status).toBe(200);
+    await expect(activationResponse.json()).resolves.toMatchObject({
+      user: {
+        status: "active",
+        email_verified: true
+      }
+    });
+  });
 });
