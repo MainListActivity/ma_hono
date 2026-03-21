@@ -152,7 +152,10 @@ describe("/authorize", () => {
     const app = createApp({
       auditRepository,
       clientRepository: new MemoryClientRepository(clients),
+      adminBootstrapPasswordHash: "",
+      adminWhitelist: [],
       loginChallengeRepository,
+      managementApiToken: "",
       platformHost: "idp.example.test",
       tenantRepository
     });
@@ -201,7 +204,10 @@ describe("/authorize", () => {
     const loginChallengeRepository = new MemoryLoginChallengeRepository();
     const app = createApp({
       clientRepository: new MemoryClientRepository(clients),
+      adminBootstrapPasswordHash: "",
+      adminWhitelist: [],
       loginChallengeRepository,
+      managementApiToken: "",
       platformHost: "idp.example.test",
       tenantRepository
     });
@@ -231,7 +237,10 @@ describe("/authorize", () => {
   it("rejects authorization for a disabled tenant issuer", async () => {
     const app = createApp({
       clientRepository: new MemoryClientRepository(clients),
+      adminBootstrapPasswordHash: "",
+      adminWhitelist: [],
       loginChallengeRepository: new MemoryLoginChallengeRepository(),
+      managementApiToken: "",
       platformHost: "idp.example.test",
       tenantRepository
     });
@@ -248,7 +257,10 @@ describe("/authorize", () => {
     const app = createApp({
       auditRepository,
       clientRepository: new MemoryClientRepository(clients),
+      adminBootstrapPasswordHash: "",
+      adminWhitelist: [],
       loginChallengeRepository: new MemoryLoginChallengeRepository(),
+      managementApiToken: "",
       platformHost: "idp.example.test",
       tenantRepository
     });
@@ -274,7 +286,10 @@ describe("/authorize", () => {
     const app = createApp({
       auditRepository: new MemoryAuditRepository(),
       clientRepository: new MemoryClientRepository(clients),
+      adminBootstrapPasswordHash: "",
+      adminWhitelist: [],
       loginChallengeRepository: new MemoryLoginChallengeRepository(),
+      managementApiToken: "",
       platformHost: "idp.example.test",
       tenantRepository
     });
@@ -291,7 +306,10 @@ describe("/authorize", () => {
     const app = createApp({
       auditRepository: new MemoryAuditRepository(),
       clientRepository: new MemoryClientRepository(clients),
+      adminBootstrapPasswordHash: "",
+      adminWhitelist: [],
       loginChallengeRepository: new MemoryLoginChallengeRepository(),
+      managementApiToken: "",
       platformHost: "idp.example.test",
       tenantRepository
     });
@@ -380,7 +398,10 @@ describe("/authorize", () => {
           ? { tenantId: "tenant_acme", userId: "user_123" }
           : null,
       clientRepository: new MemoryClientRepository(clients),
+      adminBootstrapPasswordHash: "",
+      adminWhitelist: [],
       loginChallengeRepository: new MemoryLoginChallengeRepository(),
+      managementApiToken: "",
       platformHost: "idp.example.test",
       tenantRepository
     });
@@ -438,7 +459,10 @@ describe("/authorize", () => {
       authorizationCodeRepository,
       authorizeSessionResolver: async () => ({ tenantId: "tenant_acme", userId: "user_123" }),
       clientRepository: new MemoryClientRepository(clients),
+      adminBootstrapPasswordHash: "",
+      adminWhitelist: [],
       loginChallengeRepository: new MemoryLoginChallengeRepository(),
+      managementApiToken: "",
       platformHost: "idp.example.test",
       tenantRepository
     });
@@ -471,7 +495,10 @@ describe("/authorize", () => {
       authorizationCodeRepository,
       authorizeSessionResolver: async () => ({ tenantId: "tenant_acme", userId: "user_123" }),
       clientRepository: new MemoryClientRepository(clients),
+      adminBootstrapPasswordHash: "",
+      adminWhitelist: [],
       loginChallengeRepository: new MemoryLoginChallengeRepository(),
+      managementApiToken: "",
       platformHost: "idp.example.test",
       tenantRepository
     });
@@ -652,13 +679,9 @@ describe("worker entrypoint wiring", () => {
       tenantRepository: tenantRepositoryForRuntime
     }));
     const readRuntimeConfig = vi.fn(() => ({
-      adminBootstrapPassword: "bootstrap",
-      adminWhitelist: [],
       adminSessionsKv: {} as KVNamespace,
       db: {} as D1Database,
       keyMaterialBucket: {} as R2Bucket,
-      managementApiToken: "manage-token",
-      platformHost: "idp.example.test",
       registrationTokensKv: {} as KVNamespace,
       userSessionsKv
     }));
@@ -682,7 +705,12 @@ describe("worker entrypoint wiring", () => {
             }
           }
         ),
-        {} as Record<string, unknown>,
+        {
+          ADMIN_BOOTSTRAP_PASSWORD: "",
+          ADMIN_WHITELIST: "",
+          MANAGEMENT_API_TOKEN: "manage-token",
+          PLATFORM_HOST: "idp.example.test"
+        } as Record<string, unknown>,
         {} as ExecutionContext
       );
 
@@ -772,13 +800,9 @@ describe("worker entrypoint wiring", () => {
       tenantRepository: tenantRepositoryForRuntime
     }));
     const readRuntimeConfig = vi.fn(() => ({
-      adminBootstrapPassword: "bootstrap",
-      adminWhitelist: [],
       adminSessionsKv: {} as KVNamespace,
       db: {} as D1Database,
       keyMaterialBucket: {} as R2Bucket,
-      managementApiToken: "manage-token",
-      platformHost: "idp.example.test",
       registrationTokensKv: {} as KVNamespace,
       userSessionsKv
     }));
@@ -802,7 +826,12 @@ describe("worker entrypoint wiring", () => {
             }
           }
         ),
-        {} as Record<string, unknown>,
+        {
+          ADMIN_BOOTSTRAP_PASSWORD: "",
+          ADMIN_WHITELIST: "",
+          MANAGEMENT_API_TOKEN: "manage-token",
+          PLATFORM_HOST: "idp.example.test"
+        } as Record<string, unknown>,
         {} as ExecutionContext
       );
 

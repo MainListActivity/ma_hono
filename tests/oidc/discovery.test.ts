@@ -57,6 +57,9 @@ const tenantRepository = new MemoryTenantRepository([
 describe("OIDC discovery", () => {
   it("returns issuer-correct metadata for a platform-path issuer", async () => {
     const app = createApp({
+      adminBootstrapPasswordHash: "",
+      adminWhitelist: [],
+      managementApiToken: "",
       platformHost: "idp.example.test",
       tenantRepository
     });
@@ -88,6 +91,9 @@ describe("OIDC discovery", () => {
 
   it("returns issuer-correct metadata for a custom-domain issuer", async () => {
     const app = createApp({
+      adminBootstrapPasswordHash: "",
+      adminWhitelist: [],
+      managementApiToken: "",
       platformHost: "idp.example.test",
       tenantRepository
     });
@@ -115,6 +121,9 @@ describe("OIDC discovery", () => {
 
   it("returns 404 when the issuer cannot be resolved", async () => {
     const app = createApp({
+      adminBootstrapPasswordHash: "",
+      adminWhitelist: [],
+      managementApiToken: "",
       platformHost: "idp.example.test",
       tenantRepository
     });
@@ -128,6 +137,9 @@ describe("OIDC discovery", () => {
 
   it("returns 404 for a platform-path discovery route requested on a custom-domain host", async () => {
     const app = createApp({
+      adminBootstrapPasswordHash: "",
+      adminWhitelist: [],
+      managementApiToken: "",
       platformHost: "idp.example.test",
       tenantRepository
     });
@@ -141,6 +153,9 @@ describe("OIDC discovery", () => {
 
   it("returns 404 for disabled tenants", async () => {
     const app = createApp({
+      adminBootstrapPasswordHash: "",
+      adminWhitelist: [],
+      managementApiToken: "",
       platformHost: "idp.example.test",
       tenantRepository
     });
@@ -154,6 +169,9 @@ describe("OIDC discovery", () => {
 
   it("returns live error semantics for authorize and token endpoints", async () => {
     const app = createApp({
+      adminBootstrapPasswordHash: "",
+      adminWhitelist: [],
+      managementApiToken: "",
       platformHost: "idp.example.test",
       tenantRepository
     });

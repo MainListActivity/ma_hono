@@ -17,10 +17,11 @@ describe("admin auth and management api", () => {
     });
     const auditRepository = new MemoryAuditRepository();
     const app = createApp({
-      adminBootstrapPassword: "bootstrap-secret",
+      adminBootstrapPasswordHash: "1:AQEBAQEBAQEBAQEBAQEBAQ:-niO1HggQYX5120bMdQ1NLtflreXdKdYKUoUQe1oPdI",
       adminWhitelist: ["admin@example.test"],
       adminRepository,
       auditRepository,
+      managementApiToken: "",
       platformHost: "idp.example.test",
       tenantRepository
     });
@@ -71,11 +72,12 @@ describe("admin auth and management api", () => {
 
   it("rejects a non-whitelist admin login", async () => {
     const app = createApp({
-      adminBootstrapPassword: "bootstrap-secret",
+      adminBootstrapPasswordHash: "1:AQEBAQEBAQEBAQEBAQEBAQ:-niO1HggQYX5120bMdQ1NLtflreXdKdYKUoUQe1oPdI",
       adminWhitelist: ["admin@example.test"],
       adminRepository: new MemoryAdminRepository({
         adminUsers: [{ email: "admin@example.test", id: "admin_1", status: "active" }]
       }),
+      managementApiToken: "",
       platformHost: "idp.example.test",
       tenantRepository: new MemoryTenantRepository()
     });
@@ -97,10 +99,11 @@ describe("admin auth and management api", () => {
   it("writes an audit event for failed admin login attempts", async () => {
     const auditRepository = new MemoryAuditRepository();
     const app = createApp({
-      adminBootstrapPassword: "bootstrap-secret",
+      adminBootstrapPasswordHash: "1:AQEBAQEBAQEBAQEBAQEBAQ:-niO1HggQYX5120bMdQ1NLtflreXdKdYKUoUQe1oPdI",
       adminWhitelist: ["admin@example.test"],
       adminRepository: new MemoryAdminRepository(),
       auditRepository,
+      managementApiToken: "",
       platformHost: "idp.example.test",
       tenantRepository: new MemoryTenantRepository()
     });
@@ -124,11 +127,12 @@ describe("admin auth and management api", () => {
 
   it("returns 401 for an unauthenticated tenant create request", async () => {
     const app = createApp({
-      adminBootstrapPassword: "bootstrap-secret",
+      adminBootstrapPasswordHash: "1:AQEBAQEBAQEBAQEBAQEBAQ:-niO1HggQYX5120bMdQ1NLtflreXdKdYKUoUQe1oPdI",
       adminWhitelist: ["admin@example.test"],
       adminRepository: new MemoryAdminRepository({
         adminUsers: [{ email: "admin@example.test", id: "admin_1", status: "active" }]
       }),
+      managementApiToken: "",
       platformHost: "idp.example.test",
       tenantRepository: new MemoryTenantRepository()
     });
@@ -149,11 +153,12 @@ describe("admin auth and management api", () => {
 
   it("rejects login for a seeded admin who is not in the configured whitelist", async () => {
     const app = createApp({
-      adminBootstrapPassword: "bootstrap-secret",
+      adminBootstrapPasswordHash: "1:AQEBAQEBAQEBAQEBAQEBAQ:-niO1HggQYX5120bMdQ1NLtflreXdKdYKUoUQe1oPdI",
       adminWhitelist: ["admin@example.test"],
       adminRepository: new MemoryAdminRepository({
         adminUsers: [{ email: "ops@example.test", id: "admin_2", status: "active" }]
       }),
+      managementApiToken: "",
       platformHost: "idp.example.test",
       tenantRepository: new MemoryTenantRepository()
     });
@@ -178,9 +183,10 @@ describe("admin auth and management api", () => {
       adminUsers: [{ email: "admin@example.test", id: "admin_1", status: "active" }]
     });
     const app = createApp({
-      adminBootstrapPassword: "bootstrap-secret",
+      adminBootstrapPasswordHash: "1:AQEBAQEBAQEBAQEBAQEBAQ:-niO1HggQYX5120bMdQ1NLtflreXdKdYKUoUQe1oPdI",
       adminWhitelist: ["admin@example.test"],
       adminRepository,
+      managementApiToken: "",
       platformHost: "idp.example.test",
       tenantRepository
     });

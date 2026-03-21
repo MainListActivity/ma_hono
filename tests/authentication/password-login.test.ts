@@ -202,6 +202,9 @@ describe("password login", () => {
       clientRepository: new MemoryClientRepository(clients),
       loginChallengeLookupRepository: loginChallengeRepository,
       loginChallengeRepository,
+      adminBootstrapPasswordHash: "",
+      adminWhitelist: [],
+      managementApiToken: "",
       platformHost: "idp.example.test",
       tenantRepository,
       userRepository
@@ -291,6 +294,9 @@ describe("password login", () => {
       clientRepository: new MemoryClientRepository(clients),
       loginChallengeLookupRepository: loginChallengeRepository,
       loginChallengeRepository,
+      adminBootstrapPasswordHash: "",
+      adminWhitelist: [],
+      managementApiToken: "",
       platformHost: "idp.example.test",
       tenantRepository,
       userRepository
@@ -335,6 +341,9 @@ describe("password login", () => {
       clientRepository: new MemoryClientRepository(clients),
       loginChallengeLookupRepository: loginChallengeRepository,
       loginChallengeRepository,
+      adminBootstrapPasswordHash: "",
+      adminWhitelist: [],
+      managementApiToken: "",
       platformHost: "idp.example.test",
       tenantRepository,
       userRepository: new MemoryUserRepository({
@@ -411,6 +420,9 @@ describe("password login", () => {
       clientRepository: new MemoryClientRepository(clients),
       loginChallengeLookupRepository: loginChallengeRepository,
       loginChallengeRepository,
+      adminBootstrapPasswordHash: "",
+      adminWhitelist: [],
+      managementApiToken: "",
       platformHost: "idp.example.test",
       tenantRepository,
       userRepository: new MemoryUserRepository({
@@ -496,6 +508,9 @@ describe("password login", () => {
       clientRepository: new MemoryClientRepository(clients),
       loginChallengeLookupRepository: loginChallengeRepository,
       loginChallengeRepository,
+      adminBootstrapPasswordHash: "",
+      adminWhitelist: [],
+      managementApiToken: "",
       platformHost: "idp.example.test",
       tenantRepository,
       userRepository: new MemoryUserRepository({
@@ -563,6 +578,9 @@ describe("password login", () => {
       clientRepository: new MemoryClientRepository(clients),
       loginChallengeLookupRepository: disabledUserChallengeRepository,
       loginChallengeRepository: disabledUserChallengeRepository,
+      adminBootstrapPasswordHash: "",
+      adminWhitelist: [],
+      managementApiToken: "",
       platformHost: "idp.example.test",
       tenantRepository,
       userRepository: new MemoryUserRepository({
@@ -626,6 +644,9 @@ describe("password login", () => {
       clientRepository: new MemoryClientRepository(clients),
       loginChallengeLookupRepository: new TestLoginChallengeRepository(),
       loginChallengeRepository: new TestLoginChallengeRepository(),
+      adminBootstrapPasswordHash: "",
+      adminWhitelist: [],
+      managementApiToken: "",
       platformHost: "idp.example.test",
       tenantRepository,
       userRepository: new MemoryUserRepository()
@@ -661,6 +682,9 @@ describe("password login", () => {
       clientRepository: new MemoryClientRepository(clients),
       loginChallengeLookupRepository: loginChallengeRepository,
       loginChallengeRepository,
+      adminBootstrapPasswordHash: "",
+      adminWhitelist: [],
+      managementApiToken: "",
       platformHost: "idp.example.test",
       tenantRepository,
       userRepository: new MemoryUserRepository({
@@ -708,6 +732,9 @@ describe("password login", () => {
       clientRepository: new MemoryClientRepository(clients),
       loginChallengeLookupRepository: loginChallengeRepository,
       loginChallengeRepository,
+      adminBootstrapPasswordHash: "",
+      adminWhitelist: [],
+      managementApiToken: "",
       platformHost: "idp.example.test",
       tenantRepository,
       userRepository: new MemoryUserRepository({

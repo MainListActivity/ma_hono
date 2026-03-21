@@ -134,6 +134,9 @@ describe("passkey enrollment and login", () => {
       loginChallengeLookupRepository: new TestLoginChallengeRepository(),
       loginChallengeRepository: new TestLoginChallengeRepository(),
       passkeyRepository,
+      adminBootstrapPasswordHash: "",
+      adminWhitelist: [],
+      managementApiToken: "",
       platformHost: "idp.example.test",
       tenantRepository,
       userRepository
@@ -173,6 +176,9 @@ describe("passkey enrollment and login", () => {
       loginChallengeLookupRepository: loginChallengeRepository,
       loginChallengeRepository,
       passkeyRepository,
+      adminBootstrapPasswordHash: "",
+      adminWhitelist: [],
+      managementApiToken: "",
       platformHost: "idp.example.test",
       tenantRepository,
       userRepository: new MemoryUserRepository({
@@ -277,6 +283,9 @@ describe("passkey enrollment and login", () => {
       loginChallengeLookupRepository: loginChallengeRepository,
       loginChallengeRepository,
       passkeyRepository: new MemoryPasskeyRepository(),
+      adminBootstrapPasswordHash: "",
+      adminWhitelist: [],
+      managementApiToken: "",
       platformHost: "idp.example.test",
       tenantRepository,
       userRepository: new MemoryUserRepository({
@@ -340,6 +349,9 @@ describe("passkey enrollment and login", () => {
       loginChallengeLookupRepository: loginChallengeRepository,
       loginChallengeRepository,
       passkeyRepository: new MemoryPasskeyRepository(),
+      adminBootstrapPasswordHash: "",
+      adminWhitelist: [],
+      managementApiToken: "",
       platformHost: "idp.example.test",
       tenantRepository,
       userRepository: new MemoryUserRepository({

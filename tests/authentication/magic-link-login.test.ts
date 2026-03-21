@@ -167,6 +167,9 @@ describe("magic link login", () => {
       loginChallengeLookupRepository: loginChallengeRepository,
       loginChallengeRepository,
       magicLinkRepository,
+      adminBootstrapPasswordHash: "",
+      adminWhitelist: [],
+      managementApiToken: "",
       platformHost: "idp.example.test",
       tenantRepository,
       userRepository: buildUserRepository()
@@ -208,6 +211,9 @@ describe("magic link login", () => {
       loginChallengeLookupRepository: loginChallengeRepository,
       loginChallengeRepository,
       magicLinkRepository,
+      adminBootstrapPasswordHash: "",
+      adminWhitelist: [],
+      managementApiToken: "",
       platformHost: "idp.example.test",
       tenantRepository,
       userRepository: buildUserRepository()
@@ -266,6 +272,9 @@ describe("magic link login", () => {
       loginChallengeLookupRepository: loginChallengeRepository,
       loginChallengeRepository,
       magicLinkRepository,
+      adminBootstrapPasswordHash: "",
+      adminWhitelist: [],
+      managementApiToken: "",
       platformHost: "idp.example.test",
       tenantRepository,
       userRepository: buildUserRepository()
@@ -318,6 +327,9 @@ describe("magic link login", () => {
       loginChallengeLookupRepository: loginChallengeRepository,
       loginChallengeRepository,
       magicLinkRepository,
+      adminBootstrapPasswordHash: "",
+      adminWhitelist: [],
+      managementApiToken: "",
       platformHost: "idp.example.test",
       tenantRepository,
       userRepository: buildUserRepository()
@@ -371,6 +383,9 @@ describe("magic link login", () => {
       loginChallengeLookupRepository: loginChallengeRepository,
       loginChallengeRepository,
       magicLinkRepository: new MemoryMagicLinkRepository(),
+      adminBootstrapPasswordHash: "",
+      adminWhitelist: [],
+      managementApiToken: "",
       platformHost: "idp.example.test",
       tenantRepository,
       userRepository: new MemoryUserRepository({
@@ -429,6 +444,9 @@ describe("magic link login", () => {
       loginChallengeLookupRepository: loginChallengeRepository,
       loginChallengeRepository,
       magicLinkRepository,
+      adminBootstrapPasswordHash: "",
+      adminWhitelist: [],
+      managementApiToken: "",
       platformHost: "idp.example.test",
       tenantRepository,
       userRepository: buildUserRepository()

@@ -472,11 +472,12 @@ describe("user provisioning and activation routes", () => {
       policies: [tenantPolicy]
     });
     const app = createApp({
-      adminBootstrapPassword: "bootstrap-secret",
+      adminBootstrapPasswordHash: "1:AQEBAQEBAQEBAQEBAQEBAQ:-niO1HggQYX5120bMdQ1NLtflreXdKdYKUoUQe1oPdI",
       adminWhitelist: ["admin@example.test"],
       adminRepository: new MemoryAdminRepository({
         adminUsers: [{ email: "admin@example.test", id: "admin_1", status: "active" }]
       }),
+      managementApiToken: "",
       platformHost: "idp.example.test",
       tenantRepository: createTenantRepositoryWithAcmeTenant(),
       userRepository
@@ -532,12 +533,13 @@ describe("user provisioning and activation routes", () => {
     });
     const auditRepository = new MemoryAuditRepository();
     const app = createApp({
-      adminBootstrapPassword: "bootstrap-secret",
+      adminBootstrapPasswordHash: "1:AQEBAQEBAQEBAQEBAQEBAQ:-niO1HggQYX5120bMdQ1NLtflreXdKdYKUoUQe1oPdI",
       adminWhitelist: ["admin@example.test"],
       adminRepository: new MemoryAdminRepository({
         adminUsers: [{ email: "admin@example.test", id: "admin_1", status: "active" }]
       }),
       auditRepository,
+      managementApiToken: "",
       platformHost: "idp.example.test",
       tenantRepository: createTenantRepositoryWithAcmeTenant(),
       userRepository
@@ -607,11 +609,12 @@ describe("user provisioning and activation routes", () => {
       policies: [tenantPolicy]
     });
     const app = createApp({
-      adminBootstrapPassword: "bootstrap-secret",
+      adminBootstrapPasswordHash: "1:AQEBAQEBAQEBAQEBAQEBAQ:-niO1HggQYX5120bMdQ1NLtflreXdKdYKUoUQe1oPdI",
       adminWhitelist: ["admin@example.test"],
       adminRepository: new MemoryAdminRepository({
         adminUsers: [{ email: "admin@example.test", id: "admin_1", status: "active" }]
       }),
+      managementApiToken: "",
       platformHost: "idp.example.test",
       tenantRepository: createTenantRepositoryWithAcmeTenant(),
       userRepository
@@ -671,12 +674,13 @@ describe("user provisioning and activation routes", () => {
       policies: [tenantPolicy]
     });
     const app = createApp({
-      adminBootstrapPassword: "bootstrap-secret",
+      adminBootstrapPasswordHash: "1:AQEBAQEBAQEBAQEBAQEBAQ:-niO1HggQYX5120bMdQ1NLtflreXdKdYKUoUQe1oPdI",
       adminWhitelist: ["admin@example.test"],
       adminRepository: new MemoryAdminRepository({
         adminUsers: [{ email: "admin@example.test", id: "admin_1", status: "active" }]
       }),
       auditRepository: new EventFailingAuditRepository("user.provisioned"),
+      managementApiToken: "",
       platformHost: "idp.example.test",
       tenantRepository: createTenantRepositoryWithAcmeTenant(),
       userRepository
@@ -716,12 +720,13 @@ describe("user provisioning and activation routes", () => {
       policies: [tenantPolicy]
     });
     const app = createApp({
-      adminBootstrapPassword: "bootstrap-secret",
+      adminBootstrapPasswordHash: "1:AQEBAQEBAQEBAQEBAQEBAQ:-niO1HggQYX5120bMdQ1NLtflreXdKdYKUoUQe1oPdI",
       adminWhitelist: ["admin@example.test"],
       adminRepository: new MemoryAdminRepository({
         adminUsers: [{ email: "admin@example.test", id: "admin_1", status: "active" }]
       }),
       auditRepository: new EventFailingAuditRepository("user.activation.succeeded"),
+      managementApiToken: "",
       platformHost: "idp.example.test",
       tenantRepository: createTenantRepositoryWithAcmeTenant(),
       userRepository
@@ -776,11 +781,12 @@ describe("user provisioning and activation routes", () => {
       policies: [tenantPolicy]
     });
     const app = createApp({
-      adminBootstrapPassword: "bootstrap-secret",
+      adminBootstrapPasswordHash: "1:AQEBAQEBAQEBAQEBAQEBAQ:-niO1HggQYX5120bMdQ1NLtflreXdKdYKUoUQe1oPdI",
       adminWhitelist: ["admin@example.test"],
       adminRepository: new MemoryAdminRepository({
         adminUsers: [{ email: "admin@example.test", id: "admin_1", status: "active" }]
       }),
+      managementApiToken: "",
       platformHost: "idp.example.test",
       tenantRepository: new MemoryTenantRepository(),
       userRepository
@@ -820,7 +826,11 @@ describe("user provisioning and activation routes", () => {
 
   it("preserves failed activation response when failed-activation audit persistence throws", async () => {
     const app = createApp({
+      adminBootstrapPasswordHash: "",
+      adminWhitelist: [],
       auditRepository: new EventFailingAuditRepository("user.activation.failed"),
+      managementApiToken: "",
+      platformHost: "idp.example.test",
       userRepository: new MemoryUserRepository({
         policies: [tenantPolicy]
       })

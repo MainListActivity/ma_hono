@@ -94,6 +94,9 @@ describe("OIDC JWKS", () => {
   it("returns only active public keys for a platform-path issuer", async () => {
     const app = createApp({
       keyRepository,
+      adminBootstrapPasswordHash: "",
+      adminWhitelist: [],
+      managementApiToken: "",
       platformHost: "idp.example.test",
       tenantRepository
     });
@@ -116,6 +119,9 @@ describe("OIDC JWKS", () => {
   it("returns issuer-context keys for a custom-domain issuer", async () => {
     const app = createApp({
       keyRepository,
+      adminBootstrapPasswordHash: "",
+      adminWhitelist: [],
+      managementApiToken: "",
       platformHost: "idp.example.test",
       tenantRepository
     });
@@ -131,6 +137,9 @@ describe("OIDC JWKS", () => {
   it("returns 404 when the jwks issuer cannot be resolved", async () => {
     const app = createApp({
       keyRepository,
+      adminBootstrapPasswordHash: "",
+      adminWhitelist: [],
+      managementApiToken: "",
       platformHost: "idp.example.test",
       tenantRepository
     });

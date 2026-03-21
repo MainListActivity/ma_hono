@@ -62,6 +62,8 @@ describe("Dynamic Client Registration", () => {
     const app = createApp({
       auditRepository,
       clientRepository,
+      adminBootstrapPasswordHash: "",
+      adminWhitelist: [],
       managementApiToken: "manage-acme",
       platformHost: "idp.example.test",
       registrationAccessTokenRepository,
@@ -111,6 +113,8 @@ describe("Dynamic Client Registration", () => {
   it("rejects registration without a valid management credential", async () => {
     const app = createApp({
       clientRepository: new MemoryClientRepository(),
+      adminBootstrapPasswordHash: "",
+      adminWhitelist: [],
       managementApiToken: "manage-acme",
       platformHost: "idp.example.test",
       tenantRepository
@@ -137,6 +141,8 @@ describe("Dynamic Client Registration", () => {
   it("rejects registration when redirect uris are invalid", async () => {
     const app = createApp({
       clientRepository: new MemoryClientRepository(),
+      adminBootstrapPasswordHash: "",
+      adminWhitelist: [],
       managementApiToken: "manage-acme",
       platformHost: "idp.example.test",
       tenantRepository
@@ -164,6 +170,8 @@ describe("Dynamic Client Registration", () => {
   it("returns an issuer-correct registration client uri for a custom-domain issuer", async () => {
     const app = createApp({
       clientRepository: new MemoryClientRepository(),
+      adminBootstrapPasswordHash: "",
+      adminWhitelist: [],
       managementApiToken: "manage-acme",
       platformHost: "idp.example.test",
       tenantRepository
@@ -196,6 +204,8 @@ describe("Dynamic Client Registration", () => {
   it("rejects unsupported response and grant types", async () => {
     const app = createApp({
       clientRepository: new MemoryClientRepository(),
+      adminBootstrapPasswordHash: "",
+      adminWhitelist: [],
       managementApiToken: "manage-acme",
       platformHost: "idp.example.test",
       tenantRepository
@@ -223,6 +233,8 @@ describe("Dynamic Client Registration", () => {
   it("rejects private_key_jwt until client key material is supported", async () => {
     const app = createApp({
       clientRepository: new MemoryClientRepository(),
+      adminBootstrapPasswordHash: "",
+      adminWhitelist: [],
       managementApiToken: "manage-acme",
       platformHost: "idp.example.test",
       tenantRepository
@@ -251,6 +263,8 @@ describe("Dynamic Client Registration", () => {
     const clientRepository = new MemoryClientRepository();
     const app = createApp({
       clientRepository,
+      adminBootstrapPasswordHash: "",
+      adminWhitelist: [],
       managementApiToken: "manage-acme",
       platformHost: "idp.example.test",
       registrationAccessTokenRepository: new FailingRegistrationAccessTokenRepository(),
@@ -309,6 +323,8 @@ describe("Dynamic Client Registration", () => {
     const app = createApp({
       auditRepository: new FailingAuditRepository(),
       clientRepository,
+      adminBootstrapPasswordHash: "",
+      adminWhitelist: [],
       managementApiToken: "manage-acme",
       platformHost: "idp.example.test",
       registrationAccessTokenRepository,

@@ -224,6 +224,9 @@ describe("/token", () => {
       auditRepository: new MemoryAuditRepository(),
       authorizationCodeRepository: codeRepository,
       clientRepository: new MemoryClientRepository([client]),
+      adminBootstrapPasswordHash: "",
+      adminWhitelist: [],
+      managementApiToken: "",
       platformHost: "idp.example.test",
       signer,
       tenantRepository
@@ -299,6 +302,9 @@ describe("/token", () => {
       auditRepository: new MemoryAuditRepository(),
       authorizationCodeRepository: codeRepository,
       clientRepository: new MemoryClientRepository([client]),
+      adminBootstrapPasswordHash: "",
+      adminWhitelist: [],
+      managementApiToken: "",
       platformHost: "idp.example.test",
       signer,
       tenantRepository
@@ -395,6 +401,9 @@ describe("/token", () => {
       auditRepository: new MemoryAuditRepository(),
       authorizationCodeRepository: codeRepository,
       clientRepository: new MemoryClientRepository([basicClient, postClient, noneClient]),
+      adminBootstrapPasswordHash: "",
+      adminWhitelist: [],
+      managementApiToken: "",
       platformHost: "idp.example.test",
       signer,
       tenantRepository
@@ -496,6 +505,9 @@ describe("/token", () => {
       auditRepository: new MemoryAuditRepository(),
       authorizationCodeRepository: codeRepository,
       clientRepository: new MemoryClientRepository([basicClient, postClient, mixedClient]),
+      adminBootstrapPasswordHash: "",
+      adminWhitelist: [],
+      managementApiToken: "",
       platformHost: "idp.example.test",
       signer,
       tenantRepository
@@ -581,6 +593,9 @@ describe("/token", () => {
       auditRepository: new MemoryAuditRepository(),
       authorizationCodeRepository: codeRepository,
       clientRepository: new MemoryClientRepository([client]),
+      adminBootstrapPasswordHash: "",
+      adminWhitelist: [],
+      managementApiToken: "",
       platformHost: "idp.example.test",
       signer,
       tenantRepository
@@ -640,6 +655,9 @@ describe("/token", () => {
       auditRepository: new MemoryAuditRepository(),
       authorizationCodeRepository: codeRepository,
       clientRepository: new MemoryClientRepository([client]),
+      adminBootstrapPasswordHash: "",
+      adminWhitelist: [],
+      managementApiToken: "",
       platformHost: "idp.example.test",
       signer,
       tenantRepository
@@ -709,6 +727,9 @@ describe("/token", () => {
       auditRepository,
       authorizationCodeRepository: codeRepository,
       clientRepository: new MemoryClientRepository([client]),
+      adminBootstrapPasswordHash: "",
+      adminWhitelist: [],
+      managementApiToken: "",
       platformHost: "idp.example.test",
       signer,
       tenantRepository
@@ -760,6 +781,9 @@ describe("/token", () => {
       auditRepository: new MemoryAuditRepository(),
       authorizationCodeRepository: codeRepository,
       clientRepository: new MemoryClientRepository([client]),
+      adminBootstrapPasswordHash: "",
+      adminWhitelist: [],
+      managementApiToken: "",
       platformHost: "idp.example.test",
       tenantRepository
     });
@@ -803,6 +827,9 @@ describe("/token", () => {
       auditRepository,
       authorizationCodeRepository: codeRepository,
       clientRepository: new MemoryClientRepository([client]),
+      adminBootstrapPasswordHash: "",
+      adminWhitelist: [],
+      managementApiToken: "",
       platformHost: "idp.example.test",
       signer,
       tenantRepository
@@ -852,6 +879,9 @@ describe("/token", () => {
       auditRepository: new MemoryAuditRepository(),
       authorizationCodeRepository: codeRepository,
       clientRepository: new MemoryClientRepository([client]),
+      adminBootstrapPasswordHash: "",
+      adminWhitelist: [],
+      managementApiToken: "",
       platformHost: "idp.example.test",
       signer,
       tenantRepository
@@ -913,6 +943,9 @@ describe("/token", () => {
       auditRepository: new MemoryAuditRepository(),
       authorizationCodeRepository: codeRepository,
       clientRepository: new MemoryClientRepository([client]),
+      adminBootstrapPasswordHash: "",
+      adminWhitelist: [],
+      managementApiToken: "",
       platformHost: "idp.example.test",
       signer,
       tenantRepository

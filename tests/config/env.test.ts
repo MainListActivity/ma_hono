@@ -53,56 +53,40 @@ const hasUniqueIndex = (
 describe("readRuntimeConfig", () => {
   it("reads the required runtime configuration", () => {
     const config = readRuntimeConfig({
-      ADMIN_BOOTSTRAP_PASSWORD: "bootstrap-secret",
-      ADMIN_WHITELIST: "admin@example.test,ops@example.test",
       DB: fakeD1Database,
       ADMIN_SESSIONS_KV: fakeAdminSessionsKv,
       USER_SESSIONS_KV: fakeUserSessionsKv,
       REGISTRATION_TOKENS_KV: fakeRegistrationTokensKv,
-      KEY_MATERIAL_R2: fakeKeyMaterialBucket,
-      MANAGEMENT_API_TOKEN: "manage-acme",
-      PLATFORM_HOST: "idp.example.test"
+      KEY_MATERIAL_R2: fakeKeyMaterialBucket
     });
 
     expect(config).toEqual({
-      adminBootstrapPassword: "bootstrap-secret",
-      adminWhitelist: ["admin@example.test", "ops@example.test"],
       adminSessionsKv: fakeAdminSessionsKv,
       db: fakeD1Database,
       keyMaterialBucket: fakeKeyMaterialBucket,
-      managementApiToken: "manage-acme",
-      platformHost: "idp.example.test",
       userSessionsKv: fakeUserSessionsKv,
       registrationTokensKv: fakeRegistrationTokensKv
     });
   });
 
-  it("throws when required configuration is missing", () => {
+  it("throws when the D1 database binding is missing", () => {
     expect(() =>
       readRuntimeConfig({
-        ADMIN_BOOTSTRAP_PASSWORD: "bootstrap-secret",
-        ADMIN_WHITELIST: "admin@example.test",
-        DB: fakeD1Database,
         ADMIN_SESSIONS_KV: fakeAdminSessionsKv,
         USER_SESSIONS_KV: fakeUserSessionsKv,
         REGISTRATION_TOKENS_KV: fakeRegistrationTokensKv,
-        KEY_MATERIAL_R2: fakeKeyMaterialBucket,
-        MANAGEMENT_API_TOKEN: "manage-acme"
+        KEY_MATERIAL_R2: fakeKeyMaterialBucket
       })
-    ).toThrowError(/PLATFORM_HOST/);
+    ).toThrowError(/DB/);
   });
 
   it("throws when the end-user session KV binding is missing", () => {
     expect(() =>
       readRuntimeConfig({
-        ADMIN_BOOTSTRAP_PASSWORD: "bootstrap-secret",
-        ADMIN_WHITELIST: "admin@example.test",
         DB: fakeD1Database,
         ADMIN_SESSIONS_KV: fakeAdminSessionsKv,
         REGISTRATION_TOKENS_KV: fakeRegistrationTokensKv,
-        KEY_MATERIAL_R2: fakeKeyMaterialBucket,
-        MANAGEMENT_API_TOKEN: "manage-acme",
-        PLATFORM_HOST: "idp.example.test"
+        KEY_MATERIAL_R2: fakeKeyMaterialBucket
       })
     ).toThrowError(/USER_SESSIONS_KV/);
   });
@@ -182,13 +166,9 @@ describe("drizzle schema", () => {
 describe("createRuntimeRepositories", () => {
   it("builds concrete runtime repositories from Cloudflare bindings", async () => {
     const repositories = await createRuntimeRepositories({
-      adminBootstrapPassword: "bootstrap-secret",
-      adminWhitelist: ["admin@example.test"],
       adminSessionsKv: fakeAdminSessionsKv,
       db: fakeD1Database,
       keyMaterialBucket: fakeKeyMaterialBucket,
-      managementApiToken: "manage-acme",
-      platformHost: "idp.example.test",
       userSessionsKv: fakeUserSessionsKv,
       registrationTokensKv: fakeRegistrationTokensKv
     });

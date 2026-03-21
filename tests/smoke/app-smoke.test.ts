@@ -4,7 +4,12 @@ import { createApp } from "../../src/app/app";
 
 describe("app smoke", () => {
   it("responds 404 for unknown routes", async () => {
-    const app = createApp();
+    const app = createApp({
+      adminBootstrapPasswordHash: "",
+      adminWhitelist: [],
+      managementApiToken: "",
+      platformHost: ""
+    });
 
     const response = await app.request("http://localhost/unknown");
 

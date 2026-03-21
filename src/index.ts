@@ -61,8 +61,8 @@ export default {
     const repositories = await createRuntimeRepositories(runtimeConfig);
     const browserSessionRepository = createKvBrowserSessionRepository(runtimeConfig.userSessionsKv);
     const app = createApp({
-      adminBootstrapPassword: runtimeConfig.adminBootstrapPassword,
-      adminWhitelist: runtimeConfig.adminWhitelist,
+      adminBootstrapPasswordHash: typeof env.ADMIN_BOOTSTRAP_PASSWORD === "string" ? env.ADMIN_BOOTSTRAP_PASSWORD : "",
+      adminWhitelist: typeof env.ADMIN_WHITELIST === "string" ? env.ADMIN_WHITELIST.split(",").map((v) => v.trim()).filter(Boolean) : [],
       adminRepository: repositories.adminRepository,
       auditRepository: repositories.auditRepository,
       authorizationCodeRepository: repositories.authorizationCodeRepository,
@@ -108,8 +108,8 @@ export default {
       keyRepository: repositories.keyRepository,
       loginChallengeLookupRepository: repositories.authenticationLoginChallengeRepository,
       loginChallengeRepository: repositories.loginChallengeRepository,
-      managementApiToken: runtimeConfig.managementApiToken,
-      platformHost: runtimeConfig.platformHost,
+      managementApiToken: typeof env.MANAGEMENT_API_TOKEN === "string" ? env.MANAGEMENT_API_TOKEN : "",
+      platformHost: typeof env.PLATFORM_HOST === "string" ? env.PLATFORM_HOST : "",
       browserSessionRepository,
       registrationAccessTokenRepository: repositories.registrationAccessTokenRepository,
       signer: repositories.signer,
