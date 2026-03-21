@@ -386,8 +386,8 @@ class D1LoginChallengeRepository
     });
   }
 
-  async consume(challengeId: string, consumedAt: string): Promise<void> {
-    await this.db
+  async consume(challengeId: string, consumedAt: string): Promise<boolean> {
+    const [row] = await this.db
       .update(loginChallenges)
       .set({
         consumedAt
@@ -397,7 +397,12 @@ class D1LoginChallengeRepository
           eq(loginChallenges.id, challengeId),
           isNull(loginChallenges.consumedAt)
         )
-      );
+      )
+      .returning({
+        id: loginChallenges.id
+      });
+
+    return row !== undefined;
   }
 
   async findByTokenHash(tokenHash: string): Promise<LoginChallenge | null> {

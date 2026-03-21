@@ -18,29 +18,41 @@ class TestLoginChallengeRepository
   implements LoginChallengeRepository, AuthenticationLoginChallengeRepository
 {
   private readonly challenges: LoginChallenge[];
+  private readonly staleReads: boolean;
 
-  constructor(initialChallenges: LoginChallenge[] = []) {
+  constructor(
+    initialChallenges: LoginChallenge[] = [],
+    options: {
+      staleReads?: boolean;
+    } = {}
+  ) {
     this.challenges = [...initialChallenges];
+    this.staleReads = options.staleReads ?? false;
   }
 
   async create(challenge: LoginChallenge): Promise<void> {
     this.challenges.push(challenge);
   }
 
-  async consume(challengeId: string, consumedAt: string): Promise<void> {
+  async consume(challengeId: string, consumedAt: string): Promise<boolean> {
     const challenge = this.challenges.find(
       (candidate) => candidate.id === challengeId && candidate.consumedAt === null
     );
 
     if (challenge !== undefined) {
       challenge.consumedAt = consumedAt;
+      return true;
     }
+
+    return false;
   }
 
   async findByTokenHash(tokenHash: string): Promise<LoginChallenge | null> {
     return (
       this.challenges.find(
-        (challenge) => challenge.tokenHash === tokenHash && challenge.consumedAt === null
+        (challenge) =>
+          challenge.tokenHash === tokenHash &&
+          (this.staleReads || challenge.consumedAt === null)
       ) ?? null
     );
   }
@@ -289,6 +301,93 @@ describe("password login", () => {
     expect(auditRepository.listEvents().map((event) => event.eventType)).toContain(
       "user.password_login.failed"
     );
+  });
+
+  it("rejects second submit when challenge consume claim is lost", async () => {
+    const loginChallengeToken = "challenge-racy-double-submit";
+    const loginChallengeRepository = new TestLoginChallengeRepository(
+      [await buildChallenge({ token: loginChallengeToken })],
+      {
+        staleReads: true
+      }
+    );
+    const authorizationCodeRepository = new MemoryAuthorizationCodeRepository();
+    const sessionRepository = new MemoryUserSessionRepository();
+    const app = createApp({
+      auditRepository: new MemoryAuditRepository(),
+      authorizationCodeRepository,
+      browserSessionRepository: sessionRepository,
+      clientRepository: new MemoryClientRepository(clients),
+      loginChallengeLookupRepository: loginChallengeRepository,
+      loginChallengeRepository,
+      platformHost: "idp.example.test",
+      tenantRepository,
+      userRepository: new MemoryUserRepository({
+        policies: [
+          {
+            tenantId: "tenant_acme",
+            password: { enabled: true },
+            emailMagicLink: { enabled: true },
+            passkey: { enabled: true }
+          }
+        ],
+        users: [
+          {
+            id: "user_123",
+            tenantId: "tenant_acme",
+            email: "user@acme.test",
+            emailVerified: true,
+            username: "alice",
+            displayName: "Alice",
+            status: "active",
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+          }
+        ],
+        passwordCredentials: [
+          {
+            id: "credential_123",
+            tenantId: "tenant_acme",
+            userId: "user_123",
+            passwordHash: await hashPassword("correct-password"),
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+          }
+        ]
+      })
+    });
+
+    const firstResponse = await app.request("https://idp.example.test/t/acme/login/password", {
+      body: new URLSearchParams({
+        login_challenge: loginChallengeToken,
+        username: "alice",
+        password: "correct-password"
+      }),
+      headers: {
+        "content-type": "application/x-www-form-urlencoded"
+      },
+      method: "POST"
+    });
+    expect(firstResponse.status).toBe(302);
+
+    const secondResponse = await app.request("https://idp.example.test/t/acme/login/password", {
+      body: new URLSearchParams({
+        login_challenge: loginChallengeToken,
+        username: "alice",
+        password: "correct-password"
+      }),
+      headers: {
+        "content-type": "application/x-www-form-urlencoded"
+      },
+      method: "POST"
+    });
+
+    expect(secondResponse.status).toBe(400);
+    expect(await secondResponse.json()).toEqual({
+      error: "invalid_request"
+    });
+    expect(authorizationCodeRepository.listAuthorizationCodes()).toHaveLength(1);
+    expect(sessionRepository.listSessions()).toHaveLength(1);
   });
 
   it("disabled tenant or disabled user is rejected", async () => {

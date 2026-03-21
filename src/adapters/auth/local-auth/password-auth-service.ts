@@ -106,7 +106,17 @@ export const authenticateWithPassword = async ({
     };
   }
 
-  await loginChallengeRepository.consume(challenge.id, now.toISOString());
+  const consumeSucceeded = await loginChallengeRepository.consume(
+    challenge.id,
+    now.toISOString()
+  );
+
+  if (!consumeSucceeded) {
+    return {
+      kind: "rejected",
+      reason: "invalid_login_challenge"
+    };
+  }
 
   return {
     kind: "authenticated",

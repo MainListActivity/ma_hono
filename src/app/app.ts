@@ -89,8 +89,8 @@ class EmptyLoginChallengeRepository implements LoginChallengeRepository {
 class EmptyAuthenticationLoginChallengeRepository
   implements AuthenticationLoginChallengeRepository
 {
-  async consume(): Promise<void> {
-    return;
+  async consume(): Promise<false> {
+    return false;
   }
 
   async findByTokenHash(): Promise<null> {
