@@ -20,7 +20,7 @@ const deriveBits = (key: CryptoKey, salt: Uint8Array) =>
     {
       name: "PBKDF2",
       hash: "SHA-256",
-      salt,
+      salt: new Uint8Array(salt),
       iterations: ITERATIONS
     },
     key,
@@ -78,7 +78,7 @@ export const verifyPasswordPbkdf2 = async (
       {
         name: "PBKDF2",
         hash: "SHA-256",
-        salt,
+        salt: new Uint8Array(salt),
         iterations
       },
       key,
