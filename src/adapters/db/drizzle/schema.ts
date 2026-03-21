@@ -302,7 +302,7 @@ export const authorizationCodes = sqliteTable(
       .references(() => users.id, { onDelete: "cascade" }),
     redirectUri: text("redirect_uri").notNull(),
     scope: text("scope").notNull(),
-    nonce: text("nonce").notNull(),
+    nonce: text("nonce"),
     codeChallenge: text("code_challenge").notNull(),
     codeChallengeMethod: text("code_challenge_method").notNull(),
     tokenHash: text("token_hash").notNull(),

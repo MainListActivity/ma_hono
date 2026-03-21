@@ -45,7 +45,9 @@ const buildValidatedAuthorizeRequest = async ({
       kind: "error",
       error: "invalid_client",
       clientId: null,
-      redirectUri: redirectUri.length > 0 ? redirectUri : null
+      redirectUri: redirectUri.length > 0 ? redirectUri : null,
+      state: request.state,
+      shouldRedirect: false
     };
   }
 
@@ -56,7 +58,9 @@ const buildValidatedAuthorizeRequest = async ({
       kind: "error",
       error: "invalid_client",
       clientId,
-      redirectUri: redirectUri.length > 0 ? redirectUri : null
+      redirectUri: redirectUri.length > 0 ? redirectUri : null,
+      state: request.state,
+      shouldRedirect: false
     };
   }
 
@@ -65,7 +69,9 @@ const buildValidatedAuthorizeRequest = async ({
       kind: "error",
       error: "invalid_redirect_uri",
       clientId,
-      redirectUri
+      redirectUri,
+      state: request.state,
+      shouldRedirect: false
     };
   }
 
@@ -74,7 +80,20 @@ const buildValidatedAuthorizeRequest = async ({
       kind: "error",
       error: "unauthorized_client",
       clientId,
-      redirectUri
+      redirectUri,
+      state: request.state,
+      shouldRedirect: true
+    };
+  }
+
+  if (!client.responseTypes.includes("code")) {
+    return {
+      kind: "error",
+      error: "unauthorized_client",
+      clientId,
+      redirectUri,
+      state: request.state,
+      shouldRedirect: true
     };
   }
 
@@ -83,7 +102,9 @@ const buildValidatedAuthorizeRequest = async ({
       kind: "error",
       error: "unsupported_response_type",
       clientId,
-      redirectUri
+      redirectUri,
+      state: request.state,
+      shouldRedirect: true
     };
   }
 
@@ -93,7 +114,9 @@ const buildValidatedAuthorizeRequest = async ({
       error: "invalid_scope",
       errorDescription: "scope must include openid",
       clientId,
-      redirectUri
+      redirectUri,
+      state: request.state,
+      shouldRedirect: true
     };
   }
 
@@ -108,7 +131,9 @@ const buildValidatedAuthorizeRequest = async ({
       error: "invalid_request",
       errorDescription: pkce.errorDescription,
       clientId,
-      redirectUri
+      redirectUri,
+      state: request.state,
+      shouldRedirect: true
     };
   }
 
@@ -197,7 +222,7 @@ export const authorizeRequest = async ({
     userId: session.userId,
     redirectUri: validatedRequest.redirectUri,
     scope: validatedRequest.scope,
-    nonce: validatedRequest.nonce ?? "",
+    nonce: validatedRequest.nonce,
     codeChallenge: validatedRequest.codeChallenge,
     codeChallengeMethod: validatedRequest.codeChallengeMethod,
     tokenHash: await sha256Base64Url(code),

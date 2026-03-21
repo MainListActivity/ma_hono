@@ -143,6 +143,30 @@ export const createApp = (options: AppOptions = {}) => {
     return issuerContext === null ? null : buildDiscoveryMetadata(issuerContext);
   };
 
+  const buildClientErrorRedirectUrl = ({
+    error,
+    errorDescription,
+    redirectUri,
+    state
+  }: {
+    error: string;
+    errorDescription?: string;
+    redirectUri: string;
+    state: string | null;
+  }) => {
+    const redirectUrl = new URL(redirectUri);
+
+    redirectUrl.searchParams.set("error", error);
+    if (errorDescription !== undefined) {
+      redirectUrl.searchParams.set("error_description", errorDescription);
+    }
+    if (state !== null) {
+      redirectUrl.searchParams.set("state", state);
+    }
+
+    return redirectUrl.toString();
+  };
+
   const recordAuthorizeAuditEvent = async ({
     actorId,
     actorType,
@@ -215,6 +239,18 @@ export const createApp = (options: AppOptions = {}) => {
         }
       });
 
+      if (result.shouldRedirect && result.redirectUri !== null) {
+        return context.redirect(
+          buildClientErrorRedirectUrl({
+            error: result.error,
+            errorDescription: result.errorDescription,
+            redirectUri: result.redirectUri,
+            state: result.state
+          }),
+          302
+        );
+      }
+
       return context.json(
         result.errorDescription === undefined
           ? { error: result.error }
@@ -245,7 +281,14 @@ export const createApp = (options: AppOptions = {}) => {
         }
       });
 
-      return context.json({ error: "consent_required" }, 501);
+      return context.redirect(
+        buildClientErrorRedirectUrl({
+          error: "consent_required",
+          redirectUri: result.request.redirectUri,
+          state: result.request.state
+        }),
+        302
+      );
     }
 
     await recordAuthorizeAuditEvent({
@@ -268,6 +311,27 @@ export const createApp = (options: AppOptions = {}) => {
     }
 
     return context.redirect(redirectUrl.toString(), 302);
+  };
+
+  const handleLoginEntry = async (context: Context) => {
+    const issuerContext = await resolveIssuerContext({
+      requestUrl: context.req.url,
+      platformHost,
+      tenantRepository
+    });
+
+    if (issuerContext === null) {
+      return context.notFound();
+    }
+
+    return context.json(
+      {
+        error: "login_not_implemented",
+        issuer: issuerContext.issuer,
+        login_challenge: context.req.query("login_challenge") ?? null
+      },
+      501
+    );
   };
 
   const handlePlaceholderEndpoint = async (context: Context) => {
@@ -320,6 +384,8 @@ export const createApp = (options: AppOptions = {}) => {
     return context.json(await buildJwks(keyRepository, issuerContext.tenant.id));
   });
 
+  app.get("/login", handleLoginEntry);
+  app.get("/t/:tenant/login", handleLoginEntry);
   app.get("/authorize", handleAuthorize);
   app.get("/t/:tenant/authorize", handleAuthorize);
   app.all("/token", handlePlaceholderEndpoint);

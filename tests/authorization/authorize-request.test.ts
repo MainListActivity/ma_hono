@@ -113,6 +113,20 @@ const clients: Client[] = [
     consentPolicy: "skip"
   },
   {
+    id: "client_record_acme_no_code_response",
+    tenantId: "tenant_acme",
+    clientId: "client_acme_no_code_response",
+    clientName: "Acme No Code Response",
+    applicationType: "web",
+    grantTypes: ["authorization_code"],
+    redirectUris: ["https://app.acme.test/no-response"],
+    responseTypes: ["token"],
+    tokenEndpointAuthMethod: "client_secret_basic",
+    clientSecretHash: "hashed-secret",
+    trustLevel: "first_party_trusted",
+    consentPolicy: "skip"
+  },
+  {
     id: "client_record_beta",
     tenantId: "tenant_beta",
     clientId: "client_beta",
@@ -172,6 +186,15 @@ describe("/authorize", () => {
       await sha256Base64Url(loginChallengeToken ?? "")
     );
     expect(auditRepository.listEvents()).toEqual([]);
+
+    const loginEntryResponse = await app.request(location.toString());
+
+    expect(loginEntryResponse.status).toBe(501);
+    expect(await loginEntryResponse.json()).toEqual({
+      error: "login_not_implemented",
+      issuer: "https://idp.example.test/t/acme",
+      login_challenge: loginChallengeToken
+    });
   });
 
   it("uses the resolved custom-domain issuer when creating a login challenge", async () => {
@@ -188,10 +211,21 @@ describe("/authorize", () => {
     );
 
     expect(response.status).toBe(302);
-    expect(response.headers.get("location")).toMatch(
+    const location = response.headers.get("location");
+
+    expect(location).toMatch(
       /^https:\/\/login\.acme\.test\/login\?login_challenge=/
     );
     expect(loginChallengeRepository.listChallenges()[0]?.issuer).toBe("https://login.acme.test");
+
+    const loginEntryResponse = await app.request(location ?? "");
+
+    expect(loginEntryResponse.status).toBe(501);
+    expect(await loginEntryResponse.json()).toEqual({
+      error: "login_not_implemented",
+      issuer: "https://login.acme.test",
+      login_challenge: new URL(location ?? "").searchParams.get("login_challenge")
+    });
   });
 
   it("rejects authorization for a disabled tenant issuer", async () => {
@@ -253,7 +287,7 @@ describe("/authorize", () => {
     expect(await response.json()).toEqual({ error: "invalid_redirect_uri" });
   });
 
-  it("requires response_type=code, openid scope, authorization_code grant support, and PKCE", async () => {
+  it("redirects validated-request authorization errors back to the client", async () => {
     const app = createApp({
       auditRepository: new MemoryAuditRepository(),
       clientRepository: new MemoryClientRepository(clients),
@@ -266,39 +300,73 @@ describe("/authorize", () => {
       "https://idp.example.test/t/acme/authorize?client_id=client_acme_first_party&redirect_uri=https%3A%2F%2Fapp.acme.test%2Fcallback&response_type=token&scope=openid&state=opaque-state&code_challenge=pkce-challenge&code_challenge_method=S256"
     );
 
-    expect(unsupportedResponseType.status).toBe(400);
-    expect(await unsupportedResponseType.json()).toEqual({
-      error: "unsupported_response_type"
-    });
+    expect(unsupportedResponseType.status).toBe(302);
+    const unsupportedResponseTypeLocation = new URL(
+      unsupportedResponseType.headers.get("location") ?? ""
+    );
+
+    expect(unsupportedResponseTypeLocation.origin + unsupportedResponseTypeLocation.pathname).toBe(
+      "https://app.acme.test/callback"
+    );
+    expect(unsupportedResponseTypeLocation.searchParams.get("error")).toBe(
+      "unsupported_response_type"
+    );
+    expect(unsupportedResponseTypeLocation.searchParams.get("state")).toBe("opaque-state");
 
     const missingOpenIdScope = await app.request(
       "https://idp.example.test/t/acme/authorize?client_id=client_acme_first_party&redirect_uri=https%3A%2F%2Fapp.acme.test%2Fcallback&response_type=code&scope=profile&state=opaque-state&code_challenge=pkce-challenge&code_challenge_method=S256"
     );
 
-    expect(missingOpenIdScope.status).toBe(400);
-    expect(await missingOpenIdScope.json()).toEqual({
-      error: "invalid_scope",
-      error_description: "scope must include openid"
-    });
+    expect(missingOpenIdScope.status).toBe(302);
+    const missingOpenIdScopeLocation = new URL(missingOpenIdScope.headers.get("location") ?? "");
+
+    expect(missingOpenIdScopeLocation.searchParams.get("error")).toBe("invalid_scope");
+    expect(missingOpenIdScopeLocation.searchParams.get("error_description")).toBe(
+      "scope must include openid"
+    );
+    expect(missingOpenIdScopeLocation.searchParams.get("state")).toBe("opaque-state");
 
     const missingAuthorizationCodeGrant = await app.request(
       "https://idp.example.test/t/acme/authorize?client_id=client_acme_no_code_grant&redirect_uri=https%3A%2F%2Fapp.acme.test%2Fno-code&response_type=code&scope=openid&state=opaque-state&code_challenge=pkce-challenge&code_challenge_method=S256"
     );
 
-    expect(missingAuthorizationCodeGrant.status).toBe(400);
-    expect(await missingAuthorizationCodeGrant.json()).toEqual({
-      error: "unauthorized_client"
-    });
+    expect(missingAuthorizationCodeGrant.status).toBe(302);
+    const missingAuthorizationCodeGrantLocation = new URL(
+      missingAuthorizationCodeGrant.headers.get("location") ?? ""
+    );
+
+    expect(
+      missingAuthorizationCodeGrantLocation.origin + missingAuthorizationCodeGrantLocation.pathname
+    ).toBe("https://app.acme.test/no-code");
+    expect(missingAuthorizationCodeGrantLocation.searchParams.get("error")).toBe(
+      "unauthorized_client"
+    );
+    expect(missingAuthorizationCodeGrantLocation.searchParams.get("state")).toBe("opaque-state");
+
+    const missingCodeResponseType = await app.request(
+      "https://idp.example.test/t/acme/authorize?client_id=client_acme_no_code_response&redirect_uri=https%3A%2F%2Fapp.acme.test%2Fno-response&response_type=code&scope=openid&state=opaque-state&code_challenge=pkce-challenge&code_challenge_method=S256"
+    );
+
+    expect(missingCodeResponseType.status).toBe(302);
+    const missingCodeResponseTypeLocation = new URL(
+      missingCodeResponseType.headers.get("location") ?? ""
+    );
+
+    expect(missingCodeResponseTypeLocation.searchParams.get("error")).toBe(
+      "unauthorized_client"
+    );
+    expect(missingCodeResponseTypeLocation.searchParams.get("state")).toBe("opaque-state");
 
     const missingPkce = await app.request(
       "https://idp.example.test/t/acme/authorize?client_id=client_acme_first_party&redirect_uri=https%3A%2F%2Fapp.acme.test%2Fcallback&response_type=code&scope=openid&state=opaque-state"
     );
 
-    expect(missingPkce.status).toBe(400);
-    expect(await missingPkce.json()).toEqual({
-      error: "invalid_request",
-      error_description: "PKCE is required"
-    });
+    expect(missingPkce.status).toBe(302);
+    const missingPkceLocation = new URL(missingPkce.headers.get("location") ?? "");
+
+    expect(missingPkceLocation.searchParams.get("error")).toBe("invalid_request");
+    expect(missingPkceLocation.searchParams.get("error_description")).toBe("PKCE is required");
+    expect(missingPkceLocation.searchParams.get("state")).toBe("opaque-state");
   });
 
   it("auto-continues only trusted first-party clients with skip consent and persists the authorization code", async () => {
@@ -343,7 +411,7 @@ describe("/authorize", () => {
       codeChallenge: "pkce-challenge",
       codeChallengeMethod: "S256",
       scope: "openid profile",
-      nonce: ""
+      nonce: null
     });
     expect(authorizationCode?.tokenHash).toBe(
       await sha256Base64Url(location.searchParams.get("code") ?? "")
@@ -377,8 +445,12 @@ describe("/authorize", () => {
       "https://idp.example.test/t/acme/authorize?client_id=client_acme_consent_review&redirect_uri=https%3A%2F%2Freview.acme.test%2Fcallback&response_type=code&scope=openid&state=opaque-state&code_challenge=pkce-challenge&code_challenge_method=S256"
     );
 
-    expect(response.status).toBe(501);
-    expect(await response.json()).toEqual({ error: "consent_required" });
+    expect(response.status).toBe(302);
+    const location = new URL(response.headers.get("location") ?? "");
+
+    expect(location.origin + location.pathname).toBe("https://review.acme.test/callback");
+    expect(location.searchParams.get("error")).toBe("consent_required");
+    expect(location.searchParams.get("state")).toBe("opaque-state");
     expect(authorizationCodeRepository.listAuthorizationCodes()).toEqual([]);
     expect(auditRepository.listEvents()).toHaveLength(1);
     expect(auditRepository.listEvents()[0]).toMatchObject({
@@ -389,6 +461,30 @@ describe("/authorize", () => {
         reason: "consent_required"
       }
     });
+  });
+
+  it("preserves a provided nonce in the authorization code", async () => {
+    const authorizationCodeRepository = new MemoryAuthorizationCodeRepository();
+    const app = createApp({
+      authorizationCodeRepository,
+      authorizeSessionResolver: async () => ({ userId: "user_123" }),
+      clientRepository: new MemoryClientRepository(clients),
+      loginChallengeRepository: new MemoryLoginChallengeRepository(),
+      platformHost: "idp.example.test",
+      tenantRepository
+    });
+
+    const response = await app.request(
+      "https://idp.example.test/t/acme/authorize?client_id=client_acme_first_party&redirect_uri=https%3A%2F%2Fapp.acme.test%2Fcallback&response_type=code&scope=openid%20profile&state=opaque-state&nonce=nonce-123&code_challenge=pkce-challenge&code_challenge_method=S256",
+      {
+        headers: {
+          "x-user-id": "user_123"
+        }
+      }
+    );
+
+    expect(response.status).toBe(302);
+    expect(authorizationCodeRepository.listAuthorizationCodes()[0]?.nonce).toBe("nonce-123");
   });
 });
 

@@ -55,7 +55,7 @@ export interface AuthorizationCode {
   userId: string;
   redirectUri: string;
   scope: string;
-  nonce: string;
+  nonce: string | null;
   codeChallenge: string;
   codeChallengeMethod: PkceCodeChallengeMethod;
   tokenHash: string;
@@ -78,6 +78,8 @@ export interface AuthorizeFailureResult {
   errorDescription?: string;
   clientId: string | null;
   redirectUri: string | null;
+  state: string | null;
+  shouldRedirect: boolean;
 }
 
 export interface AuthorizeLoginRequiredResult {

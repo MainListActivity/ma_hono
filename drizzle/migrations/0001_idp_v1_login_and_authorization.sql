@@ -128,7 +128,7 @@ CREATE TABLE IF NOT EXISTS authorization_codes (
   user_id TEXT NOT NULL,
   redirect_uri TEXT NOT NULL,
   scope TEXT NOT NULL,
-  nonce TEXT NOT NULL,
+  nonce TEXT,
   code_challenge TEXT NOT NULL,
   code_challenge_method TEXT NOT NULL,
   token_hash TEXT NOT NULL,
