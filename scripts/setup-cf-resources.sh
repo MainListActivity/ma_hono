@@ -37,7 +37,7 @@ for KV_NAME in "${KV_NAMES[@]}"; do
   if [ -z "$KV_ID" ]; then
     echo "[KV] 不存在，创建中..."
     npx wrangler kv namespace create "$KV_NAME" > /dev/null
-    KV_ID=$(npx wrangler kv namespace list | jq -r ".[] | select(.title==\"$TITLE\") | .id")
+    KV_ID=$(npx wrangler kv namespace list | jq -r ".[] | select(.title==\"$KV_NAME\") | .id")
   fi
   KV_IDS[$KV_NAME]=$KV_ID
   echo "[KV] ${KV_NAME}_ID=$KV_ID"
