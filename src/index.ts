@@ -70,6 +70,7 @@ export default {
     const browserSessionRepository = createKvBrowserSessionRepository(runtimeConfig.userSessionsKv);
     const app = createApp({
       adminBootstrapPasswordHash: platformConfig.adminBootstrapPasswordHash,
+      adminOrigin: runtimeConfig.adminOrigin,
       adminWhitelist: platformConfig.adminWhitelist,
       adminRepository: repositories.adminRepository,
       auditRepository: repositories.auditRepository,

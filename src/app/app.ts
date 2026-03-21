@@ -35,6 +35,7 @@ import type { SigningKeySigner } from "../domain/keys/signer";
 import type { KeyRepository } from "../domain/keys/repository";
 import type { TenantRepository } from "../domain/tenants/repository";
 import { resolveIssuerContext } from "../domain/tenants/issuer-resolution";
+import type { Tenant } from "../domain/tenants/types";
 import { buildDiscoveryMetadata } from "../domain/oidc/discovery";
 import { exchangeAuthorizationCode } from "../domain/tokens/token-service";
 import { activateUser } from "../domain/users/activate-user";
@@ -227,6 +228,7 @@ class EmptyUserRepository implements UserRepository {
 
 export interface AppOptions {
   adminBootstrapPasswordHash: string;
+  adminOrigin?: string;
   adminWhitelist: string[];
   adminRepository?: AdminRepository;
   auditRepository?: AuditRepository;
@@ -250,6 +252,7 @@ export interface AppOptions {
 export const createApp = (options: AppOptions) => {
   const app = new Hono();
   const adminBootstrapPasswordHash = options.adminBootstrapPasswordHash;
+  const adminOrigin = options.adminOrigin;
   const adminWhitelist = options.adminWhitelist;
   const adminRepository = options.adminRepository ?? new EmptyAdminRepository();
   const auditRepository = options.auditRepository ?? new EmptyAuditRepository();
@@ -1524,6 +1527,34 @@ export const createApp = (options: AppOptions) => {
     return context.json(result.body ?? { error: "unauthorized" }, result.status);
   });
 
+  app.use("/admin/*", async (context, next) => {
+    await next();
+    if (adminOrigin) {
+      context.res.headers.set("Access-Control-Allow-Origin", adminOrigin);
+      context.res.headers.set("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+      context.res.headers.set("Access-Control-Allow-Headers", "Authorization, Content-Type");
+    }
+  });
+
+  app.options("/admin/*", (context) => {
+    if (adminOrigin) {
+      return context.body(null, 204, {
+        "Access-Control-Allow-Origin": adminOrigin,
+        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Authorization, Content-Type"
+      });
+    }
+    return context.body(null, 204);
+  });
+
+  const tenantToWire = (tenant: Tenant) => ({
+    id: tenant.id,
+    slug: tenant.slug,
+    display_name: tenant.displayName,
+    status: tenant.status,
+    issuer: tenant.issuers.find((i) => i.isPrimary)?.issuerUrl ?? null
+  });
+
   app.post("/admin/login", async (context) => {
     const payload = await context.req.json<{ email?: string; password?: string }>();
     const result = await loginAdmin({
@@ -1721,6 +1752,58 @@ export const createApp = (options: AppOptions) => {
       },
       201
     );
+  });
+
+  app.get("/admin/tenants", async (context) => {
+    const session = await authenticateAdminSession({
+      adminRepository,
+      authorizationHeader: context.req.header("authorization")
+    });
+    if (session === null) {
+      return context.json({ error: "unauthorized" }, 401);
+    }
+    const allTenants = await tenantRepository.list();
+    return context.json({ tenants: allTenants.map(tenantToWire) });
+  });
+
+  app.get("/admin/tenants/:tenantId", async (context) => {
+    const session = await authenticateAdminSession({
+      adminRepository,
+      authorizationHeader: context.req.header("authorization")
+    });
+    if (session === null) {
+      return context.json({ error: "unauthorized" }, 401);
+    }
+    const tenantId = context.req.param("tenantId");
+    const tenant = await tenantRepository.findById(tenantId);
+    if (tenant === null) {
+      return context.notFound();
+    }
+    return context.json(tenantToWire(tenant));
+  });
+
+  app.get("/admin/tenants/:tenantId/users", async (context) => {
+    const session = await authenticateAdminSession({
+      adminRepository,
+      authorizationHeader: context.req.header("authorization")
+    });
+    if (session === null) {
+      return context.json({ error: "unauthorized" }, 401);
+    }
+    const tenantId = context.req.param("tenantId");
+    const tenant = await tenantRepository.findById(tenantId);
+    if (tenant === null) {
+      return context.notFound();
+    }
+    const userList = await userRepository.listByTenantId(tenantId);
+    return context.json({
+      users: userList.map((u) => ({
+        id: u.id,
+        email: u.email,
+        display_name: u.displayName,
+        status: u.status
+      }))
+    });
   });
 
   app.post("/activate-account", async (context) => {
