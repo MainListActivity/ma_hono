@@ -499,7 +499,11 @@ const toPasswordCredential = (
   updatedAt: row.updatedAt
 });
 
-class D1UserRepository implements UserRepository {
+const isConstraintConflictError = (error: unknown) =>
+  error instanceof Error &&
+  error.message.toLowerCase().includes("constraint failed");
+
+export class D1UserRepository implements UserRepository {
   constructor(private readonly db: ReturnType<typeof drizzle>) {}
 
   async activateUserByInvitationToken({
@@ -555,52 +559,99 @@ class D1UserRepository implements UserRepository {
         return { kind: "already_initialized" };
       }
 
-      const updatedAt = now.toISOString();
-      const passwordHash = await createPasswordHash();
-      const credential: PasswordCredential = {
-        id: crypto.randomUUID(),
-        tenantId: invitationRow.tenantId,
-        userId: invitationRow.userId,
-        passwordHash,
-        createdAt: updatedAt,
-        updatedAt
-      };
-
-      await tx
-        .update(userInvitations)
-        .set({ consumedAt: updatedAt })
-        .where(eq(userInvitations.id, invitationRow.id));
-      await tx
-        .update(users)
-        .set({
-          emailVerified: true,
-          status: "active",
+      try {
+        const updatedAt = now.toISOString();
+        const passwordHash = await createPasswordHash();
+        const credential: PasswordCredential = {
+          id: crypto.randomUUID(),
+          tenantId: invitationRow.tenantId,
+          userId: invitationRow.userId,
+          passwordHash,
+          createdAt: updatedAt,
           updatedAt
-        })
-        .where(and(eq(users.tenantId, invitationRow.tenantId), eq(users.id, invitationRow.userId)));
-      await tx.insert(userPasswordCredentials).values({
-        id: credential.id,
-        tenantId: credential.tenantId,
-        userId: credential.userId,
-        passwordHash: credential.passwordHash,
-        createdAt: credential.createdAt,
-        updatedAt: credential.updatedAt
-      });
+        };
 
-      return {
-        kind: "activated",
-        invitation: {
-          ...toInvitation(invitationRow),
-          consumedAt: updatedAt
-        },
-        user: {
-          ...toUser(userRow),
-          emailVerified: true,
-          status: "active",
-          updatedAt
-        },
-        credential
-      };
+        await tx
+          .update(userInvitations)
+          .set({ consumedAt: updatedAt })
+          .where(eq(userInvitations.id, invitationRow.id));
+        await tx
+          .update(users)
+          .set({
+            emailVerified: true,
+            status: "active",
+            updatedAt
+          })
+          .where(and(eq(users.tenantId, invitationRow.tenantId), eq(users.id, invitationRow.userId)));
+        await tx.insert(userPasswordCredentials).values({
+          id: credential.id,
+          tenantId: credential.tenantId,
+          userId: credential.userId,
+          passwordHash: credential.passwordHash,
+          createdAt: credential.createdAt,
+          updatedAt: credential.updatedAt
+        });
+
+        return {
+          kind: "activated",
+          invitation: {
+            ...toInvitation(invitationRow),
+            consumedAt: updatedAt
+          },
+          user: {
+            ...toUser(userRow),
+            emailVerified: true,
+            status: "active",
+            updatedAt
+          },
+          credential
+        };
+      } catch (error) {
+        const [latestInvitationRow] = await tx
+          .select()
+          .from(userInvitations)
+          .where(eq(userInvitations.id, invitationRow.id))
+          .limit(1);
+
+        if (latestInvitationRow?.consumedAt !== null && latestInvitationRow !== undefined) {
+          return { kind: "already_used" };
+        }
+
+        const [latestUserRow] = await tx
+          .select()
+          .from(users)
+          .where(and(eq(users.tenantId, invitationRow.tenantId), eq(users.id, invitationRow.userId)))
+          .limit(1);
+
+        if (latestUserRow === undefined) {
+          return { kind: "not_found" };
+        }
+
+        if (latestUserRow.status === "disabled") {
+          return { kind: "user_disabled" };
+        }
+
+        const [latestCredentialRow] = await tx
+          .select()
+          .from(userPasswordCredentials)
+          .where(
+            and(
+              eq(userPasswordCredentials.tenantId, invitationRow.tenantId),
+              eq(userPasswordCredentials.userId, invitationRow.userId)
+            )
+          )
+          .limit(1);
+
+        if (latestUserRow.status !== "provisioned" || latestCredentialRow !== undefined) {
+          return { kind: "already_initialized" };
+        }
+
+        if (isConstraintConflictError(error)) {
+          return { kind: "already_initialized" };
+        }
+
+        throw error;
+      }
     });
   }
 
