@@ -1,6 +1,7 @@
 export type AuditEventType =
   | "admin.login.failed"
   | "admin.login.succeeded"
+  | "oidc.authorization.deferred"
   | "oidc.authorization.failed"
   | "oidc.authorization.succeeded"
   | "oidc.client.registered"

@@ -21,6 +21,13 @@ const canAutoApproveAuthorization = (request: ValidatedAuthorizeRequest) =>
   request.client.trustLevel === "first_party_trusted" &&
   request.client.consentPolicy === "skip";
 
+const includesOpenIdScope = (scope: string) =>
+  scope
+    .split(/\s+/u)
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0)
+    .includes("openid");
+
 const buildValidatedAuthorizeRequest = async ({
   clientRepository,
   issuerContext,
@@ -62,10 +69,29 @@ const buildValidatedAuthorizeRequest = async ({
     };
   }
 
+  if (!client.grantTypes.includes("authorization_code")) {
+    return {
+      kind: "error",
+      error: "unauthorized_client",
+      clientId,
+      redirectUri
+    };
+  }
+
   if (request.responseType !== "code") {
     return {
       kind: "error",
       error: "unsupported_response_type",
+      clientId,
+      redirectUri
+    };
+  }
+
+  if (!includesOpenIdScope(request.scope)) {
+    return {
+      kind: "error",
+      error: "invalid_scope",
+      errorDescription: "scope must include openid",
       clientId,
       redirectUri
     };

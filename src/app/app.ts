@@ -143,6 +143,33 @@ export const createApp = (options: AppOptions = {}) => {
     return issuerContext === null ? null : buildDiscoveryMetadata(issuerContext);
   };
 
+  const recordAuthorizeAuditEvent = async ({
+    actorId,
+    actorType,
+    eventType,
+    payload,
+    targetId,
+    tenantId
+  }: {
+    actorId: string | null;
+    actorType: string;
+    eventType: "oidc.authorization.deferred" | "oidc.authorization.failed" | "oidc.authorization.succeeded";
+    payload: Record<string, unknown> | null;
+    targetId: string | null;
+    tenantId: string;
+  }) =>
+    auditRepository.record({
+      id: crypto.randomUUID(),
+      actorType,
+      actorId,
+      tenantId,
+      eventType,
+      targetType: "oidc_client",
+      targetId,
+      payload,
+      occurredAt: new Date().toISOString()
+    });
+
   const handleAuthorize = async (context: Context) => {
     const issuerContext = await resolveIssuerContext({
       requestUrl: context.req.url,
@@ -175,20 +202,17 @@ export const createApp = (options: AppOptions = {}) => {
     });
 
     if (result.kind === "error") {
-      await auditRepository.record({
-        id: crypto.randomUUID(),
+      await recordAuthorizeAuditEvent({
         actorType: session === null ? "anonymous" : "end_user",
         actorId: session?.userId ?? null,
         tenantId: issuerContext.tenant.id,
         eventType: "oidc.authorization.failed",
-        targetType: "oidc_client",
         targetId: result.clientId,
         payload: {
           client_id: result.clientId,
           reason: result.error,
           redirect_uri: result.redirectUri
-        },
-        occurredAt: new Date().toISOString()
+        }
       });
 
       return context.json(
@@ -208,22 +232,32 @@ export const createApp = (options: AppOptions = {}) => {
     }
 
     if (result.kind === "consent_required") {
+      await recordAuthorizeAuditEvent({
+        actorType: session === null ? "anonymous" : "end_user",
+        actorId: session?.userId ?? null,
+        tenantId: issuerContext.tenant.id,
+        eventType: "oidc.authorization.deferred",
+        targetId: result.request.clientId,
+        payload: {
+          client_id: result.request.clientId,
+          reason: "consent_required",
+          redirect_uri: result.request.redirectUri
+        }
+      });
+
       return context.json({ error: "consent_required" }, 501);
     }
 
-    await auditRepository.record({
-      id: crypto.randomUUID(),
+    await recordAuthorizeAuditEvent({
       actorType: "end_user",
       actorId: result.session.userId,
       tenantId: issuerContext.tenant.id,
       eventType: "oidc.authorization.succeeded",
-      targetType: "oidc_client",
       targetId: result.request.clientId,
       payload: {
         user_id: result.session.userId,
         redirect_uri: result.request.redirectUri
-      },
-      occurredAt: new Date().toISOString()
+      }
     });
 
     const redirectUrl = new URL(result.request.redirectUri);

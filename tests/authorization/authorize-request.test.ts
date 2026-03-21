@@ -6,6 +6,7 @@ import { MemoryClientRepository } from "../../src/adapters/db/memory/memory-clie
 import { MemoryLoginChallengeRepository } from "../../src/adapters/db/memory/memory-login-challenge-repository";
 import { MemoryTenantRepository } from "../../src/adapters/db/memory/memory-tenant-repository";
 import { createApp } from "../../src/app/app";
+import { dynamicClientRegistrationSchema } from "../../src/domain/clients/registration-schema";
 import type { Client } from "../../src/domain/clients/types";
 import { sha256Base64Url } from "../../src/lib/hash";
 
@@ -84,18 +85,32 @@ const clients: Client[] = [
     consentPolicy: "skip"
   },
   {
-    id: "client_record_acme_third_party",
+    id: "client_record_acme_consent_review",
     tenantId: "tenant_acme",
-    clientId: "client_acme_third_party",
-    clientName: "Partner App",
+    clientId: "client_acme_consent_review",
+    clientName: "Acme Consent Review",
     applicationType: "web",
     grantTypes: ["authorization_code"],
-    redirectUris: ["https://partner.example.test/callback"],
+    redirectUris: ["https://review.acme.test/callback"],
     responseTypes: ["code"],
     tokenEndpointAuthMethod: "client_secret_basic",
     clientSecretHash: "hashed-secret",
-    trustLevel: "third_party",
+    trustLevel: "first_party_trusted",
     consentPolicy: "require"
+  },
+  {
+    id: "client_record_acme_no_code_grant",
+    tenantId: "tenant_acme",
+    clientId: "client_acme_no_code_grant",
+    clientName: "Acme No Code Grant",
+    applicationType: "web",
+    grantTypes: ["client_credentials"],
+    redirectUris: ["https://app.acme.test/no-code"],
+    responseTypes: ["code"],
+    tokenEndpointAuthMethod: "client_secret_basic",
+    clientSecretHash: "hashed-secret",
+    trustLevel: "first_party_trusted",
+    consentPolicy: "skip"
   },
   {
     id: "client_record_beta",
@@ -238,7 +253,7 @@ describe("/authorize", () => {
     expect(await response.json()).toEqual({ error: "invalid_redirect_uri" });
   });
 
-  it("requires response_type=code and PKCE", async () => {
+  it("requires response_type=code, openid scope, authorization_code grant support, and PKCE", async () => {
     const app = createApp({
       auditRepository: new MemoryAuditRepository(),
       clientRepository: new MemoryClientRepository(clients),
@@ -254,6 +269,25 @@ describe("/authorize", () => {
     expect(unsupportedResponseType.status).toBe(400);
     expect(await unsupportedResponseType.json()).toEqual({
       error: "unsupported_response_type"
+    });
+
+    const missingOpenIdScope = await app.request(
+      "https://idp.example.test/t/acme/authorize?client_id=client_acme_first_party&redirect_uri=https%3A%2F%2Fapp.acme.test%2Fcallback&response_type=code&scope=profile&state=opaque-state&code_challenge=pkce-challenge&code_challenge_method=S256"
+    );
+
+    expect(missingOpenIdScope.status).toBe(400);
+    expect(await missingOpenIdScope.json()).toEqual({
+      error: "invalid_scope",
+      error_description: "scope must include openid"
+    });
+
+    const missingAuthorizationCodeGrant = await app.request(
+      "https://idp.example.test/t/acme/authorize?client_id=client_acme_no_code_grant&redirect_uri=https%3A%2F%2Fapp.acme.test%2Fno-code&response_type=code&scope=openid&state=opaque-state&code_challenge=pkce-challenge&code_challenge_method=S256"
+    );
+
+    expect(missingAuthorizationCodeGrant.status).toBe(400);
+    expect(await missingAuthorizationCodeGrant.json()).toEqual({
+      error: "unauthorized_client"
     });
 
     const missingPkce = await app.request(
@@ -326,9 +360,11 @@ describe("/authorize", () => {
     });
   });
 
-  it("does not auto-continue when the client requires consent", async () => {
+  it("audits and defers when the client requires consent review", async () => {
+    const auditRepository = new MemoryAuditRepository();
     const authorizationCodeRepository = new MemoryAuthorizationCodeRepository();
     const app = createApp({
+      auditRepository,
       authorizationCodeRepository,
       authorizeSessionResolver: async () => ({ userId: "user_123" }),
       clientRepository: new MemoryClientRepository(clients),
@@ -338,11 +374,62 @@ describe("/authorize", () => {
     });
 
     const response = await app.request(
-      "https://idp.example.test/t/acme/authorize?client_id=client_acme_third_party&redirect_uri=https%3A%2F%2Fpartner.example.test%2Fcallback&response_type=code&scope=openid&state=opaque-state&code_challenge=pkce-challenge&code_challenge_method=S256"
+      "https://idp.example.test/t/acme/authorize?client_id=client_acme_consent_review&redirect_uri=https%3A%2F%2Freview.acme.test%2Fcallback&response_type=code&scope=openid&state=opaque-state&code_challenge=pkce-challenge&code_challenge_method=S256"
     );
 
     expect(response.status).toBe(501);
     expect(await response.json()).toEqual({ error: "consent_required" });
     expect(authorizationCodeRepository.listAuthorizationCodes()).toEqual([]);
+    expect(auditRepository.listEvents()).toHaveLength(1);
+    expect(auditRepository.listEvents()[0]).toMatchObject({
+      tenantId: "tenant_acme",
+      eventType: "oidc.authorization.deferred",
+      targetId: "client_acme_consent_review",
+      payload: {
+        reason: "consent_required"
+      }
+    });
+  });
+});
+
+describe("dynamicClientRegistrationSchema", () => {
+  it("defaults v1 clients to trusted first-party skip-consent semantics", () => {
+    const result = dynamicClientRegistrationSchema.parse({
+      client_name: "Acme Web",
+      application_type: "web",
+      grant_types: ["authorization_code"],
+      redirect_uris: ["https://app.acme.test/callback"],
+      response_types: ["code"],
+      token_endpoint_auth_method: "client_secret_basic"
+    });
+
+    expect(result.trust_level).toBe("first_party_trusted");
+    expect(result.consent_policy).toBe("skip");
+  });
+
+  it("rejects non-v1 trust or consent settings", () => {
+    expect(() =>
+      dynamicClientRegistrationSchema.parse({
+        client_name: "Acme Web",
+        application_type: "web",
+        grant_types: ["authorization_code"],
+        redirect_uris: ["https://app.acme.test/callback"],
+        response_types: ["code"],
+        trust_level: "third_party",
+        token_endpoint_auth_method: "client_secret_basic"
+      })
+    ).toThrow();
+
+    expect(() =>
+      dynamicClientRegistrationSchema.parse({
+        client_name: "Acme Web",
+        application_type: "web",
+        grant_types: ["authorization_code"],
+        redirect_uris: ["https://app.acme.test/callback"],
+        response_types: ["code"],
+        consent_policy: "require",
+        token_endpoint_auth_method: "client_secret_basic"
+      })
+    ).toThrow();
   });
 });

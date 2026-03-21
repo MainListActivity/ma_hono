@@ -67,7 +67,9 @@ export interface AuthorizationCode {
 export type AuthorizeFailureError =
   | "invalid_client"
   | "invalid_redirect_uri"
+  | "invalid_scope"
   | "invalid_request"
+  | "unauthorized_client"
   | "unsupported_response_type";
 
 export interface AuthorizeFailureResult {
