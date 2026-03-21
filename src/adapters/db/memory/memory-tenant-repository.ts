@@ -28,4 +28,8 @@ export class MemoryTenantRepository implements TenantRepository {
       ) ?? null
     );
   }
+
+  async list(): Promise<Tenant[]> {
+    return [...this.tenants];
+  }
 }

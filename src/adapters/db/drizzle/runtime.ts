@@ -277,6 +277,20 @@ class D1TenantRepository implements TenantRepository {
 
     return toTenant(tenantRow, issuerRows);
   }
+
+  async list(): Promise<Tenant[]> {
+    const tenantRows = await this.db.select().from(tenants);
+    if (tenantRows.length === 0) return [];
+
+    const issuerRows = await this.db.select().from(tenantIssuers);
+
+    return tenantRows.map((tenantRow) =>
+      toTenant(
+        tenantRow,
+        issuerRows.filter((r) => r.tenantId === tenantRow.id)
+      )
+    );
+  }
 }
 
 class D1KeyRepository implements KeyRepository {
@@ -855,6 +869,25 @@ export class D1UserRepository implements UserRepository {
       .limit(1);
 
     return row === undefined ? null : toUser(row);
+  }
+
+  async listByTenantId(tenantId: string): Promise<User[]> {
+    const rows = await this.db
+      .select()
+      .from(users)
+      .where(eq(users.tenantId, tenantId));
+
+    return rows.map((row) => ({
+      id: row.id,
+      tenantId: row.tenantId,
+      email: row.email,
+      emailVerified: row.emailVerified,
+      username: row.username,
+      displayName: row.displayName,
+      status: row.status as User["status"],
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt
+    }));
   }
 
   async updateUser(user: User): Promise<void> {

@@ -193,6 +193,10 @@ export class MemoryUserRepository implements UserRepository {
     return this.users.find((user) => user.tenantId === tenantId && user.username === username) ?? null;
   }
 
+  async listByTenantId(tenantId: string): Promise<User[]> {
+    return this.users.filter((user) => user.tenantId === tenantId);
+  }
+
   listInvitations(): UserInvitation[] {
     return [...this.invitations];
   }

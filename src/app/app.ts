@@ -57,6 +57,10 @@ class EmptyTenantRepository implements TenantRepository {
   async findByCustomDomain(): Promise<null> {
     return null;
   }
+
+  async list(): Promise<[]> {
+    return [];
+  }
 }
 
 class EmptyKeyRepository implements KeyRepository {
@@ -206,6 +210,10 @@ class EmptyUserRepository implements UserRepository {
 
   async findUserByUsername(): Promise<null> {
     return null;
+  }
+
+  async listByTenantId(): Promise<[]> {
+    return [];
   }
 
   async updateUser(): Promise<void> {
