@@ -34,11 +34,11 @@ declare -A KV_IDS
 for KV_NAME in "${KV_NAMES[@]}"; do
   TITLE="${WORKER_NAME}-${KV_NAME}"
   echo "[KV] 查找或创建 $TITLE ..."
-  KV_ID=$(npx wrangler kv namespace list --json 2>/dev/null | jq -r ".[] | select(.title==\"$TITLE\") | .id // empty")
+  KV_ID=$(npx wrangler kv namespace list 2>/dev/null | jq -r ".[] | select(.title==\"$TITLE\") | .id // empty")
   if [ -z "$KV_ID" ]; then
     echo "[KV] 不存在，创建中..."
     npx wrangler kv namespace create "$KV_NAME" > /dev/null
-    KV_ID=$(npx wrangler kv namespace list --json | jq -r ".[] | select(.title==\"$TITLE\") | .id")
+    KV_ID=$(npx wrangler kv namespace list | jq -r ".[] | select(.title==\"$TITLE\") | .id")
   fi
   KV_IDS[$KV_NAME]=$KV_ID
   echo "[KV] ${KV_NAME}_ID=$KV_ID"
