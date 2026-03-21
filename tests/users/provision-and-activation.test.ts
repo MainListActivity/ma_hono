@@ -817,4 +817,29 @@ describe("user provisioning and activation routes", () => {
     });
     expect(userRepository.listUsers()).toHaveLength(0);
   });
+
+  it("preserves failed activation response when failed-activation audit persistence throws", async () => {
+    const app = createApp({
+      auditRepository: new EventFailingAuditRepository("user.activation.failed"),
+      userRepository: new MemoryUserRepository({
+        policies: [tenantPolicy]
+      })
+    });
+
+    const response = await app.request("https://idp.example.test/activate-account", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({
+        invitation_token: "invalid-token",
+        password: "CorrectHorseBatteryStaple!42"
+      })
+    });
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      error: "invalid_invitation"
+    });
+  });
 });

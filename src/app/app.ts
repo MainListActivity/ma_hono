@@ -817,8 +817,7 @@ export const createApp = (options: AppOptions = {}) => {
     });
 
     if (!result.ok) {
-      await auditRepository.record({
-        id: crypto.randomUUID(),
+      await recordAuditEventBestEffort({
         actorType: "anonymous",
         actorId: null,
         tenantId: null,
@@ -827,8 +826,7 @@ export const createApp = (options: AppOptions = {}) => {
         targetId: null,
         payload: {
           reason: result.reason
-        },
-        occurredAt: new Date().toISOString()
+        }
       });
 
       if (result.reason === "invalid_invitation" || result.reason === "invitation_expired") {
