@@ -52,6 +52,7 @@ export interface UserRepository {
   findUserByEmail(tenantId: string, email: string): Promise<User | null>;
   findUserById(tenantId: string, userId: string): Promise<User | null>;
   findUserByUsername(tenantId: string, username: string): Promise<User | null>;
+  listByTenantId(tenantId: string): Promise<User[]>;
   updateUser(user: User): Promise<void>;
   upsertPasswordCredential(credential: PasswordCredential): Promise<void>;
 }
