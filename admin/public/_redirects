@@ -1,1 +1,3 @@
-/* /index.html 200
+/ /ui 302
+/ui /index.html 200
+/ui/* /index.html 200

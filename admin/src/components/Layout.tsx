@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { Link, useNavigate } from "react-router";
 import { useAuth } from "../App";
+import { LOGIN_ROUTE, TENANTS_ROUTE } from "../routes";
 
 export default function Layout({ children }: { children: ReactNode }) {
   const { setToken } = useAuth();
@@ -8,7 +9,7 @@ export default function Layout({ children }: { children: ReactNode }) {
 
   const signOut = () => {
     setToken(null);
-    navigate("/login");
+    navigate(LOGIN_ROUTE);
   };
 
   return (
@@ -38,7 +39,7 @@ export default function Layout({ children }: { children: ReactNode }) {
               transform: 'rotate(45deg)'
             }} />
           </div>
-          <Link to="/tenants" className="font-display" style={{
+          <Link to={TENANTS_ROUTE} className="font-display" style={{
             color: 'var(--text-primary)',
             textDecoration: 'none',
             fontSize: '13px',

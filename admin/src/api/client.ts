@@ -1,3 +1,5 @@
+import { adminHref, LOGIN_ROUTE } from "../routes";
+
 const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "";
 
 export interface TenantSummary {
@@ -32,7 +34,7 @@ const authHeaders = (token: string) => ({
 const checkOk = async (res: Response) => {
   if (res.status === 401) {
     sessionStorage.removeItem("admin_session_token");
-    window.location.href = "/login";
+    window.location.href = adminHref(LOGIN_ROUTE);
     throw new ApiError(401, "unauthorized");
   }
   if (!res.ok) {
