@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { MemoryAuditRepository } from "../../src/adapters/db/memory/memory-audit-repository";
 import { MemoryAdminRepository } from "../../src/adapters/db/memory/memory-admin-repository";
+import { MemoryTenantRepository } from "../../src/adapters/db/memory/memory-tenant-repository";
 import { MemoryUserRepository } from "../../src/adapters/db/memory/memory-user-repository";
 import { MemoryUserSessionRepository } from "../../src/adapters/db/memory/memory-user-session-repository";
 import { createApp } from "../../src/app/app";
@@ -20,6 +21,20 @@ interface AdminLoginResponse {
   session_token: string;
 }
 
+class EventFailingAuditRepository extends MemoryAuditRepository {
+  constructor(private readonly failOnEventType: string) {
+    super();
+  }
+
+  override async record(event: Parameters<MemoryAuditRepository["record"]>[0]): Promise<void> {
+    if (event.eventType === this.failOnEventType) {
+      throw new Error(`simulated audit failure for ${event.eventType}`);
+    }
+
+    await super.record(event);
+  }
+}
+
 const tenantPolicy: TenantAuthMethodPolicy = {
   tenantId: "tenant_acme",
   password: {
@@ -32,6 +47,26 @@ const tenantPolicy: TenantAuthMethodPolicy = {
     enabled: false
   }
 };
+
+const createTenantRepositoryWithAcmeTenant = () =>
+  new MemoryTenantRepository([
+    {
+      id: "tenant_acme",
+      slug: "acme",
+      displayName: "Acme",
+      status: "active",
+      issuers: [
+        {
+          id: "issuer_acme",
+          issuerType: "platform_path",
+          issuerUrl: "https://idp.example.test/t/acme",
+          domain: null,
+          isPrimary: true,
+          verificationStatus: "verified"
+        }
+      ]
+    }
+  ]);
 
 describe("user provisioning and activation domain", () => {
   it("provisions a tenant user, issues an activation invitation, and exposes tenant auth policy reads", async () => {
@@ -443,6 +478,7 @@ describe("user provisioning and activation routes", () => {
         adminUsers: [{ email: "admin@example.test", id: "admin_1", status: "active" }]
       }),
       platformHost: "idp.example.test",
+      tenantRepository: createTenantRepositoryWithAcmeTenant(),
       userRepository
     });
 
@@ -503,6 +539,7 @@ describe("user provisioning and activation routes", () => {
       }),
       auditRepository,
       platformHost: "idp.example.test",
+      tenantRepository: createTenantRepositoryWithAcmeTenant(),
       userRepository
     });
 
@@ -576,6 +613,7 @@ describe("user provisioning and activation routes", () => {
         adminUsers: [{ email: "admin@example.test", id: "admin_1", status: "active" }]
       }),
       platformHost: "idp.example.test",
+      tenantRepository: createTenantRepositoryWithAcmeTenant(),
       userRepository
     });
 
@@ -626,5 +664,157 @@ describe("user provisioning and activation routes", () => {
         email_verified: true
       }
     });
+  });
+
+  it("keeps provisioning response successful when success-audit persistence fails", async () => {
+    const userRepository = new MemoryUserRepository({
+      policies: [tenantPolicy]
+    });
+    const app = createApp({
+      adminBootstrapPassword: "bootstrap-secret",
+      adminWhitelist: ["admin@example.test"],
+      adminRepository: new MemoryAdminRepository({
+        adminUsers: [{ email: "admin@example.test", id: "admin_1", status: "active" }]
+      }),
+      auditRepository: new EventFailingAuditRepository("user.provisioned"),
+      platformHost: "idp.example.test",
+      tenantRepository: createTenantRepositoryWithAcmeTenant(),
+      userRepository
+    });
+
+    const loginResponse = await app.request("https://idp.example.test/admin/login", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({
+        email: "admin@example.test",
+        password: "bootstrap-secret"
+      })
+    });
+    const loginBody = (await loginResponse.json()) as AdminLoginResponse;
+
+    const response = await app.request("https://idp.example.test/admin/tenants/tenant_acme/users", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${loginBody.session_token}`,
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({
+        email: "audit-provision@acme.test",
+        username: "auditprovision",
+        display_name: "Audit Provision"
+      })
+    });
+
+    expect(response.status).toBe(201);
+    expect(userRepository.listUsers()).toHaveLength(1);
+  });
+
+  it("keeps activation response successful when success-audit persistence fails", async () => {
+    const userRepository = new MemoryUserRepository({
+      policies: [tenantPolicy]
+    });
+    const app = createApp({
+      adminBootstrapPassword: "bootstrap-secret",
+      adminWhitelist: ["admin@example.test"],
+      adminRepository: new MemoryAdminRepository({
+        adminUsers: [{ email: "admin@example.test", id: "admin_1", status: "active" }]
+      }),
+      auditRepository: new EventFailingAuditRepository("user.activation.succeeded"),
+      platformHost: "idp.example.test",
+      tenantRepository: createTenantRepositoryWithAcmeTenant(),
+      userRepository
+    });
+
+    const loginResponse = await app.request("https://idp.example.test/admin/login", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({
+        email: "admin@example.test",
+        password: "bootstrap-secret"
+      })
+    });
+    const loginBody = (await loginResponse.json()) as AdminLoginResponse;
+
+    const provisionResponse = await app.request(
+      "https://idp.example.test/admin/tenants/tenant_acme/users",
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${loginBody.session_token}`,
+          "content-type": "application/json"
+        },
+        body: JSON.stringify({
+          email: "audit-activation@acme.test",
+          username: "auditactivation",
+          display_name: "Audit Activation"
+        })
+      }
+    );
+    const provisionBody = (await provisionResponse.json()) as { invitation_token: string };
+
+    const activationResponse = await app.request("https://idp.example.test/activate-account", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({
+        invitation_token: provisionBody.invitation_token,
+        password: "CorrectHorseBatteryStaple!42"
+      })
+    });
+
+    expect(activationResponse.status).toBe(200);
+    expect(userRepository.listInvitations()[0]?.consumedAt).not.toBeNull();
+  });
+
+  it("returns 404 when provisioning targets a nonexistent tenant id", async () => {
+    const userRepository = new MemoryUserRepository({
+      policies: [tenantPolicy]
+    });
+    const app = createApp({
+      adminBootstrapPassword: "bootstrap-secret",
+      adminWhitelist: ["admin@example.test"],
+      adminRepository: new MemoryAdminRepository({
+        adminUsers: [{ email: "admin@example.test", id: "admin_1", status: "active" }]
+      }),
+      platformHost: "idp.example.test",
+      tenantRepository: new MemoryTenantRepository(),
+      userRepository
+    });
+
+    const loginResponse = await app.request("https://idp.example.test/admin/login", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({
+        email: "admin@example.test",
+        password: "bootstrap-secret"
+      })
+    });
+    const loginBody = (await loginResponse.json()) as AdminLoginResponse;
+
+    const response = await app.request("https://idp.example.test/admin/tenants/tenant_missing/users", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${loginBody.session_token}`,
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({
+        email: "missing-tenant@acme.test",
+        username: "missingtenant",
+        display_name: "Missing Tenant"
+      })
+    });
+
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({
+      error: "tenant_not_found"
+    });
+    expect(userRepository.listUsers()).toHaveLength(0);
   });
 });

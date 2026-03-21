@@ -29,6 +29,10 @@ class EmptyTenantRepository implements TenantRepository {
     return;
   }
 
+  async findById(): Promise<null> {
+    return null;
+  }
+
   async findBySlug(): Promise<null> {
     return null;
   }
@@ -238,6 +242,46 @@ export const createApp = (options: AppOptions = {}) => {
       payload,
       occurredAt: new Date().toISOString()
     });
+
+  const recordAuditEventBestEffort = async (event: {
+    actorType: string;
+    actorId: string | null;
+    tenantId: string | null;
+    eventType: string;
+    targetType: string | null;
+    targetId: string | null;
+    payload: Record<string, unknown> | null;
+  }) => {
+    try {
+      await auditRepository.record({
+        id: crypto.randomUUID(),
+        actorType: event.actorType,
+        actorId: event.actorId,
+        tenantId: event.tenantId,
+        eventType: event.eventType,
+        targetType: event.targetType,
+        targetId: event.targetId,
+        payload: event.payload,
+        occurredAt: new Date().toISOString()
+      });
+    } catch {
+      return;
+    }
+  };
+
+  const isProvisionConflictError = (error: unknown) => {
+    if (!(error instanceof Error)) {
+      return false;
+    }
+
+    const message = error.message.toLowerCase();
+
+    return (
+      message.includes("already exists") ||
+      message.includes("duplicate") ||
+      message.includes("unique constraint failed")
+    );
+  };
 
   const handleAuthorize = async (context: Context) => {
     const issuerContext = await resolveIssuerContext({
@@ -686,51 +730,22 @@ export const createApp = (options: AppOptions = {}) => {
       return context.json({ error: "invalid_request" }, 400);
     }
 
+    if ((await tenantRepository.findById(tenantId)) === null) {
+      return context.json({ error: "tenant_not_found" }, 404);
+    }
+
+    let result: Awaited<ReturnType<typeof provisionUser>>;
+
     try {
-      const result = await provisionUser({
+      result = await provisionUser({
         userRepository,
         tenantId,
         email,
         username,
         displayName
       });
-      const activationUrl = new URL("/activate-account", context.req.url);
-
-      activationUrl.searchParams.set("token", result.invitationToken);
-
-      await auditRepository.record({
-        id: crypto.randomUUID(),
-        actorType: "admin_user",
-        actorId: session.adminUserId,
-        tenantId,
-        eventType: "user.provisioned",
-        targetType: "user",
-        targetId: result.user.id,
-        payload: {
-          email: result.user.email
-        },
-        occurredAt: new Date().toISOString()
-      });
-
-      return context.json(
-        {
-          user: {
-            id: result.user.id,
-            tenant_id: result.user.tenantId,
-            email: result.user.email,
-            username: result.user.username,
-            display_name: result.user.displayName,
-            status: result.user.status,
-            email_verified: result.user.emailVerified
-          },
-          invitation_token: result.invitationToken,
-          activation_url: activationUrl.toString()
-        },
-        201
-      );
     } catch (error) {
-      await auditRepository.record({
-        id: crypto.randomUUID(),
+      await recordAuditEventBestEffort({
         actorType: "admin_user",
         actorId: session.adminUserId,
         tenantId,
@@ -740,12 +755,44 @@ export const createApp = (options: AppOptions = {}) => {
         payload: {
           error: error instanceof Error ? error.message : "unknown_error",
           email
-        },
-        occurredAt: new Date().toISOString()
+        }
       });
 
-      return context.json({ error: "conflict" }, 409);
+      return context.json({ error: isProvisionConflictError(error) ? "conflict" : "internal_error" }, isProvisionConflictError(error) ? 409 : 500);
     }
+
+    const activationUrl = new URL("/activate-account", context.req.url);
+
+    activationUrl.searchParams.set("token", result.invitationToken);
+
+    await recordAuditEventBestEffort({
+      actorType: "admin_user",
+      actorId: session.adminUserId,
+      tenantId,
+      eventType: "user.provisioned",
+      targetType: "user",
+      targetId: result.user.id,
+      payload: {
+        email: result.user.email
+      }
+    });
+
+    return context.json(
+      {
+        user: {
+          id: result.user.id,
+          tenant_id: result.user.tenantId,
+          email: result.user.email,
+          username: result.user.username,
+          display_name: result.user.displayName,
+          status: result.user.status,
+          email_verified: result.user.emailVerified
+        },
+        invitation_token: result.invitationToken,
+        activation_url: activationUrl.toString()
+      },
+      201
+    );
   });
 
   app.post("/activate-account", async (context) => {
@@ -795,16 +842,14 @@ export const createApp = (options: AppOptions = {}) => {
       return context.json({ error: result.reason }, 403);
     }
 
-    await auditRepository.record({
-      id: crypto.randomUUID(),
+    await recordAuditEventBestEffort({
       actorType: "end_user",
       actorId: result.user.id,
       tenantId: result.user.tenantId,
       eventType: "user.activation.succeeded",
       targetType: "user",
       targetId: result.user.id,
-      payload: null,
-      occurredAt: new Date().toISOString()
+      payload: null
     });
 
     return context.json({

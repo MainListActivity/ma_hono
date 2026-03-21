@@ -218,6 +218,21 @@ class D1TenantRepository implements TenantRepository {
     });
   }
 
+  async findById(id: string): Promise<Tenant | null> {
+    const [tenantRow] = await this.db.select().from(tenants).where(eq(tenants.id, id)).limit(1);
+
+    if (tenantRow === undefined) {
+      return null;
+    }
+
+    const issuerRows = await this.db
+      .select()
+      .from(tenantIssuers)
+      .where(eq(tenantIssuers.tenantId, tenantRow.id));
+
+    return toTenant(tenantRow, issuerRows);
+  }
+
   async findBySlug(slug: string): Promise<Tenant | null> {
     const [tenantRow] = await this.db.select().from(tenants).where(eq(tenants.slug, slug)).limit(1);
 

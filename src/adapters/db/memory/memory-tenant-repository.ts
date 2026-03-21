@@ -8,6 +8,10 @@ export class MemoryTenantRepository implements TenantRepository {
     this.tenants.push(tenant);
   }
 
+  async findById(id: string): Promise<Tenant | null> {
+    return this.tenants.find((tenant) => tenant.id === id) ?? null;
+  }
+
   async findBySlug(slug: string): Promise<Tenant | null> {
     return this.tenants.find((tenant) => tenant.slug === slug) ?? null;
   }
