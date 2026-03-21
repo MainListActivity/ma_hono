@@ -30,8 +30,8 @@ export const activateUser = async ({
   userRepository: UserRepository;
 }): Promise<ActivateUserResult> => {
   const activated = await userRepository.activateUserByInvitationToken({
+    createPasswordHash: () => hashPassword(password),
     tokenHash: await sha256Base64Url(invitationToken),
-    passwordHash: await hashPassword(password),
     now
   });
 

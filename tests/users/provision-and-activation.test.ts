@@ -4,6 +4,7 @@ import { MemoryUserRepository } from "../../src/adapters/db/memory/memory-user-r
 import { MemoryUserSessionRepository } from "../../src/adapters/db/memory/memory-user-session-repository";
 import { activateUser } from "../../src/domain/users/activate-user";
 import { hashPassword, verifyPassword } from "../../src/domain/users/passwords";
+import * as passwords from "../../src/domain/users/passwords";
 import { provisionUser } from "../../src/domain/users/provision-user";
 import type { PasswordCredential, TenantAuthMethodPolicy } from "../../src/domain/users/types";
 import {
@@ -100,7 +101,7 @@ describe("user provisioning and activation domain", () => {
       expect.objectContaining({
         tokenHash: await sha256Base64Url(provisioned.invitationToken),
         now: activationTime,
-        passwordHash: expect.any(String)
+        createPasswordHash: expect.any(Function)
       })
     );
 
@@ -208,6 +209,47 @@ describe("user provisioning and activation domain", () => {
     expect(
       await repository.findPasswordCredentialByUserId(provisioned.user.tenantId, provisioned.user.id)
     ).toBeNull();
+  });
+
+  it("does not invoke password hashing work for a rejected activation path", async () => {
+    const repository = new MemoryUserRepository({
+      policies: [tenantPolicy]
+    });
+    const provisioned = await provisionUser({
+      userRepository: repository,
+      tenantId: "tenant_acme",
+      email: "lazy-hash@acme.test",
+      username: "lazyhashuser",
+      displayName: "Lazy Hash User",
+      now: new Date("2026-03-21T11:18:00.000Z")
+    });
+    const hashPasswordSpy = vi
+      .spyOn(passwords, "hashPassword")
+      .mockRejectedValue(new Error("hash should not run"));
+
+    try {
+      await repository.updateUser({
+        ...provisioned.user,
+        status: "disabled",
+        updatedAt: new Date("2026-03-21T11:18:30.000Z").toISOString()
+      });
+
+      await expect(
+        activateUser({
+          userRepository: repository,
+          invitationToken: provisioned.invitationToken,
+          password: "CorrectHorseBatteryStaple!42",
+          now: new Date("2026-03-21T11:19:00.000Z")
+        })
+      ).resolves.toEqual({
+        ok: false,
+        reason: "user_disabled"
+      });
+
+      expect(hashPasswordSpy).not.toHaveBeenCalled();
+    } finally {
+      hashPasswordSpy.mockRestore();
+    }
   });
 
   it("rejects activation for already-initialized users without overwriting the password or burning the invitation", async () => {
@@ -322,7 +364,7 @@ describe("user provisioning and activation domain", () => {
     await expect(
       repository.activateUserByInvitationToken({
         tokenHash,
-        passwordHash,
+        createPasswordHash: vi.fn(async () => passwordHash),
         now: new Date("2026-03-21T11:31:00.000Z")
       })
     ).resolves.toMatchObject({
@@ -336,7 +378,7 @@ describe("user provisioning and activation domain", () => {
     await expect(
       repository.activateUserByInvitationToken({
         tokenHash,
-        passwordHash,
+        createPasswordHash: vi.fn(async () => passwordHash),
         now: new Date("2026-03-21T11:32:00.000Z")
       })
     ).resolves.toEqual({

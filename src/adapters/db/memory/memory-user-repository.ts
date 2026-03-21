@@ -44,8 +44,8 @@ export class MemoryUserRepository implements UserRepository {
   private readonly failProvisionCommit: boolean;
 
   async activateUserByInvitationToken({
+    createPasswordHash,
     now,
-    passwordHash,
     tokenHash
   }: ActivateUserByInvitationTokenInput): Promise<ActivateUserByInvitationTokenResult> {
     const index = this.invitations.findIndex((invitation) => invitation.tokenHash === tokenHash);
@@ -109,6 +109,7 @@ export class MemoryUserRepository implements UserRepository {
     }
 
     const updatedAt = now.toISOString();
+    const passwordHash = await createPasswordHash();
     const consumedInvitation: UserInvitation = {
       ...invitation,
       consumedAt: updatedAt

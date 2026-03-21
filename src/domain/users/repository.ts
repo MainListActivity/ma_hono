@@ -11,8 +11,8 @@ export interface CreateProvisionedUserWithInvitationInput {
 }
 
 export interface ActivateUserByInvitationTokenInput {
+  createPasswordHash: () => Promise<string>;
   tokenHash: string;
-  passwordHash: string;
   now: Date;
 }
 
