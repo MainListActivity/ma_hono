@@ -47,6 +47,7 @@ export default function TenantUsersPage() {
   const [tenant, setTenant] = useState<TenantSummary | null>(null);
   const [users, setUsers] = useState<UserSummary[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [showModal, setShowModal] = useState(false);
   const [email, setEmail] = useState("");
   const [displayName, setDisplayName] = useState("");
@@ -57,6 +58,7 @@ export default function TenantUsersPage() {
   const load = async () => {
     if (!token || !tenantId) return;
     setLoading(true);
+    setLoadError(null);
     try {
       const [tenantData, usersData] = await Promise.all([
         getTenant(token, tenantId),
@@ -64,6 +66,8 @@ export default function TenantUsersPage() {
       ]);
       setTenant(tenantData);
       setUsers(usersData.users);
+    } catch {
+      setLoadError("FAILED TO LOAD DATA");
     } finally {
       setLoading(false);
     }
@@ -100,6 +104,20 @@ export default function TenantUsersPage() {
       <div style={{ textAlign: 'center', padding: '80px 0', color: 'var(--text-muted)' }}>
         <span className="font-display" style={{ fontSize: '11px', letterSpacing: '0.12em' }}>
           LOADING...
+        </span>
+      </div>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <div style={{
+        textAlign: 'center', padding: '60px 0',
+        border: '1px solid rgba(239,68,68,0.3)',
+        color: '#ef4444'
+      }}>
+        <span className="font-display" style={{ fontSize: '11px', letterSpacing: '0.12em' }}>
+          ✕ {loadError}
         </span>
       </div>
     );
@@ -145,7 +163,7 @@ export default function TenantUsersPage() {
           </div>
 
           <button
-            onClick={() => setShowModal(true)}
+            onClick={() => { setShowModal(true); setFormError(null); }}
             style={{
               background: 'transparent',
               border: '1px solid var(--accent-cyan)',

@@ -73,12 +73,12 @@ export default function Layout({ children }: { children: ReactNode }) {
               transition: 'all 0.15s'
             }}
             onMouseEnter={e => {
-              (e.target as HTMLButtonElement).style.borderColor = 'var(--accent-cyan)';
-              (e.target as HTMLButtonElement).style.color = 'var(--accent-cyan)';
+              e.currentTarget.style.borderColor = 'var(--accent-cyan)';
+              e.currentTarget.style.color = 'var(--accent-cyan)';
             }}
             onMouseLeave={e => {
-              (e.target as HTMLButtonElement).style.borderColor = 'var(--border-bright)';
-              (e.target as HTMLButtonElement).style.color = 'var(--text-muted)';
+              e.currentTarget.style.borderColor = 'var(--border-bright)';
+              e.currentTarget.style.color = 'var(--text-muted)';
             }}
           >
             SIGN OUT

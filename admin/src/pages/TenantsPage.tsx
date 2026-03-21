@@ -38,12 +38,17 @@ export default function TenantsPage() {
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
+  const [loadError, setLoadError] = useState<string | null>(null);
+
   const load = async () => {
     if (!token) return;
     setLoading(true);
+    setLoadError(null);
     try {
       const data = await listTenants(token);
       setTenants(data.tenants);
+    } catch {
+      setLoadError("FAILED TO LOAD TENANTS");
     } finally {
       setLoading(false);
     }
@@ -112,7 +117,7 @@ export default function TenantsPage() {
         </div>
 
         <button
-          onClick={() => setShowModal(true)}
+          onClick={() => { setShowModal(true); setFormError(null); }}
           style={{
             background: 'transparent',
             border: '1px solid var(--accent-cyan)',
@@ -152,6 +157,16 @@ export default function TenantsPage() {
             LOADING...
           </span>
         </div>
+      ) : loadError ? (
+        <div style={{
+          textAlign: 'center', padding: '40px 0',
+          border: '1px solid rgba(239,68,68,0.3)',
+          color: '#ef4444'
+        }}>
+          <span className="font-display" style={{ fontSize: '11px', letterSpacing: '0.12em' }}>
+            ✕ {loadError}
+          </span>
+        </div>
       ) : tenants.length === 0 ? (
         <div style={{
           textAlign: 'center', padding: '60px 0',
@@ -172,12 +187,12 @@ export default function TenantsPage() {
           {/* Table header */}
           <div style={{
             display: 'grid',
-            gridTemplateColumns: '1fr 1.5fr 90px 2fr',
+            gridTemplateColumns: '1.5fr 1fr 1.5fr 90px 2fr',
             padding: '10px 16px',
             borderBottom: '1px solid var(--border)',
             background: 'var(--bg-elevated)'
           }}>
-            {['SLUG', 'DISPLAY NAME', 'STATUS', 'ISSUER URL'].map(h => (
+            {['ID', 'SLUG', 'DISPLAY NAME', 'STATUS', 'ISSUER URL'].map(h => (
               <span key={h} className="font-display" style={{
                 fontSize: '9px',
                 letterSpacing: '0.15em',
@@ -194,7 +209,7 @@ export default function TenantsPage() {
               onClick={() => navigate(`/tenants/${t.id}/users`)}
               style={{
                 display: 'grid',
-                gridTemplateColumns: '1fr 1.5fr 90px 2fr',
+                gridTemplateColumns: '1.5fr 1fr 1.5fr 90px 2fr',
                 padding: '12px 16px',
                 borderBottom: i < tenants.length - 1 ? '1px solid var(--border)' : 'none',
                 cursor: 'pointer',
@@ -208,6 +223,15 @@ export default function TenantsPage() {
                 (e.currentTarget as HTMLDivElement).style.background = 'transparent';
               }}
             >
+              <span style={{
+                fontFamily: "'Space Mono', monospace",
+                fontSize: '10px',
+                color: 'var(--text-dim)',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap'
+              }}>{t.id}</span>
+
               <span style={{
                 fontFamily: "'Space Mono', monospace",
                 fontSize: '12px',

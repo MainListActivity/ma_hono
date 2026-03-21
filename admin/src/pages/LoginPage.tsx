@@ -205,14 +205,14 @@ export default function LoginPage() {
               }}
               onMouseEnter={e => {
                 if (!loading) {
-                  (e.target as HTMLButtonElement).style.background = 'rgba(0,229,255,0.08)';
-                  (e.target as HTMLButtonElement).style.boxShadow = '0 0 20px rgba(0,229,255,0.2)';
+                  e.currentTarget.style.background = 'rgba(0,229,255,0.08)';
+                  e.currentTarget.style.boxShadow = '0 0 20px rgba(0,229,255,0.2)';
                 }
               }}
               onMouseLeave={e => {
                 if (!loading) {
-                  (e.target as HTMLButtonElement).style.background = 'transparent';
-                  (e.target as HTMLButtonElement).style.boxShadow = '0 0 12px rgba(0,229,255,0.1)';
+                  e.currentTarget.style.background = 'transparent';
+                  e.currentTarget.style.boxShadow = '0 0 12px rgba(0,229,255,0.1)';
                 }
               }}
             >
