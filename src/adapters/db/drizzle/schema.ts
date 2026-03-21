@@ -356,3 +356,9 @@ export const emailLoginTokens = sqliteTable(
       .where(sql`${table.consumedAt} IS NULL`)
   })
 );
+
+export const platformConfig = sqliteTable("platform_config", {
+  key: text("key").primaryKey(),
+  value: text("value").notNull(),
+  updatedAt: text("updated_at").notNull()
+});
