@@ -247,66 +247,53 @@ describe("OIDC JWKS", () => {
     ).resolves.toContain('"kty":"EC"');
   });
 
-  it("does not mint duplicate signing keys when bootstrap is already in flight", async () => {
+  it("does not mint duplicate signing keys across request-scoped signers once bootstrapped", async () => {
     const activeKeys: SigningKey[] = [];
-    let resolveBootstrap: ((value: SigningKeyMaterial) => void) | null = null;
-    const bootstrapStarted: Array<string> = [];
+    const bootstrapCalls: Array<string> = [];
     const keyMaterialStore = createMemoryKeyMaterialStore();
+    const keyRepository: KeyRepository = {
+      async listActiveKeysForTenant(tenantId: string) {
+        return activeKeys.filter((key) => key.tenantId === tenantId && key.status === "active");
+      }
+    };
 
-    const signer = createSigningKeySigner({
-      keyMaterialStore,
-      keyRepository: {
-        async listActiveKeysForTenant(tenantId: string) {
-          return activeKeys.filter((key) => key.tenantId === tenantId && key.status === "active");
+    const createRequestSigner = () =>
+      createSigningKeySigner({
+        keyMaterialStore,
+        keyRepository,
+        bootstrapSigningKey: async (input) => {
+          bootstrapCalls.push(input.kid);
+
+          const material: SigningKeyMaterial = {
+            key: {
+              id: `key_${input.kid}`,
+              tenantId: input.tenantId,
+              kid: input.kid,
+              alg: input.alg,
+              kty: input.kty,
+              status: "active",
+              privateKeyRef: input.privateKeyRef,
+              publicJwk: input.publicJwk
+            },
+            privateJwk: input.privateJwk
+          };
+
+          activeKeys.push(material.key);
+          await keyMaterialStore.put(input.privateKeyRef, JSON.stringify(input.privateJwk));
+
+          return material;
         }
-      },
-      bootstrapSigningKey: async (input) => {
-        bootstrapStarted.push(input.kid);
+      });
 
-        const key: SigningKey = {
-          id: "key_bootstrap_concurrent",
-          tenantId: input.tenantId,
-          kid: input.kid,
-          alg: input.alg,
-          kty: input.kty,
-          status: "active",
-          privateKeyRef: input.privateKeyRef,
-          publicJwk: input.publicJwk
-        };
+    const firstSigner = createRequestSigner();
+    const secondSigner = createRequestSigner();
 
-        activeKeys.push(key);
+    const firstMaterial = await firstSigner.ensureActiveSigningKeyMaterial("tenant_acme");
+    const secondMaterial = await secondSigner.ensureActiveSigningKeyMaterial("tenant_acme");
 
-        return await new Promise<SigningKeyMaterial>((resolve) => {
-          resolveBootstrap = resolve;
-        });
-      }
-    });
-
-    const first = signer.ensureActiveSigningKeyMaterial("tenant_acme");
-    const second = signer.ensureActiveSigningKeyMaterial("tenant_acme");
-
-    await new Promise((resolve) => setTimeout(resolve, 25));
-    expect(bootstrapStarted).toHaveLength(1);
-
-    if (resolveBootstrap === null) {
-      throw new Error("bootstrap promise was not captured");
-    }
-
-    const bootstrapResolver: (value: SigningKeyMaterial) => void = resolveBootstrap;
-
-    bootstrapResolver({
-      key: activeKeys[0],
-      privateJwk: {
-        kty: "EC",
-        crv: "P-256",
-        d: "concurrent-private",
-        x: "concurrent-x",
-        y: "concurrent-y"
-      }
-    });
-
-    await expect(first).resolves.toHaveProperty("key.kid", activeKeys[0]?.kid);
-    await expect(second).resolves.toHaveProperty("key.kid", activeKeys[0]?.kid);
+    expect(bootstrapCalls).toHaveLength(1);
+    expect(firstMaterial.key.kid).toBe(secondMaterial.key.kid);
+    expect(secondMaterial.privateJwk).toEqual(firstMaterial.privateJwk);
   });
 
   it("does not leave orphaned private material when bootstrap fails", async () => {

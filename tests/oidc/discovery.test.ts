@@ -164,6 +164,16 @@ describe("OIDC discovery", () => {
     const tokenResponse = await app.request("https://login.acme.test/token", {
       method: "POST"
     });
+    const unknownHostResponse = await app.request("https://unknown.example.test/authorize");
+    const disabledTenantResponse = await app.request(
+      "https://idp.example.test/t/disabled/token",
+      {
+        method: "POST"
+      }
+    );
+    const invalidCombinationResponse = await app.request(
+      "https://login.acme.test/t/acme/authorize"
+    );
 
     expect(authorizeResponse.status).toBe(501);
     await expect(authorizeResponse.json()).resolves.toMatchObject({
@@ -174,5 +184,9 @@ describe("OIDC discovery", () => {
     await expect(tokenResponse.json()).resolves.toMatchObject({
       error: "not_implemented"
     });
+
+    expect(unknownHostResponse.status).toBe(404);
+    expect(disabledTenantResponse.status).toBe(404);
+    expect(invalidCombinationResponse.status).toBe(404);
   });
 });

@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { ZodError } from "zod";
 
 import type { AuditRepository } from "../domain/audit/repository";
@@ -117,6 +117,18 @@ export const createApp = (options: AppOptions = {}) => {
     return issuerContext === null ? null : buildDiscoveryMetadata(issuerContext);
   };
 
+  const handlePlaceholderEndpoint = async (context: Context) => {
+    const issuerContext = await resolveIssuerContext({
+      requestUrl: context.req.url,
+      platformHost,
+      tenantRepository
+    });
+
+    return issuerContext === null
+      ? context.notFound()
+      : context.json({ error: "not_implemented" }, 501);
+  };
+
   app.get("/.well-known/openid-configuration", async (context) => {
     const metadata = await handleDiscovery(context.req.url);
 
@@ -157,10 +169,10 @@ export const createApp = (options: AppOptions = {}) => {
     return context.json(await buildJwks(keyRepository, issuerContext.tenant.id));
   });
 
-  app.all("/authorize", (context) => context.json({ error: "not_implemented" }, 501));
-  app.all("/t/:tenant/authorize", (context) => context.json({ error: "not_implemented" }, 501));
-  app.all("/token", (context) => context.json({ error: "not_implemented" }, 501));
-  app.all("/t/:tenant/token", (context) => context.json({ error: "not_implemented" }, 501));
+  app.all("/authorize", handlePlaceholderEndpoint);
+  app.all("/t/:tenant/authorize", handlePlaceholderEndpoint);
+  app.all("/token", handlePlaceholderEndpoint);
+  app.all("/t/:tenant/token", handlePlaceholderEndpoint);
 
   const handleDynamicClientRegistration = async (
     authorizationHeader: string | undefined,
