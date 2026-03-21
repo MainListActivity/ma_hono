@@ -12,6 +12,25 @@ export class MemoryAuthorizationCodeRepository implements AuthorizationCodeRepos
     this.authorizationCodes.push(code);
   }
 
+  async consumeByTokenHash(
+    tokenHash: string,
+    consumedAt: string
+  ): Promise<AuthorizationCode | null> {
+    const match = this.authorizationCodes.find(
+      (code) => code.tokenHash === tokenHash && code.consumedAt === null
+    );
+
+    if (match === undefined) {
+      return null;
+    }
+
+    match.consumedAt = consumedAt;
+
+    return {
+      ...match
+    };
+  }
+
   listAuthorizationCodes(): AuthorizationCode[] {
     return [...this.authorizationCodes];
   }

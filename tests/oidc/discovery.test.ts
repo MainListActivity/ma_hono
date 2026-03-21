@@ -152,7 +152,7 @@ describe("OIDC discovery", () => {
     expect(response.status).toBe(404);
   });
 
-  it("returns temporary-unavailable placeholders for discovered authorize and token endpoints", async () => {
+  it("returns live error semantics for authorize and token endpoints", async () => {
     const app = createApp({
       platformHost: "idp.example.test",
       tenantRepository
@@ -175,14 +175,14 @@ describe("OIDC discovery", () => {
       "https://login.acme.test/t/acme/authorize"
     );
 
-    expect(authorizeResponse.status).toBe(501);
+    expect(authorizeResponse.status).toBe(400);
     await expect(authorizeResponse.json()).resolves.toMatchObject({
-      error: "not_implemented"
+      error: "invalid_client"
     });
 
-    expect(tokenResponse.status).toBe(501);
+    expect(tokenResponse.status).toBe(400);
     await expect(tokenResponse.json()).resolves.toMatchObject({
-      error: "not_implemented"
+      error: "invalid_request"
     });
 
     expect(unknownHostResponse.status).toBe(404);

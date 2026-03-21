@@ -4,6 +4,8 @@ export type AuditEventType =
   | "oidc.authorization.deferred"
   | "oidc.authorization.failed"
   | "oidc.authorization.succeeded"
+  | "oidc.token.exchange.failed"
+  | "oidc.token.exchange.succeeded"
   | "oidc.client.registered"
   | "tenant.created"
   | "user.activation.failed"

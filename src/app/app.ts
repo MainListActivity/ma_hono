@@ -20,6 +20,7 @@ import type { KeyRepository } from "../domain/keys/repository";
 import type { TenantRepository } from "../domain/tenants/repository";
 import { resolveIssuerContext } from "../domain/tenants/issuer-resolution";
 import { buildDiscoveryMetadata } from "../domain/oidc/discovery";
+import { exchangeAuthorizationCode } from "../domain/tokens/token-service";
 import { activateUser } from "../domain/users/activate-user";
 import { provisionUser } from "../domain/users/provision-user";
 import type { UserRepository } from "../domain/users/repository";
@@ -81,6 +82,10 @@ class EmptyLoginChallengeRepository implements LoginChallengeRepository {
 class EmptyAuthorizationCodeRepository implements AuthorizationCodeRepository {
   async create(): Promise<void> {
     return;
+  }
+
+  async consumeByTokenHash(): Promise<null> {
+    return null;
   }
 }
 
@@ -178,6 +183,7 @@ export const createApp = (options: AppOptions = {}) => {
   const managementApiToken = options.managementApiToken ?? "";
   const tenantRepository = options.tenantRepository ?? new EmptyTenantRepository();
   const userRepository = options.userRepository ?? new EmptyUserRepository();
+  const signer = options.signer;
   const registrationAccessTokenRepository =
     options.registrationAccessTokenRepository ?? new EmptyRegistrationAccessTokenRepository();
   const platformHost = options.platformHost ?? "localhost";
@@ -433,6 +439,92 @@ export const createApp = (options: AppOptions = {}) => {
     return issuerContext === null ? context.notFound() : context.json({ error: "not_implemented" }, 501);
   };
 
+  const handleToken = async (context: Context) => {
+    const issuerContext = await resolveIssuerContext({
+      requestUrl: context.req.url,
+      platformHost,
+      tenantRepository
+    });
+
+    if (issuerContext === null) {
+      return context.notFound();
+    }
+
+    let formData: FormData;
+    try {
+      formData = await context.req.formData();
+    } catch {
+      const error = {
+        error: "invalid_request" as const
+      };
+
+      await recordAuditEventBestEffort({
+        actorType: "oidc_client",
+        actorId: null,
+        tenantId: issuerContext.tenant.id,
+        eventType: "oidc.token.exchange.failed",
+        targetType: "oidc_client",
+        targetId: null,
+        payload: {
+          reason: error.error
+        }
+      });
+
+      return context.json(error, 400);
+    }
+
+    const result = await exchangeAuthorizationCode({
+      authorizationCodeRepository,
+      clientRepository,
+      issuerContext,
+      request: {
+        authorizationHeader: context.req.header("authorization"),
+        grantType: String(formData.get("grant_type") ?? ""),
+        code: String(formData.get("code") ?? ""),
+        redirectUri: String(formData.get("redirect_uri") ?? ""),
+        codeVerifier: String(formData.get("code_verifier") ?? ""),
+        requestedClientId: formData.get("client_id")?.toString() ?? null,
+        requestedClientSecret: formData.get("client_secret")?.toString() ?? null
+      },
+      signer
+    });
+
+    if (result.kind === "error") {
+      await recordAuditEventBestEffort({
+        actorType: "oidc_client",
+        actorId: result.clientId,
+        tenantId: issuerContext.tenant.id,
+        eventType: "oidc.token.exchange.failed",
+        targetType: "oidc_client",
+        targetId: result.clientId,
+        payload: {
+          reason: result.error
+        }
+      });
+
+      return context.json(
+        {
+          error: result.error
+        },
+        result.status
+      );
+    }
+
+    await recordAuditEventBestEffort({
+      actorType: "oidc_client",
+      actorId: result.clientId,
+      tenantId: result.tenantId,
+      eventType: "oidc.token.exchange.succeeded",
+      targetType: "oidc_client",
+      targetId: result.clientId,
+      payload: {
+        user_id: result.userId
+      }
+    });
+
+    return context.json(result.response, 200);
+  };
+
   app.get("/.well-known/openid-configuration", async (context) => {
     const metadata = await handleDiscovery(context.req.url);
 
@@ -477,8 +569,8 @@ export const createApp = (options: AppOptions = {}) => {
   app.get("/t/:tenant/login", handleLoginEntry);
   app.get("/authorize", handleAuthorize);
   app.get("/t/:tenant/authorize", handleAuthorize);
-  app.all("/token", handlePlaceholderEndpoint);
-  app.all("/t/:tenant/token", handlePlaceholderEndpoint);
+  app.post("/token", handleToken);
+  app.post("/t/:tenant/token", handleToken);
 
   const handleDynamicClientRegistration = async (
     authorizationHeader: string | undefined,

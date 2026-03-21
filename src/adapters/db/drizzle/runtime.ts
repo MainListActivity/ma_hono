@@ -405,6 +405,47 @@ class D1AuthorizationCodeRepository implements AuthorizationCodeRepository {
       createdAt: code.createdAt
     });
   }
+
+  async consumeByTokenHash(
+    tokenHash: string,
+    consumedAt: string
+  ): Promise<AuthorizationCode | null> {
+    return await this.db.transaction(async (tx) => {
+      const [row] = await tx
+        .update(authorizationCodes)
+        .set({
+          consumedAt
+        })
+        .where(
+          and(
+            eq(authorizationCodes.tokenHash, tokenHash),
+            isNull(authorizationCodes.consumedAt)
+          )
+        )
+        .returning();
+
+      if (row === undefined) {
+        return null;
+      }
+
+      return {
+        id: row.id,
+        tenantId: row.tenantId,
+        issuer: row.issuer,
+        clientId: row.clientId,
+        userId: row.userId,
+        redirectUri: row.redirectUri,
+        scope: row.scope,
+        nonce: row.nonce,
+        codeChallenge: row.codeChallenge,
+        codeChallengeMethod: row.codeChallengeMethod as AuthorizationCode["codeChallengeMethod"],
+        tokenHash: row.tokenHash,
+        expiresAt: row.expiresAt,
+        consumedAt: row.consumedAt,
+        createdAt: row.createdAt
+      };
+    });
+  }
 }
 
 class D1KvAdminRepository implements AdminRepository {
