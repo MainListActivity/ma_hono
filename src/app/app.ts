@@ -218,8 +218,8 @@ class EmptyUserRepository implements UserRepository {
 }
 
 export interface AppOptions {
-  adminBootstrapPassword?: string;
-  adminWhitelist?: string[];
+  adminBootstrapPasswordHash: string;
+  adminWhitelist: string[];
   adminRepository?: AdminRepository;
   auditRepository?: AuditRepository;
   authorizationCodeRepository?: AuthorizationCodeRepository;
@@ -230,19 +230,19 @@ export interface AppOptions {
   loginChallengeLookupRepository?: AuthenticationLoginChallengeRepository;
   loginChallengeRepository?: LoginChallengeRepository;
   magicLinkRepository?: MagicLinkRepository;
-  managementApiToken?: string;
+  managementApiToken: string;
   passkeyRepository?: PasskeyRepository;
-  platformHost?: string;
+  platformHost: string;
   registrationAccessTokenRepository?: RegistrationAccessTokenRepository;
   signer?: SigningKeySigner;
   tenantRepository?: TenantRepository;
   userRepository?: UserRepository;
 }
 
-export const createApp = (options: AppOptions = {}) => {
+export const createApp = (options: AppOptions) => {
   const app = new Hono();
-  const adminBootstrapPassword = options.adminBootstrapPassword ?? "";
-  const adminWhitelist = options.adminWhitelist ?? [];
+  const adminBootstrapPasswordHash = options.adminBootstrapPasswordHash;
+  const adminWhitelist = options.adminWhitelist;
   const adminRepository = options.adminRepository ?? new EmptyAdminRepository();
   const auditRepository = options.auditRepository ?? new EmptyAuditRepository();
   const authorizationCodeRepository =
@@ -257,14 +257,14 @@ export const createApp = (options: AppOptions = {}) => {
   const loginChallengeRepository =
     options.loginChallengeRepository ?? new EmptyLoginChallengeRepository();
   const magicLinkRepository = options.magicLinkRepository ?? new EmptyMagicLinkRepository();
-  const managementApiToken = options.managementApiToken ?? "";
+  const managementApiToken = options.managementApiToken;
   const passkeyRepository = options.passkeyRepository ?? new EmptyPasskeyRepository();
   const tenantRepository = options.tenantRepository ?? new EmptyTenantRepository();
   const userRepository = options.userRepository ?? new EmptyUserRepository();
   const signer = options.signer;
   const registrationAccessTokenRepository =
     options.registrationAccessTokenRepository ?? new EmptyRegistrationAccessTokenRepository();
-  const platformHost = options.platformHost ?? "localhost";
+  const platformHost = options.platformHost;
 
   const handleDiscovery = async (requestUrl: string) => {
     const issuerContext = await resolveIssuerContext({
@@ -1519,7 +1519,7 @@ export const createApp = (options: AppOptions = {}) => {
   app.post("/admin/login", async (context) => {
     const payload = await context.req.json<{ email?: string; password?: string }>();
     const result = await loginAdmin({
-      adminBootstrapPassword,
+      adminBootstrapPasswordHash,
       adminWhitelist,
       adminRepository,
       email: payload.email ?? "",
