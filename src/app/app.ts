@@ -444,6 +444,19 @@ export const createApp = (options: AppOptions = {}) => {
   };
 
   const handleToken = async (context: Context) => {
+    const setTokenResponseHeaders = ({
+      includeBasicWwwAuthenticate
+    }: {
+      includeBasicWwwAuthenticate?: boolean;
+    } = {}) => {
+      context.header("Cache-Control", "no-store");
+      context.header("Pragma", "no-cache");
+
+      if (includeBasicWwwAuthenticate) {
+        context.header("WWW-Authenticate", 'Basic realm="token", error="invalid_client"');
+      }
+    };
+
     const issuerContext = await resolveIssuerContext({
       requestUrl: context.req.url,
       platformHost,
@@ -474,6 +487,7 @@ export const createApp = (options: AppOptions = {}) => {
         }
       });
 
+      setTokenResponseHeaders();
       return context.json(error, 400);
     }
 
@@ -506,6 +520,14 @@ export const createApp = (options: AppOptions = {}) => {
         }
       });
 
+      const attemptedBasicAuthentication = context.req
+        .header("authorization")
+        ?.startsWith("Basic ");
+
+      setTokenResponseHeaders({
+        includeBasicWwwAuthenticate:
+          result.error === "invalid_client" && attemptedBasicAuthentication === true
+      });
       return context.json(
         {
           error: result.error
@@ -526,6 +548,7 @@ export const createApp = (options: AppOptions = {}) => {
       }
     });
 
+    setTokenResponseHeaders();
     return context.json(result.response, 200);
   };
 

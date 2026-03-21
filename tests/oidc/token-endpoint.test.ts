@@ -249,6 +249,8 @@ describe("/token", () => {
     expect(body.expires_in).toBeGreaterThan(0);
     expect(body.id_token).toBeTypeOf("string");
     expect(body.access_token).toBeTypeOf("string");
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(response.headers.get("pragma")).toBe("no-cache");
 
     const verificationKey = await importJWK(material.key.publicJwk as JWK, "ES256");
     const idToken = await jwtVerify(body.id_token, verificationKey, {
@@ -262,6 +264,7 @@ describe("/token", () => {
 
     expect(idToken.payload.sub).toBe("user_123");
     expect(idToken.payload.nonce).toBe("nonce_123");
+    expect(idToken.payload.auth_time).toBeUndefined();
     expect(accessToken.payload.sub).toBe("user_123");
     expect(accessToken.payload.scope).toBe("openid profile");
   });
@@ -522,6 +525,9 @@ describe("/token", () => {
     });
     expect(postSentInBasic.status).toBe(401);
     await expect(postSentInBasic.json()).resolves.toEqual({ error: "invalid_client" });
+    expect(postSentInBasic.headers.get("www-authenticate")).toBe(
+      'Basic realm="token", error="invalid_client"'
+    );
 
     const mixedAuth = await exchangeCode({
       app,
@@ -718,6 +724,8 @@ describe("/token", () => {
 
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toEqual({ error: "invalid_grant" });
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(response.headers.get("pragma")).toBe("no-cache");
     expect(auditRepository.listEvents()).toHaveLength(1);
     expect(auditRepository.listEvents()[0]).toMatchObject({
       tenantId: "tenant_acme",
@@ -765,7 +773,113 @@ describe("/token", () => {
       requestUrl: "https://idp.example.test/t/acme/token"
     });
 
-    expect(response.status).toBe(500);
+    expect(response.status).toBe(400);
     await expect(response.json()).resolves.toEqual({ error: "server_error" });
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(response.headers.get("pragma")).toBe("no-cache");
+  });
+
+  it("emits a token exchange audit success event on successful exchange", async () => {
+    const { signer } = await createSigner();
+    const client = await createClient({
+      authMethod: "client_secret_post",
+      clientId: "client_audited_success",
+      secret: "success-secret"
+    });
+    const codeRepository = new MemoryAuthorizationCodeRepository();
+    const auditRepository = new MemoryAuditRepository();
+
+    await seedAuthorizationCode({
+      code: "code-success-audit",
+      clientId: client.clientId,
+      codeRepository,
+      expiresAt: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+      issuer: "https://idp.example.test/t/acme"
+    });
+
+    const app = createApp({
+      auditRepository,
+      authorizationCodeRepository: codeRepository,
+      clientRepository: new MemoryClientRepository([client]),
+      platformHost: "idp.example.test",
+      signer,
+      tenantRepository
+    });
+    const response = await exchangeCode({
+      app,
+      clientId: client.clientId,
+      code: "code-success-audit",
+      codeVerifier: "verifier-123456",
+      redirectUri: "https://app.acme.test/callback",
+      secret: "success-secret",
+      useBasicAuth: false,
+      requestUrl: "https://idp.example.test/t/acme/token"
+    });
+
+    expect(response.status).toBe(200);
+    expect(auditRepository.listEvents()).toHaveLength(1);
+    expect(auditRepository.listEvents()[0]).toMatchObject({
+      tenantId: "tenant_acme",
+      eventType: "oidc.token.exchange.succeeded",
+      targetType: "oidc_client",
+      targetId: client.clientId,
+      payload: {
+        user_id: "user_123"
+      }
+    });
+  });
+
+  it("allows only one winner for near-concurrent code exchanges", async () => {
+    const { signer } = await createSigner();
+    const client = await createClient({
+      authMethod: "client_secret_post",
+      clientId: "client_concurrent",
+      secret: "concurrent-secret"
+    });
+    const codeRepository = new MemoryAuthorizationCodeRepository();
+
+    await seedAuthorizationCode({
+      code: "code-concurrent",
+      clientId: client.clientId,
+      codeRepository,
+      expiresAt: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+      issuer: "https://idp.example.test/t/acme"
+    });
+
+    const app = createApp({
+      auditRepository: new MemoryAuditRepository(),
+      authorizationCodeRepository: codeRepository,
+      clientRepository: new MemoryClientRepository([client]),
+      platformHost: "idp.example.test",
+      signer,
+      tenantRepository
+    });
+
+    const [first, second] = await Promise.all([
+      exchangeCode({
+        app,
+        clientId: client.clientId,
+        code: "code-concurrent",
+        codeVerifier: "verifier-123456",
+        redirectUri: "https://app.acme.test/callback",
+        secret: "concurrent-secret",
+        useBasicAuth: false,
+        requestUrl: "https://idp.example.test/t/acme/token"
+      }),
+      exchangeCode({
+        app,
+        clientId: client.clientId,
+        code: "code-concurrent",
+        codeVerifier: "verifier-123456",
+        redirectUri: "https://app.acme.test/callback",
+        secret: "concurrent-secret",
+        useBasicAuth: false,
+        requestUrl: "https://idp.example.test/t/acme/token"
+      })
+    ]);
+
+    const statuses = [first.status, second.status].sort();
+
+    expect(statuses).toEqual([200, 400]);
   });
 });

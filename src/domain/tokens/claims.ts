@@ -8,7 +8,6 @@ interface BaseTokenClaimsInput {
 
 export interface IdTokenClaims extends Record<string, unknown> {
   aud: string;
-  auth_time: number;
   exp: number;
   iat: number;
   iss: string;
@@ -38,7 +37,6 @@ export const buildIdTokenClaims = ({
   aud: audience,
   iat: nowSeconds,
   exp: nowSeconds + 5 * 60,
-  auth_time: nowSeconds,
   ...(nonce === null ? {} : { nonce })
 });
 

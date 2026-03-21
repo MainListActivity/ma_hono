@@ -29,7 +29,7 @@ type TokenExchangeErrorResult = {
   kind: "error";
   clientId: string | null;
   error: TokenErrorCode;
-  status: 400 | 401 | 500;
+  status: 400 | 401;
 };
 
 type TokenExchangeSuccessResult = {
@@ -337,7 +337,7 @@ export const exchangeAuthorizationCode = async ({
       kind: "error",
       clientId: authenticatedClient.clientId,
       error: "server_error",
-      status: 500
+      status: 400
     };
   }
 
@@ -389,7 +389,7 @@ export const exchangeAuthorizationCode = async ({
       kind: "error",
       clientId: authenticatedClient.clientId,
       error: "server_error",
-      status: 500
+      status: 400
     };
   }
 };
