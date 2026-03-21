@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { MemoryKeyRepository } from "../../src/adapters/db/memory/memory-key-repository";
 import { MemoryTenantRepository } from "../../src/adapters/db/memory/memory-tenant-repository";
 import { createApp } from "../../src/app/app";
+import { D1SigningKeyBootstrapper } from "../../src/adapters/db/drizzle/runtime";
 import { createSigningKeySigner } from "../../src/domain/keys/signer";
 import type { KeyMaterialStore } from "../../src/domain/keys/key-material-store";
 import type { KeyRepository } from "../../src/domain/keys/repository";
@@ -247,53 +248,84 @@ describe("OIDC JWKS", () => {
     ).resolves.toContain('"kty":"EC"');
   });
 
-  it("does not mint duplicate signing keys across request-scoped signers once bootstrapped", async () => {
-    const activeKeys: SigningKey[] = [];
-    const bootstrapCalls: Array<string> = [];
-    const keyMaterialStore = createMemoryKeyMaterialStore();
-    const keyRepository: KeyRepository = {
-      async listActiveKeysForTenant(tenantId: string) {
-        return activeKeys.filter((key) => key.tenantId === tenantId && key.status === "active");
+  it("recovers from a duplicate D1 bootstrap insert by loading the existing private material", async () => {
+    const privateJwk = {
+      kty: "EC",
+      crv: "P-256",
+      x: "existing-x",
+      y: "existing-y",
+      d: "existing-private"
+    };
+    const existingKey: SigningKey = {
+      id: "key_existing_bootstrap",
+      tenantId: "tenant_acme",
+      kid: "bootstrap-tenant_acme-es256",
+      alg: "ES256",
+      kty: "EC",
+      status: "active",
+      privateKeyRef: "signing-keys/tenant_acme/bootstrap-tenant_acme-es256.json",
+      publicJwk: {
+        kid: "bootstrap-tenant_acme-es256",
+        kty: "EC",
+        crv: "P-256",
+        alg: "ES256",
+        use: "sig",
+        x: "existing-x",
+        y: "existing-y"
       }
     };
-
-    const createRequestSigner = () =>
-      createSigningKeySigner({
-        keyMaterialStore,
-        keyRepository,
-        bootstrapSigningKey: async (input) => {
-          bootstrapCalls.push(input.kid);
-
-          const material: SigningKeyMaterial = {
-            key: {
-              id: `key_${input.kid}`,
-              tenantId: input.tenantId,
-              kid: input.kid,
-              alg: input.alg,
-              kty: input.kty,
-              status: "active",
-              privateKeyRef: input.privateKeyRef,
-              publicJwk: input.publicJwk
-            },
-            privateJwk: input.privateJwk
-          };
-
-          activeKeys.push(material.key);
-          await keyMaterialStore.put(input.privateKeyRef, JSON.stringify(input.privateJwk));
-
-          return material;
+    const keyMaterialStore = createMemoryKeyMaterialStore({
+      [existingKey.privateKeyRef as string]: JSON.stringify(privateJwk)
+    });
+    let insertCalls = 0;
+    const fakeDb = {
+      insert: () => ({
+        values: async () => {
+          insertCalls++;
+          throw new Error("SQLITE_CONSTRAINT: UNIQUE constraint failed: signing_keys.kid_unique");
         }
-      });
+      }),
+      select: () => ({
+        from: () => ({
+          where: () => ({
+            limit: async () => [
+              {
+                id: existingKey.id,
+                tenantId: existingKey.tenantId,
+                kid: existingKey.kid,
+                alg: existingKey.alg,
+                kty: existingKey.kty,
+                privateKeyRef: existingKey.privateKeyRef,
+                status: existingKey.status,
+                publicJwk: existingKey.publicJwk
+              }
+            ]
+          })
+        })
+      }),
+      delete: () => ({
+        where: async () => undefined
+      })
+    } as never;
 
-    const firstSigner = createRequestSigner();
-    const secondSigner = createRequestSigner();
+    const bootstrapper = new D1SigningKeyBootstrapper(fakeDb, keyMaterialStore);
 
-    const firstMaterial = await firstSigner.ensureActiveSigningKeyMaterial("tenant_acme");
-    const secondMaterial = await secondSigner.ensureActiveSigningKeyMaterial("tenant_acme");
+    const material = await bootstrapper.bootstrapSigningKey({
+      tenantId: "tenant_acme",
+      kid: existingKey.kid,
+      alg: "ES256",
+      kty: "EC",
+      privateKeyRef: existingKey.privateKeyRef as string,
+      publicJwk: existingKey.publicJwk,
+      privateJwk
+    });
 
-    expect(bootstrapCalls).toHaveLength(1);
-    expect(firstMaterial.key.kid).toBe(secondMaterial.key.kid);
-    expect(secondMaterial.privateJwk).toEqual(firstMaterial.privateJwk);
+    expect(insertCalls).toBe(1);
+    expect(material.key).toMatchObject(existingKey);
+    expect(material.privateJwk).toEqual(privateJwk);
+    await expect(keyMaterialStore.get(existingKey.privateKeyRef as string)).resolves.toBe(
+      JSON.stringify(privateJwk)
+    );
   });
 
   it("does not leave orphaned private material when bootstrap fails", async () => {

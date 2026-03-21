@@ -40,7 +40,7 @@ const wait = async (milliseconds: number) =>
     setTimeout(resolve, milliseconds);
   });
 
-class D1SigningKeyBootstrapper {
+export class D1SigningKeyBootstrapper {
   constructor(
     private readonly db: ReturnType<typeof drizzle>,
     private readonly keyMaterialStore: KeyMaterialStore
