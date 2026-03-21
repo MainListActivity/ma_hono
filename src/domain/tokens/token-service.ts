@@ -278,9 +278,8 @@ export const exchangeAuthorizationCode = async ({
   }
 
   const now = new Date();
-  const codeRecord = await authorizationCodeRepository.consumeByTokenHash(
-    await sha256Base64Url(request.code),
-    now.toISOString()
+  const codeRecord = await authorizationCodeRepository.findByTokenHash(
+    await sha256Base64Url(request.code)
   );
 
   if (codeRecord === null) {
@@ -322,11 +321,22 @@ export const exchangeAuthorizationCode = async ({
     };
   }
 
+  const consumed = await authorizationCodeRepository.consumeById(codeRecord.id, now.toISOString());
+
+  if (!consumed) {
+    return {
+      kind: "error",
+      clientId: authenticatedClient.clientId,
+      error: "invalid_grant",
+      status: 400
+    };
+  }
+
   if (signer === undefined) {
     return {
       kind: "error",
       clientId: authenticatedClient.clientId,
-      error: "invalid_server_error",
+      error: "server_error",
       status: 500
     };
   }
@@ -378,7 +388,7 @@ export const exchangeAuthorizationCode = async ({
     return {
       kind: "error",
       clientId: authenticatedClient.clientId,
-      error: "invalid_server_error",
+      error: "server_error",
       status: 500
     };
   }

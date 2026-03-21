@@ -12,10 +12,7 @@ export class MemoryAuthorizationCodeRepository implements AuthorizationCodeRepos
     this.authorizationCodes.push(code);
   }
 
-  async consumeByTokenHash(
-    tokenHash: string,
-    consumedAt: string
-  ): Promise<AuthorizationCode | null> {
+  async findByTokenHash(tokenHash: string): Promise<AuthorizationCode | null> {
     const match = this.authorizationCodes.find(
       (code) => code.tokenHash === tokenHash && code.consumedAt === null
     );
@@ -24,11 +21,21 @@ export class MemoryAuthorizationCodeRepository implements AuthorizationCodeRepos
       return null;
     }
 
-    match.consumedAt = consumedAt;
-
     return {
       ...match
     };
+  }
+
+  async consumeById(id: string, consumedAt: string): Promise<boolean> {
+    const match = this.authorizationCodes.find((code) => code.id === id && code.consumedAt === null);
+
+    if (match === undefined) {
+      return false;
+    }
+
+    match.consumedAt = consumedAt;
+
+    return true;
   }
 
   listAuthorizationCodes(): AuthorizationCode[] {

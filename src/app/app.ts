@@ -84,8 +84,12 @@ class EmptyAuthorizationCodeRepository implements AuthorizationCodeRepository {
     return;
   }
 
-  async consumeByTokenHash(): Promise<null> {
+  async findByTokenHash(): Promise<null> {
     return null;
+  }
+
+  async consumeById(): Promise<false> {
+    return false;
   }
 }
 

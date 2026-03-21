@@ -141,8 +141,12 @@ const exchangeCode = async ({
   clientId,
   code,
   codeVerifier,
+  includeBodyCredentials,
+  includeClientIdInBody = true,
+  includeClientSecretInBody = true,
   redirectUri,
   secret,
+  skipGrantType = false,
   useBasicAuth,
   requestUrl
 }: {
@@ -150,23 +154,32 @@ const exchangeCode = async ({
   clientId: string;
   code: string;
   codeVerifier: string;
+  includeBodyCredentials?: boolean;
+  includeClientIdInBody?: boolean;
+  includeClientSecretInBody?: boolean;
   redirectUri: string;
   secret: string | null;
+  skipGrantType?: boolean;
   useBasicAuth: boolean;
   requestUrl: string;
 }) => {
   const body = new URLSearchParams({
-    grant_type: "authorization_code",
     code,
     redirect_uri: redirectUri,
     code_verifier: codeVerifier
   });
 
-  if (!useBasicAuth) {
+  if (!skipGrantType) {
+    body.set("grant_type", "authorization_code");
+  }
+
+  const shouldIncludeBodyCredentials = includeBodyCredentials ?? !useBasicAuth;
+
+  if (shouldIncludeBodyCredentials && includeClientIdInBody) {
     body.set("client_id", clientId);
   }
 
-  if (!useBasicAuth && secret !== null) {
+  if (shouldIncludeBodyCredentials && includeClientSecretInBody && secret !== null) {
     body.set("client_secret", secret);
   }
 
@@ -432,6 +445,165 @@ describe("/token", () => {
     await expect(noneWithSecretRejected.json()).resolves.toEqual({ error: "invalid_client" });
   });
 
+  it("rejects mismatched client auth transport and mixed auth without consuming a valid code", async () => {
+    const { signer } = await createSigner();
+    const basicClient = await createClient({
+      authMethod: "client_secret_basic",
+      clientId: "client_basic_negative",
+      secret: "basic-secret"
+    });
+    const postClient = await createClient({
+      authMethod: "client_secret_post",
+      clientId: "client_post_negative",
+      secret: "post-secret"
+    });
+    const mixedClient = await createClient({
+      authMethod: "client_secret_basic",
+      clientId: "client_mixed_negative",
+      secret: "mixed-secret"
+    });
+    const codeRepository = new MemoryAuthorizationCodeRepository();
+    const validCode = "code-still-usable";
+
+    await seedAuthorizationCode({
+      code: "code-basic-wrong-transport",
+      clientId: basicClient.clientId,
+      codeRepository,
+      expiresAt: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+      issuer: "https://idp.example.test/t/acme"
+    });
+    await seedAuthorizationCode({
+      code: "code-post-wrong-transport",
+      clientId: postClient.clientId,
+      codeRepository,
+      expiresAt: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+      issuer: "https://idp.example.test/t/acme"
+    });
+    await seedAuthorizationCode({
+      code: validCode,
+      clientId: mixedClient.clientId,
+      codeRepository,
+      expiresAt: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+      issuer: "https://idp.example.test/t/acme"
+    });
+
+    const app = createApp({
+      auditRepository: new MemoryAuditRepository(),
+      authorizationCodeRepository: codeRepository,
+      clientRepository: new MemoryClientRepository([basicClient, postClient, mixedClient]),
+      platformHost: "idp.example.test",
+      signer,
+      tenantRepository
+    });
+
+    const basicSentInBody = await exchangeCode({
+      app,
+      clientId: basicClient.clientId,
+      code: "code-basic-wrong-transport",
+      codeVerifier: "verifier-123456",
+      redirectUri: "https://app.acme.test/callback",
+      secret: "basic-secret",
+      useBasicAuth: false,
+      requestUrl: "https://idp.example.test/t/acme/token"
+    });
+    expect(basicSentInBody.status).toBe(401);
+    await expect(basicSentInBody.json()).resolves.toEqual({ error: "invalid_client" });
+
+    const postSentInBasic = await exchangeCode({
+      app,
+      clientId: postClient.clientId,
+      code: "code-post-wrong-transport",
+      codeVerifier: "verifier-123456",
+      redirectUri: "https://app.acme.test/callback",
+      secret: "post-secret",
+      useBasicAuth: true,
+      includeBodyCredentials: false,
+      requestUrl: "https://idp.example.test/t/acme/token"
+    });
+    expect(postSentInBasic.status).toBe(401);
+    await expect(postSentInBasic.json()).resolves.toEqual({ error: "invalid_client" });
+
+    const mixedAuth = await exchangeCode({
+      app,
+      clientId: mixedClient.clientId,
+      code: validCode,
+      codeVerifier: "verifier-123456",
+      redirectUri: "https://app.acme.test/callback",
+      secret: "mixed-secret",
+      useBasicAuth: true,
+      includeBodyCredentials: true,
+      requestUrl: "https://idp.example.test/t/acme/token"
+    });
+    expect(mixedAuth.status).toBe(401);
+    await expect(mixedAuth.json()).resolves.toEqual({ error: "invalid_client" });
+
+    const validAfterFailedMixed = await exchangeCode({
+      app,
+      clientId: mixedClient.clientId,
+      code: validCode,
+      codeVerifier: "verifier-123456",
+      redirectUri: "https://app.acme.test/callback",
+      secret: "mixed-secret",
+      useBasicAuth: true,
+      includeBodyCredentials: false,
+      requestUrl: "https://idp.example.test/t/acme/token"
+    });
+    expect(validAfterFailedMixed.status).toBe(200);
+  });
+
+  it("does not burn authorization code when grant validation fails before exchange", async () => {
+    const { signer } = await createSigner();
+    const client = await createClient({
+      authMethod: "client_secret_post",
+      clientId: "client_binding_negative",
+      secret: "binding-secret"
+    });
+    const codeRepository = new MemoryAuthorizationCodeRepository();
+    const code = "code-binding-retryable";
+
+    await seedAuthorizationCode({
+      code,
+      clientId: client.clientId,
+      codeRepository,
+      expiresAt: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+      issuer: "https://idp.example.test/t/acme"
+    });
+
+    const app = createApp({
+      auditRepository: new MemoryAuditRepository(),
+      authorizationCodeRepository: codeRepository,
+      clientRepository: new MemoryClientRepository([client]),
+      platformHost: "idp.example.test",
+      signer,
+      tenantRepository
+    });
+
+    const wrongRedirect = await exchangeCode({
+      app,
+      clientId: client.clientId,
+      code,
+      codeVerifier: "verifier-123456",
+      redirectUri: "https://app.acme.test/wrong",
+      secret: "binding-secret",
+      useBasicAuth: false,
+      requestUrl: "https://idp.example.test/t/acme/token"
+    });
+    expect(wrongRedirect.status).toBe(400);
+    await expect(wrongRedirect.json()).resolves.toEqual({ error: "invalid_grant" });
+
+    const validAfterWrongRedirect = await exchangeCode({
+      app,
+      clientId: client.clientId,
+      code,
+      codeVerifier: "verifier-123456",
+      redirectUri: "https://app.acme.test/callback",
+      secret: "binding-secret",
+      useBasicAuth: false,
+      requestUrl: "https://idp.example.test/t/acme/token"
+    });
+    expect(validAfterWrongRedirect.status).toBe(200);
+  });
+
   it("issues tokens with issuer-correct iss and aud for platform-path and custom-domain issuers", async () => {
     const { material, signer } = await createSigner();
     const client = await createClient({
@@ -556,5 +728,44 @@ describe("/token", () => {
         reason: "invalid_grant"
       }
     });
+  });
+
+  it("returns OAuth-compliant server_error when token signing cannot proceed", async () => {
+    const client = await createClient({
+      authMethod: "client_secret_post",
+      clientId: "client_server_error",
+      secret: "server-secret"
+    });
+    const codeRepository = new MemoryAuthorizationCodeRepository();
+
+    await seedAuthorizationCode({
+      code: "code-server-error",
+      clientId: client.clientId,
+      codeRepository,
+      expiresAt: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+      issuer: "https://idp.example.test/t/acme"
+    });
+
+    const app = createApp({
+      auditRepository: new MemoryAuditRepository(),
+      authorizationCodeRepository: codeRepository,
+      clientRepository: new MemoryClientRepository([client]),
+      platformHost: "idp.example.test",
+      tenantRepository
+    });
+
+    const response = await exchangeCode({
+      app,
+      clientId: client.clientId,
+      code: "code-server-error",
+      codeVerifier: "verifier-123456",
+      redirectUri: "https://app.acme.test/callback",
+      secret: "server-secret",
+      useBasicAuth: false,
+      requestUrl: "https://idp.example.test/t/acme/token"
+    });
+
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toEqual({ error: "server_error" });
   });
 });

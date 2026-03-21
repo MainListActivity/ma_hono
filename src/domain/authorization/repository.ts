@@ -6,5 +6,6 @@ export interface LoginChallengeRepository {
 
 export interface AuthorizationCodeRepository {
   create(code: AuthorizationCode): Promise<void>;
-  consumeByTokenHash(tokenHash: string, consumedAt: string): Promise<AuthorizationCode | null>;
+  findByTokenHash(tokenHash: string): Promise<AuthorizationCode | null>;
+  consumeById(id: string, consumedAt: string): Promise<boolean>;
 }

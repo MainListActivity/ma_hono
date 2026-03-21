@@ -406,45 +406,55 @@ class D1AuthorizationCodeRepository implements AuthorizationCodeRepository {
     });
   }
 
-  async consumeByTokenHash(
-    tokenHash: string,
-    consumedAt: string
-  ): Promise<AuthorizationCode | null> {
-    return await this.db.transaction(async (tx) => {
-      const [row] = await tx
-        .update(authorizationCodes)
-        .set({
-          consumedAt
-        })
-        .where(
-          and(
-            eq(authorizationCodes.tokenHash, tokenHash),
-            isNull(authorizationCodes.consumedAt)
-          )
+  async findByTokenHash(tokenHash: string): Promise<AuthorizationCode | null> {
+    const [row] = await this.db
+      .select()
+      .from(authorizationCodes)
+      .where(
+        and(
+          eq(authorizationCodes.tokenHash, tokenHash),
+          isNull(authorizationCodes.consumedAt)
         )
-        .returning();
+      )
+      .limit(1);
 
-      if (row === undefined) {
-        return null;
-      }
+    if (row === undefined) {
+      return null;
+    }
 
-      return {
-        id: row.id,
-        tenantId: row.tenantId,
-        issuer: row.issuer,
-        clientId: row.clientId,
-        userId: row.userId,
-        redirectUri: row.redirectUri,
-        scope: row.scope,
-        nonce: row.nonce,
-        codeChallenge: row.codeChallenge,
-        codeChallengeMethod: row.codeChallengeMethod as AuthorizationCode["codeChallengeMethod"],
-        tokenHash: row.tokenHash,
-        expiresAt: row.expiresAt,
-        consumedAt: row.consumedAt,
-        createdAt: row.createdAt
-      };
-    });
+    return {
+      id: row.id,
+      tenantId: row.tenantId,
+      issuer: row.issuer,
+      clientId: row.clientId,
+      userId: row.userId,
+      redirectUri: row.redirectUri,
+      scope: row.scope,
+      nonce: row.nonce,
+      codeChallenge: row.codeChallenge,
+      codeChallengeMethod: row.codeChallengeMethod as AuthorizationCode["codeChallengeMethod"],
+      tokenHash: row.tokenHash,
+      expiresAt: row.expiresAt,
+      consumedAt: row.consumedAt,
+      createdAt: row.createdAt
+    };
+  }
+
+  async consumeById(id: string, consumedAt: string): Promise<boolean> {
+    const [row] = await this.db
+      .update(authorizationCodes)
+      .set({
+        consumedAt
+      })
+      .where(
+        and(
+          eq(authorizationCodes.id, id),
+          isNull(authorizationCodes.consumedAt)
+        )
+      )
+      .returning({ id: authorizationCodes.id });
+
+    return row !== undefined;
   }
 }
 
