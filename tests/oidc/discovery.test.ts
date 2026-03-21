@@ -72,9 +72,10 @@ describe("OIDC discovery", () => {
       registration_endpoint: "https://idp.example.test/t/acme/connect/register",
       authorization_endpoint: "https://idp.example.test/t/acme/authorize",
       token_endpoint: "https://idp.example.test/t/acme/token",
-      grant_types_supported: ["authorization_code", "refresh_token"],
+      grant_types_supported: ["authorization_code"],
       response_types_supported: ["code"],
       code_challenge_methods_supported: ["S256"],
+      scopes_supported: ["openid"],
       token_endpoint_auth_methods_supported: [
         "client_secret_basic",
         "client_secret_post",
@@ -100,9 +101,10 @@ describe("OIDC discovery", () => {
       registration_endpoint: "https://login.acme.test/connect/register",
       authorization_endpoint: "https://login.acme.test/authorize",
       token_endpoint: "https://login.acme.test/token",
-      grant_types_supported: ["authorization_code", "refresh_token"],
+      grant_types_supported: ["authorization_code"],
       response_types_supported: ["code"],
       code_challenge_methods_supported: ["S256"],
+      scopes_supported: ["openid"],
       token_endpoint_auth_methods_supported: [
         "client_secret_basic",
         "client_secret_post",
