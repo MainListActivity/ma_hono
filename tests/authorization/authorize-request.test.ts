@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { MemoryAuditRepository } from "../../src/adapters/db/memory/memory-audit-repository";
 import { MemoryAuthorizationCodeRepository } from "../../src/adapters/db/memory/memory-authorization-code-repository";
@@ -431,5 +431,74 @@ describe("dynamicClientRegistrationSchema", () => {
         token_endpoint_auth_method: "client_secret_basic"
       })
     ).toThrow();
+  });
+});
+
+describe("worker entrypoint wiring", () => {
+  it("injects D1-backed authorize repositories into createApp", async () => {
+    vi.resetModules();
+
+    const authorizationCodeRepository = {
+      create: vi.fn()
+    };
+    const loginChallengeRepository = {
+      create: vi.fn()
+    };
+    const close = vi.fn(async () => undefined);
+    const appFetch = vi.fn(async () => new Response(null, { status: 204 }));
+    const createApp = vi.fn(() => ({
+      fetch: appFetch
+    }));
+    const createRuntimeRepositories = vi.fn(async () => ({
+      adminRepository: {},
+      auditRepository: {},
+      authorizationCodeRepository,
+      clientRepository: {},
+      close,
+      keyRepository: {},
+      loginChallengeRepository,
+      registrationAccessTokenRepository: {},
+      tenantRepository: {}
+    }));
+    const readRuntimeConfig = vi.fn(() => ({
+      adminBootstrapPassword: "bootstrap",
+      adminWhitelist: [],
+      managementApiToken: "manage-token",
+      platformHost: "idp.example.test"
+    }));
+
+    vi.doMock("../../src/app/app", () => ({
+      createApp
+    }));
+    vi.doMock("../../src/adapters/db/drizzle/runtime", () => ({
+      createRuntimeRepositories
+    }));
+    vi.doMock("../../src/config/env", () => ({
+      readRuntimeConfig
+    }));
+
+    try {
+      const worker = (await import("../../src/index")).default;
+
+      await worker.fetch(
+        new Request("https://idp.example.test/t/acme/authorize"),
+        {} as Record<string, unknown>,
+        {} as ExecutionContext
+      );
+
+      expect(createApp).toHaveBeenCalledWith(
+        expect.objectContaining({
+          authorizationCodeRepository,
+          loginChallengeRepository
+        })
+      );
+      expect(appFetch).toHaveBeenCalled();
+      expect(close).toHaveBeenCalled();
+    } finally {
+      vi.doUnmock("../../src/app/app");
+      vi.doUnmock("../../src/adapters/db/drizzle/runtime");
+      vi.doUnmock("../../src/config/env");
+      vi.resetModules();
+    }
   });
 });
