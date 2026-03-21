@@ -2,11 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build the first runnable OIDC foundation slice: a portable Hono app with issuer resolution, discovery metadata, JWKS, controlled Dynamic Client Registration, and whitelist-only admin management APIs.
+**Goal:** Build the first runnable OIDC foundation slice as a Cloudflare Workers Hono app with issuer resolution, discovery metadata, JWKS, controlled Dynamic Client Registration, and whitelist-only admin management APIs.
 
-**Architecture:** Use a modular monolith with a single Hono app, domain modules for tenants/clients/keys/oidc/admin-auth, and adapter boundaries for persistence and runtime concerns. Start with portable repository interfaces and in-memory implementations for app-level tests, while also adding Drizzle PostgreSQL schema files so the persistence model is concretely defined and ready for replacement.
+**Architecture:** Use a modular monolith with a single Hono Workers app, domain modules for tenants/clients/keys/oidc/admin-auth, and adapter boundaries for Cloudflare bindings. Structured state lives in D1, short-lived tokens and sessions live in KV, and key material lives in R2.
 
-**Tech Stack:** TypeScript, Hono, Zod, jose, Drizzle ORM, PostgreSQL schema definitions, Vitest, pnpm, Wrangler.
+**Tech Stack:** TypeScript, Hono, Zod, jose, Drizzle ORM with D1/SQLite schema definitions, Vitest, pnpm, Wrangler, D1, KV, R2.
 
 ---
 
@@ -167,7 +167,7 @@ Expected: fail because key repository and JWKS route do not exist
 
 - [ ] **Step 3: Implement key model, dev key generator, and JWKS builder**
 
-Use `jose` to generate development key material and export only public JWK values from the endpoint.
+Use `jose` to generate development key material, persist metadata in D1-compatible models, and prepare private key storage for R2-backed implementations.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -213,7 +213,7 @@ Rules:
 - generate `client_id`
 - generate secret when auth method requires it
 - hash stored client secret
-- emit a registration access token
+- emit a registration access token stored in KV
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -252,7 +252,7 @@ Expected: fail because admin auth and admin routes do not exist
 
 - [ ] **Step 3: Implement minimal admin auth and tenant/client creation APIs**
 
-Use signed or opaque session tokens stored hashed in the admin session repository. Keep the implementation minimal and isolated from future public-user auth.
+Use signed or opaque session tokens stored in KV-backed admin session storage. Keep the implementation minimal and isolated from future public-user auth.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -266,11 +266,13 @@ git add src/domain/admin-auth src/adapters/db/memory/memory-admin-repository.ts 
 git commit -m "feat: add admin auth and management apis"
 ```
 
-### Task 7: Add Drizzle Schema And Runtime Wiring
+### Task 7: Add D1 Schema And Cloudflare Binding Wiring
 
 **Files:**
 - Create: `drizzle.config.ts`
 - Create: `src/adapters/db/drizzle/schema.ts`
+- Create: `src/adapters/kv/`
+- Create: `src/adapters/r2/`
 - Create: `src/config/env.ts`
 - Modify: `package.json`
 - Modify: `src/index.ts`
@@ -279,7 +281,7 @@ git commit -m "feat: add admin auth and management apis"
 - [ ] **Step 1: Write the failing environment/schema tests**
 
 Cover:
-- environment loader requires platform host and admin whitelist config
+- environment loader requires platform host plus D1/KV/R2 bindings
 - schema exports tenant, issuer, client, admin, and audit tables
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -289,7 +291,7 @@ Expected: fail because env loader and schema do not exist
 
 - [ ] **Step 3: Implement env config and Drizzle schema**
 
-Define PostgreSQL tables that match the approved design and wire minimal runtime bootstrapping from environment bindings.
+Define D1/SQLite tables that match the approved design and wire runtime bootstrapping from Cloudflare Workers bindings, including KV and R2 adapters.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -305,5 +307,5 @@ Expected: all tests pass
 
 ```bash
 git add drizzle.config.ts src/adapters/db/drizzle/schema.ts src/config/env.ts package.json src/index.ts tests/config/env.test.ts
-git commit -m "feat: add drizzle schema and runtime wiring"
+git commit -m "feat: add d1 schema and cloudflare binding wiring"
 ```

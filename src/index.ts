@@ -2,7 +2,7 @@ import { createApp } from "./app/app";
 import { createRuntimeRepositories } from "./adapters/db/drizzle/runtime";
 import { readRuntimeConfig } from "./config/env";
 
-type RuntimeEnv = Record<string, string | undefined>;
+type RuntimeEnv = Record<string, unknown>;
 
 export default {
   async fetch(request: Request, env: RuntimeEnv, executionContext: ExecutionContext) {
@@ -17,6 +17,7 @@ export default {
       keyRepository: repositories.keyRepository,
       managementApiToken: runtimeConfig.managementApiToken,
       platformHost: runtimeConfig.platformHost,
+      registrationAccessTokenRepository: repositories.registrationAccessTokenRepository,
       tenantRepository: repositories.tenantRepository
     });
 

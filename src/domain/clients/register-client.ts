@@ -38,8 +38,7 @@ export const registerClient = async ({
     redirectUris: payload.redirect_uris,
     responseTypes: payload.response_types,
     tokenEndpointAuthMethod: payload.token_endpoint_auth_method,
-    clientSecretHash: clientSecret === null ? null : await sha256Base64Url(clientSecret),
-    registrationAccessTokenHash: await sha256Base64Url(registrationAccessToken)
+    clientSecretHash: clientSecret === null ? null : await sha256Base64Url(clientSecret)
   };
 
   await clientRepository.create(client);

@@ -4,6 +4,8 @@ import { ZodError } from "zod";
 import type { AuditRepository } from "../domain/audit/repository";
 import { authenticateAdminSession, loginAdmin } from "../domain/admin-auth/service";
 import type { AdminRepository } from "../domain/admin-auth/repository";
+import type { RegistrationAccessTokenRepository } from "../domain/clients/registration-access-token-repository";
+import { sha256Base64Url } from "../lib/hash";
 import { registerClient } from "../domain/clients/register-client";
 import type { ClientRepository } from "../domain/clients/repository";
 import { buildJwks } from "../domain/keys/jwks";
@@ -37,8 +39,22 @@ class EmptyClientRepository implements ClientRepository {
     return;
   }
 
+  async deleteByClientId(): Promise<void> {
+    return;
+  }
+
   async findByClientId(): Promise<null> {
     return null;
+  }
+}
+
+class EmptyRegistrationAccessTokenRepository implements RegistrationAccessTokenRepository {
+  async deleteByTokenHash(): Promise<void> {
+    return;
+  }
+
+  async store(): Promise<void> {
+    return;
   }
 }
 
@@ -71,6 +87,7 @@ export interface AppOptions {
   keyRepository?: KeyRepository;
   managementApiToken?: string;
   platformHost?: string;
+  registrationAccessTokenRepository?: RegistrationAccessTokenRepository;
   tenantRepository?: TenantRepository;
 }
 
@@ -84,6 +101,8 @@ export const createApp = (options: AppOptions = {}) => {
   const keyRepository = options.keyRepository ?? new EmptyKeyRepository();
   const managementApiToken = options.managementApiToken ?? "";
   const tenantRepository = options.tenantRepository ?? new EmptyTenantRepository();
+  const registrationAccessTokenRepository =
+    options.registrationAccessTokenRepository ?? new EmptyRegistrationAccessTokenRepository();
   const platformHost = options.platformHost ?? "localhost";
 
   const handleDiscovery = async (requestUrl: string) => {
@@ -161,21 +180,38 @@ export const createApp = (options: AppOptions = {}) => {
         input: payload,
         issuerContext
       });
+      const tokenHash = await sha256Base64Url(result.registrationAccessToken);
 
-      await auditRepository.record({
-        id: crypto.randomUUID(),
-        actorType: "management_token",
-        actorId: "initial_access_token",
-        tenantId: issuerContext.tenant.id,
-        eventType: "oidc.client.registered",
-        targetType: "oidc_client",
-        targetId: result.client.clientId,
-        payload: {
-          application_type: result.client.applicationType,
-          client_name: result.client.clientName
-        },
-        occurredAt: new Date().toISOString()
-      });
+      try {
+        await registrationAccessTokenRepository.store({
+          clientId: result.client.clientId,
+          expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+          issuer: issuerContext.issuer,
+          tenantId: issuerContext.tenant.id,
+          tokenHash
+        });
+
+        await auditRepository.record({
+          id: crypto.randomUUID(),
+          actorType: "management_token",
+          actorId: "initial_access_token",
+          tenantId: issuerContext.tenant.id,
+          eventType: "oidc.client.registered",
+          targetType: "oidc_client",
+          targetId: result.client.clientId,
+          payload: {
+            application_type: result.client.applicationType,
+            client_name: result.client.clientName
+          },
+          occurredAt: new Date().toISOString()
+        });
+      } catch (error) {
+        await Promise.allSettled([
+          clientRepository.deleteByClientId(result.client.clientId),
+          registrationAccessTokenRepository.deleteByTokenHash(tokenHash)
+        ]);
+        throw error;
+      }
 
       return {
         status: 201 as const,

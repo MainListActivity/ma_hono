@@ -2,7 +2,7 @@
 
 ## Goal
 
-Build the first production-oriented slice of a multi-tenant identity provider using TypeScript and Hono, with Cloudflare Workers as the primary runtime target and Node.js self-hosting preserved through portable adapters.
+Build the first production-oriented slice of a multi-tenant identity provider using TypeScript and Hono, with Cloudflare Workers as the only runtime target and Cloudflare-native storage services as the default infrastructure.
 
 This phase delivers the OIDC trust foundation:
 
@@ -30,8 +30,9 @@ This phase does not yet deliver end-user interactive login, authorization code e
 - Admin UI and admin APIs for tenant and client creation
 - Fixed-whitelist admin authentication
 - Audit events for sensitive administrative actions
-- PostgreSQL persistence with Drizzle ORM
-- Portable Hono application structure for Workers and Node.js
+- D1 persistence with Drizzle ORM
+- KV-backed short-lived token and session storage
+- R2-backed private key material storage
 
 ### Out of Scope
 
@@ -53,8 +54,8 @@ The repository-level constraints remain mandatory:
 
 - TypeScript only
 - Hono only for the HTTP application layer
-- Cloudflare Workers first
-- portable core business logic
+- Cloudflare Workers only
+- Cloudflare-native bindings for runtime and storage
 - standards-first OIDC/OAuth design
 - multi-tenancy modeled from the start
 
@@ -70,10 +71,10 @@ One Hono application exposes:
 
 Core rules:
 
-- domain logic must not depend directly on Cloudflare-specific bindings
+- domain logic should remain separated from direct binding access
 - HTTP routing must not contain issuer or client validation rules inline
-- storage access must be behind repository interfaces or adapter modules
-- custom-domain issuer handling must not fork the app into separate runtimes
+- D1, KV, and R2 access must be isolated behind adapter modules
+- custom-domain issuer handling must not fork the app into alternate runtimes
 
 ## System Boundaries
 
@@ -155,7 +156,9 @@ src/
     tenants/
   adapters/
     db/
-    runtime/
+      d1/
+    kv/
+    r2/
     crypto/
   ui/
     admin/
@@ -171,14 +174,19 @@ Module responsibilities:
 - `domain/oidc`: discovery composition, issuer resolution, JWKS serialization, registration handlers
 - `domain/admin-auth`: whitelist login, session validation, admin identity lookup
 - `domain/audit`: audit event schemas and write API
-- `adapters/db`: Drizzle schema and repository implementations
-- `adapters/runtime`: host parsing, clock, randomness, runtime compatibility wrappers
+- `adapters/db`: Drizzle D1 schema and repository implementations
+- `adapters/kv`: KV-backed session, cache, and short-lived token adapters
+- `adapters/r2`: R2-backed key material and object storage adapters
 - `adapters/crypto`: JOSE key generation/loading abstractions
 - `ui/admin`: tenant and client management screens
 
 ## Data Model
 
-The initial persistence design should include at least the following tables.
+The initial persistence design is split across D1 tables, KV namespaces, and an R2 bucket.
+
+### D1 Tables
+
+The structured system-of-record tables should include at least the following.
 
 ### `tenants`
 
@@ -258,7 +266,7 @@ Suggested columns:
 - `software_version`
 - `raw_metadata`
 
-This can be modeled either as explicit JSONB columns or split tables. For the first phase, JSONB for low-frequency registration metadata is acceptable as long as validation is strict at the domain layer.
+This can be modeled either as explicit JSON columns or split tables. For the first phase, JSON columns for low-frequency registration metadata are acceptable as long as validation is strict at the domain layer.
 
 ### `signing_keys`
 
@@ -278,7 +286,7 @@ Suggested columns:
 - `retire_at`
 - `created_at`
 
-Private key material should not be stored inline in plain text columns. The initial implementation may use an encrypted secret reference or a development-only local secret adapter, but the domain model should treat private material as an indirect reference.
+Private key material should not be stored inline in D1 rows. The `private_key_ref` should point to an R2 object key or equivalent Cloudflare-native object reference.
 
 ### `admin_users`
 
@@ -289,18 +297,6 @@ Suggested columns:
 - `id`
 - `email`
 - `status`
-- `created_at`
-
-### `admin_sessions`
-
-Purpose: admin session persistence.
-
-Suggested columns:
-
-- `id`
-- `admin_user_id`
-- `session_token_hash`
-- `expires_at`
 - `created_at`
 
 ### `audit_events`
@@ -318,6 +314,22 @@ Suggested columns:
 - `target_id`
 - `payload`
 - `occurred_at`
+
+### KV Namespaces
+
+#### `ADMIN_SESSIONS_KV`
+
+Purpose: short-lived admin sessions keyed by hashed token.
+
+#### `REGISTRATION_TOKENS_KV`
+
+Purpose: Dynamic Client Registration access tokens and other short-lived token state.
+
+### R2 Bucket
+
+#### `KEY_MATERIAL_R2`
+
+Purpose: private signing key material and other object-style security artifacts. D1 stores metadata and references; R2 stores the object body.
 
 ## Protocol Surface
 
@@ -431,6 +443,7 @@ Recommended initial policy:
 - invalid combinations are rejected before persistence
 - generated client secrets are returned only once in plaintext
 - stored secrets are hashed, never stored plaintext
+- registration access tokens are stored in KV rather than in the structured client row
 - registration writes an audit event
 
 Validation requirements include:
@@ -452,7 +465,7 @@ Initial admin auth rules:
 - only preconfigured whitelist accounts may log in
 - no self-service signup
 - no tenant-driven admin federation in this phase
-- admin sessions are scoped to management access only
+- admin sessions are scoped to management access only and stored in KV
 - admin login failure and success are audited
 
 The exact login mechanism for whitelist admins can be lightweight in this phase, but it must not be conflated with the future public IdP login system. If passwordless email for admins is chosen later, it should still remain an admin-only auth path.
@@ -557,14 +570,14 @@ This is especially important for custom domains. A request received on a tenant 
 
 Recommended implementation order:
 
-1. Bootstrap the workspace with `pnpm`, TypeScript strict mode, Hono, Vitest, Zod, Drizzle, PostgreSQL configuration, and dual runtime entry points.
+1. Bootstrap the workspace with `pnpm`, TypeScript strict mode, Hono, Vitest, Zod, Drizzle D1 schema support, Workers bindings, and Wrangler configuration.
 2. Implement tenant and issuer models with host/path resolution.
 3. Implement discovery metadata and JWKS endpoints.
-4. Implement signing key persistence and active-key selection.
-5. Implement Dynamic Client Registration with strict validation and audited writes.
-6. Implement fixed-whitelist admin auth.
+4. Implement signing key metadata in D1 and private key material storage in R2.
+5. Implement Dynamic Client Registration with strict validation, KV-backed registration tokens, and audited writes.
+6. Implement fixed-whitelist admin auth with KV-backed admin sessions.
 7. Implement admin UI and APIs for tenants and clients.
-8. Add documentation and local development setup.
+8. Add documentation and Cloudflare binding setup.
 
 Each step should produce working, testable software rather than placeholders.
 
@@ -611,4 +624,4 @@ This design is successful when the implementation can demonstrate:
 - client secrets are stored hashed and only returned once
 - admins can log in through the whitelist-only admin path
 - sensitive management actions produce audit events
-- the same Hono application can be wired for Workers and Node.js
+- the Workers Hono application can run with D1, KV, and R2 bindings configured

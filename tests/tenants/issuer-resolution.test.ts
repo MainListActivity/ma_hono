@@ -35,6 +35,22 @@ const tenantRepository = new MemoryTenantRepository([
         verificationStatus: "verified"
       }
     ]
+  },
+  {
+    id: "tenant_disabled",
+    slug: "disabled",
+    displayName: "Disabled",
+    status: "disabled",
+    issuers: [
+      {
+        id: "issuer_platform_disabled",
+        issuerType: "platform_path",
+        issuerUrl: "https://idp.example.test/t/disabled",
+        domain: null,
+        isPrimary: true,
+        verificationStatus: "verified"
+      }
+    ]
   }
 ]);
 
@@ -52,6 +68,32 @@ describe("resolveIssuerContext", () => {
       source: "platform_path"
     });
     expect(result?.tenant.slug).toBe("acme");
+  });
+
+  it("accepts platform requests on development ports when the configured platform host matches by hostname", async () => {
+    const result = await resolveIssuerContext({
+      platformHost: "idp.example.test",
+      requestUrl: "https://idp.example.test:8787/t/acme/.well-known/openid-configuration",
+      tenantRepository
+    });
+
+    expect(result).toMatchObject({
+      issuer: "https://idp.example.test/t/acme",
+      source: "platform_path"
+    });
+  });
+
+  it("accepts platform requests when the configured platform host includes a port", async () => {
+    const result = await resolveIssuerContext({
+      platformHost: "idp.example.test:8787",
+      requestUrl: "https://idp.example.test:8787/t/acme/.well-known/openid-configuration",
+      tenantRepository
+    });
+
+    expect(result).toMatchObject({
+      issuer: "https://idp.example.test/t/acme",
+      source: "platform_path"
+    });
   });
 
   it("resolves a custom domain issuer by host before platform path matching", async () => {
@@ -97,6 +139,16 @@ describe("resolveIssuerContext", () => {
     const result = await resolveIssuerContext({
       platformHost: "idp.example.test",
       requestUrl: "https://idp.example.test/t/unknown/.well-known/openid-configuration",
+      tenantRepository
+    });
+
+    expect(result).toBeNull();
+  });
+
+  it("returns null for disabled tenants", async () => {
+    const result = await resolveIssuerContext({
+      platformHost: "idp.example.test",
+      requestUrl: "https://idp.example.test/t/disabled/.well-known/openid-configuration",
       tenantRepository
     });
 

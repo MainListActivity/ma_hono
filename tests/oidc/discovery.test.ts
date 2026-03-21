@@ -35,6 +35,22 @@ const tenantRepository = new MemoryTenantRepository([
         verificationStatus: "verified"
       }
     ]
+  },
+  {
+    id: "tenant_disabled",
+    slug: "disabled",
+    displayName: "Disabled",
+    status: "disabled",
+    issuers: [
+      {
+        id: "issuer_platform_disabled",
+        issuerType: "platform_path",
+        issuerUrl: "https://idp.example.test/t/disabled",
+        domain: null,
+        isPrimary: true,
+        verificationStatus: "verified"
+      }
+    ]
   }
 ]);
 
@@ -96,6 +112,19 @@ describe("OIDC discovery", () => {
 
     const response = await app.request(
       "https://login.acme.test/t/acme/.well-known/openid-configuration"
+    );
+
+    expect(response.status).toBe(404);
+  });
+
+  it("returns 404 for disabled tenants", async () => {
+    const app = createApp({
+      platformHost: "idp.example.test",
+      tenantRepository
+    });
+
+    const response = await app.request(
+      "https://idp.example.test/t/disabled/.well-known/openid-configuration"
     );
 
     expect(response.status).toBe(404);

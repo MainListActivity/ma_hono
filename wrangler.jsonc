@@ -1,6 +1,29 @@
 {
   "name": "ma-hono",
   "main": "src/index.ts",
-  "compatibility_date": "2026-03-20",
-  "compatibility_flags": ["nodejs_compat"]
+  "compatibility_date": "2026-03-21",
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "ma-hono",
+      "database_id": "replace-with-d1-database-id",
+      "migrations_dir": "drizzle/migrations"
+    }
+  ],
+  "kv_namespaces": [
+    {
+      "binding": "ADMIN_SESSIONS_KV",
+      "id": "replace-with-admin-sessions-kv-id"
+    },
+    {
+      "binding": "REGISTRATION_TOKENS_KV",
+      "id": "replace-with-registration-tokens-kv-id"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "KEY_MATERIAL_R2",
+      "bucket_name": "ma-hono-key-material"
+    }
+  ]
 }

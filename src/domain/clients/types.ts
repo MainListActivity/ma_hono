@@ -3,7 +3,6 @@ export type ClientApplicationType = "web" | "native";
 export type ClientTokenEndpointAuthMethod =
   | "client_secret_basic"
   | "client_secret_post"
-  | "private_key_jwt"
   | "none";
 
 export interface Client {
@@ -17,7 +16,6 @@ export interface Client {
   responseTypes: string[];
   tokenEndpointAuthMethod: ClientTokenEndpointAuthMethod;
   clientSecretHash: string | null;
-  registrationAccessTokenHash: string;
 }
 
 export interface RegisterClientResult {

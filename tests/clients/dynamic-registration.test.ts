@@ -2,8 +2,11 @@ import { describe, expect, it } from "vitest";
 
 import { MemoryAuditRepository } from "../../src/adapters/db/memory/memory-audit-repository";
 import { MemoryClientRepository } from "../../src/adapters/db/memory/memory-client-repository";
+import { MemoryRegistrationAccessTokenRepository } from "../../src/adapters/db/memory/memory-registration-access-token-repository";
 import { MemoryTenantRepository } from "../../src/adapters/db/memory/memory-tenant-repository";
 import { createApp } from "../../src/app/app";
+import type { AuditRepository } from "../../src/domain/audit/repository";
+import type { RegistrationAccessTokenRecord, RegistrationAccessTokenRepository } from "../../src/domain/clients/registration-access-token-repository";
 
 interface DynamicClientRegistrationResponse {
   client_id: string;
@@ -40,14 +43,28 @@ const tenantRepository = new MemoryTenantRepository([
 ]);
 
 describe("Dynamic Client Registration", () => {
+  class FailingRegistrationAccessTokenRepository
+    implements RegistrationAccessTokenRepository
+  {
+    async store(_record: RegistrationAccessTokenRecord): Promise<void> {
+      throw new Error("KV unavailable");
+    }
+
+    async deleteByTokenHash(): Promise<void> {
+      return;
+    }
+  }
+
   it("registers a client with a valid management credential and stores only secret hashes", async () => {
     const clientRepository = new MemoryClientRepository();
     const auditRepository = new MemoryAuditRepository();
+    const registrationAccessTokenRepository = new MemoryRegistrationAccessTokenRepository();
     const app = createApp({
       auditRepository,
       clientRepository,
       managementApiToken: "manage-acme",
       platformHost: "idp.example.test",
+      registrationAccessTokenRepository,
       tenantRepository
     });
 
@@ -81,7 +98,11 @@ describe("Dynamic Client Registration", () => {
 
     expect(storedClient).not.toBeNull();
     expect(storedClient?.clientSecretHash).not.toBe(body.client_secret);
-    expect(storedClient?.registrationAccessTokenHash).not.toBe(body.registration_access_token);
+    expect(registrationAccessTokenRepository.listTokens()).toHaveLength(1);
+    expect(registrationAccessTokenRepository.listTokens()[0]?.clientId).toBe(body.client_id);
+    expect(registrationAccessTokenRepository.listTokens()[0]?.tokenHash).not.toBe(
+      body.registration_access_token
+    );
     expect(auditRepository.listEvents().map((event) => event.eventType)).toEqual([
       "oidc.client.registered"
     ]);
@@ -224,5 +245,94 @@ describe("Dynamic Client Registration", () => {
     });
 
     expect(response.status).toBe(400);
+  });
+
+  it("does not leave a client behind when registration token storage fails", async () => {
+    const clientRepository = new MemoryClientRepository();
+    const app = createApp({
+      clientRepository,
+      managementApiToken: "manage-acme",
+      platformHost: "idp.example.test",
+      registrationAccessTokenRepository: new FailingRegistrationAccessTokenRepository(),
+      tenantRepository
+    });
+
+    const response = await app.request("https://idp.example.test/t/acme/connect/register", {
+      method: "POST",
+      headers: {
+        authorization: "Bearer manage-acme",
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({
+        client_name: "Acme Web",
+        application_type: "web",
+        grant_types: ["authorization_code"],
+        redirect_uris: ["https://app.acme.test/callback"],
+        response_types: ["code"],
+        token_endpoint_auth_method: "client_secret_basic"
+      })
+    });
+
+    expect(response.status).toBe(500);
+    expect(clientRepository.listClients()).toHaveLength(0);
+  });
+
+  it("attempts both cleanup actions when post-registration persistence fails", async () => {
+    class DeleteFailingClientRepository extends MemoryClientRepository {
+      deleteAttempted = false;
+
+      override async deleteByClientId(_clientId: string): Promise<void> {
+        this.deleteAttempted = true;
+        throw new Error("D1 delete unavailable");
+      }
+    }
+
+    class TrackingRegistrationAccessTokenRepository
+      extends MemoryRegistrationAccessTokenRepository
+    {
+      deleteAttempted = false;
+
+      override async deleteByTokenHash(tokenHash: string): Promise<void> {
+        this.deleteAttempted = true;
+        await super.deleteByTokenHash(tokenHash);
+      }
+    }
+
+    class FailingAuditRepository implements AuditRepository {
+      async record(): Promise<void> {
+        throw new Error("audit unavailable");
+      }
+    }
+
+    const clientRepository = new DeleteFailingClientRepository();
+    const registrationAccessTokenRepository = new TrackingRegistrationAccessTokenRepository();
+    const app = createApp({
+      auditRepository: new FailingAuditRepository(),
+      clientRepository,
+      managementApiToken: "manage-acme",
+      platformHost: "idp.example.test",
+      registrationAccessTokenRepository,
+      tenantRepository
+    });
+
+    const response = await app.request("https://idp.example.test/t/acme/connect/register", {
+      method: "POST",
+      headers: {
+        authorization: "Bearer manage-acme",
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({
+        client_name: "Acme Web",
+        application_type: "web",
+        grant_types: ["authorization_code"],
+        redirect_uris: ["https://app.acme.test/callback"],
+        response_types: ["code"],
+        token_endpoint_auth_method: "client_secret_basic"
+      })
+    });
+
+    expect(response.status).toBe(500);
+    expect(clientRepository.deleteAttempted).toBe(true);
+    expect(registrationAccessTokenRepository.deleteAttempted).toBe(true);
   });
 });

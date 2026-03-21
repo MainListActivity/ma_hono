@@ -4,6 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "db:generate": "drizzle-kit generate",
+    "db:migrate:local": "wrangler d1 migrations apply DB --local",
+    "db:migrate:remote": "wrangler d1 migrations apply DB --remote",
     "dev": "wrangler dev",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -13,7 +16,6 @@
     "drizzle-orm": "^0.44.6",
     "hono": "^4.10.0",
     "jose": "^6.1.0",
-    "postgres": "^3.4.7",
     "zod": "^4.1.12"
   },
   "devDependencies": {

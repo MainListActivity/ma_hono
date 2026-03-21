@@ -4,7 +4,6 @@ import { getTableName } from "drizzle-orm";
 import { readRuntimeConfig } from "../../src/config/env";
 import { createRuntimeRepositories } from "../../src/adapters/db/drizzle/runtime";
 import {
-  adminSessions,
   adminUsers,
   auditEvents,
   oidcClients,
@@ -13,12 +12,20 @@ import {
   tenants
 } from "../../src/adapters/db/drizzle/schema";
 
+const fakeD1Database = {} as D1Database;
+const fakeAdminSessionsKv = {} as KVNamespace;
+const fakeRegistrationTokensKv = {} as KVNamespace;
+const fakeKeyMaterialBucket = {} as R2Bucket;
+
 describe("readRuntimeConfig", () => {
   it("reads the required runtime configuration", () => {
     const config = readRuntimeConfig({
       ADMIN_BOOTSTRAP_PASSWORD: "bootstrap-secret",
       ADMIN_WHITELIST: "admin@example.test,ops@example.test",
-      DATABASE_URL: "postgres://postgres:postgres@localhost:5432/ma_hono",
+      DB: fakeD1Database,
+      ADMIN_SESSIONS_KV: fakeAdminSessionsKv,
+      REGISTRATION_TOKENS_KV: fakeRegistrationTokensKv,
+      KEY_MATERIAL_R2: fakeKeyMaterialBucket,
       MANAGEMENT_API_TOKEN: "manage-acme",
       PLATFORM_HOST: "idp.example.test"
     });
@@ -26,9 +33,12 @@ describe("readRuntimeConfig", () => {
     expect(config).toEqual({
       adminBootstrapPassword: "bootstrap-secret",
       adminWhitelist: ["admin@example.test", "ops@example.test"],
-      databaseUrl: "postgres://postgres:postgres@localhost:5432/ma_hono",
+      adminSessionsKv: fakeAdminSessionsKv,
+      db: fakeD1Database,
+      keyMaterialBucket: fakeKeyMaterialBucket,
       managementApiToken: "manage-acme",
-      platformHost: "idp.example.test"
+      platformHost: "idp.example.test",
+      registrationTokensKv: fakeRegistrationTokensKv
     });
   });
 
@@ -37,7 +47,10 @@ describe("readRuntimeConfig", () => {
       readRuntimeConfig({
         ADMIN_BOOTSTRAP_PASSWORD: "bootstrap-secret",
         ADMIN_WHITELIST: "admin@example.test",
-        DATABASE_URL: "postgres://postgres:postgres@localhost:5432/ma_hono",
+        DB: fakeD1Database,
+        ADMIN_SESSIONS_KV: fakeAdminSessionsKv,
+        REGISTRATION_TOKENS_KV: fakeRegistrationTokensKv,
+        KEY_MATERIAL_R2: fakeKeyMaterialBucket,
         MANAGEMENT_API_TOKEN: "manage-acme"
       })
     ).toThrowError(/PLATFORM_HOST/);
@@ -51,24 +64,29 @@ describe("drizzle schema", () => {
     expect(getTableName(oidcClients)).toBe("oidc_clients");
     expect(getTableName(signingKeys)).toBe("signing_keys");
     expect(getTableName(adminUsers)).toBe("admin_users");
-    expect(getTableName(adminSessions)).toBe("admin_sessions");
     expect(getTableName(auditEvents)).toBe("audit_events");
   });
 });
 
 describe("createRuntimeRepositories", () => {
-  it("builds concrete runtime repositories from database config", async () => {
+  it("builds concrete runtime repositories from Cloudflare bindings", async () => {
     const repositories = await createRuntimeRepositories({
       adminBootstrapPassword: "bootstrap-secret",
       adminWhitelist: ["admin@example.test"],
-      databaseUrl: "postgres://postgres:postgres@localhost:5432/ma_hono",
+      adminSessionsKv: fakeAdminSessionsKv,
+      db: fakeD1Database,
+      keyMaterialBucket: fakeKeyMaterialBucket,
       managementApiToken: "manage-acme",
-      platformHost: "idp.example.test"
+      platformHost: "idp.example.test",
+      registrationTokensKv: fakeRegistrationTokensKv
     });
 
     expect(repositories.adminRepository).toBeDefined();
+    expect(repositories.auditRepository).toBeDefined();
     expect(repositories.clientRepository).toBeDefined();
     expect(repositories.keyRepository).toBeDefined();
+    expect(repositories.keyMaterialStore).toBeDefined();
+    expect(repositories.registrationAccessTokenRepository).toBeDefined();
     expect(repositories.tenantRepository).toBeDefined();
 
     await repositories.close();

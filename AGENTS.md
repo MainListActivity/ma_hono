@@ -12,8 +12,8 @@ This document defines the default context, architectural constraints, and decisi
 
 - Use TypeScript only.
 - Use Hono only for the HTTP application layer.
-- Target Cloudflare Workers first.
-- Support self-hosted cloud deployment with the same Hono application and shared domain modules.
+- Use Cloudflare Workers as the only runtime target.
+- Use Cloudflare-native storage and platform services by default: D1, R2, and KV.
 
 ## Product Definition
 
@@ -71,27 +71,24 @@ Avoid inventing custom token flows when a standard OIDC or OAuth pattern already
 
 ## Architecture Principles
 
-### 1. Workers-first, but not Workers-locked
+### 1. Workers-native architecture
 
-Cloudflare Workers is the primary deployment target.
+Cloudflare Workers is the only deployment target.
 
-However, core business logic must not depend directly on Cloudflare-only runtime APIs. The codebase should separate:
+The codebase should still separate:
 
 - domain logic
 - protocol logic
 - runtime adapters
 - infrastructure adapters
 
-Cloudflare-specific bindings should live in adapter layers, not inside identity domain code.
+Cloudflare-specific bindings should live in adapter and runtime layers, not inside identity domain code.
 
-### 2. One portable Hono application
+### 2. One Workers Hono application
 
-The main HTTP surface should be implemented as a Hono app that can run:
+The main HTTP surface should be implemented as a single Hono app for Cloudflare Workers.
 
-- on Cloudflare Workers
-- in a self-hosted Node.js environment
-
-Do not fork the application into separate edge and self-hosted codepaths unless there is a proven technical need.
+Do not introduce parallel Node.js or self-hosted runtime codepaths.
 
 ### 3. Modular identity core
 
@@ -131,7 +128,7 @@ Unless the user explicitly overrides these choices, prefer the following stack:
 - Token and JOSE handling: `jose`
 - OIDC/OAuth helper logic: standards-oriented libraries, not opaque auth platforms
 - WebAuthn: `@simplewebauthn/server` if runtime compatibility is acceptable
-- Database: PostgreSQL
+- Database: D1
 - ORM and migrations: Drizzle ORM
 - Test runner: Vitest
 - Package manager: `pnpm`
@@ -140,13 +137,12 @@ Unless the user explicitly overrides these choices, prefer the following stack:
 
 Default persistence assumptions:
 
-- PostgreSQL is the primary system of record.
-- Design database access so it works in both Cloudflare-first and self-hosted deployments.
-- Prefer infrastructure choices that have a clear Cloudflare Workers path and a clear self-hosted path.
+- D1 is the primary system of record.
+- R2 stores private key material and object-style artifacts.
+- KV stores sessions, short-lived registration tokens, caches, and other ephemeral state.
+- Prefer Cloudflare-native services over cross-platform abstractions when there is no active self-hosted requirement.
 
-Do not hard-couple the system to Cloudflare D1, KV, Durable Objects, or Queues unless a concrete requirement justifies it. These can be added behind adapters when necessary.
-
-The default persistence posture should favor portability and correctness over maximum platform-specific optimization.
+The default persistence posture should favor correctness, operational simplicity on Workers, and clear data placement across D1, R2, and KV.
 
 ## Security Priorities
 
@@ -196,11 +192,11 @@ When working in this repository:
 - Treat TypeScript as mandatory, not optional.
 - Treat Rust as out of scope.
 - Prefer standards-based identity design over framework magic.
-- Prefer portable abstractions over platform lock-in.
-- Keep Cloudflare-specific code at the edge of the system.
+- Prefer Cloudflare-native infrastructure choices when they simplify the design.
+- Keep Cloudflare-specific binding access in adapters and runtime entrypoints.
 - Document material architecture decisions as the codebase grows.
 - If a library is not compatible with Cloudflare Workers, do not adopt it by default.
-- If a library is self-host-only, use it only behind an adapter and only when there is a strong reason.
+- If a library assumes self-hosted Node.js or direct TCP/database drivers, do not adopt it by default.
 
 ## Non-Goals
 
@@ -215,6 +211,6 @@ The following are not default goals unless the user later asks for them:
 
 This project is a Hono-based, TypeScript-only, multi-tenant identity provider.
 
-Cloudflare Workers is the primary runtime target.
+Cloudflare Workers is the only runtime target.
 
-Self-hosted deployment is required, but it should be achieved through portable architecture and adapters, not by abandoning Hono or reintroducing Rust.
+D1, R2, and KV are the default platform services for persistence and state management.
