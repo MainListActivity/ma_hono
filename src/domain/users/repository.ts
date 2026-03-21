@@ -5,15 +5,23 @@ import type {
   UserInvitation
 } from "./types";
 
-export interface ConsumeInvitationByTokenHashInput {
+export interface CreateProvisionedUserWithInvitationInput {
+  invitation: UserInvitation;
+  user: User;
+}
+
+export interface ActivateUserByInvitationTokenInput {
   tokenHash: string;
+  passwordHash: string;
   now: Date;
 }
 
-export type ConsumeInvitationByTokenHashResult =
+export type ActivateUserByInvitationTokenResult =
   | {
-      kind: "consumed";
+      kind: "activated";
+      credential: PasswordCredential;
       invitation: UserInvitation;
+      user: User;
     }
   | {
       kind: "not_found";
@@ -23,14 +31,19 @@ export type ConsumeInvitationByTokenHashResult =
     }
   | {
       kind: "expired";
+    }
+  | {
+      kind: "user_disabled";
+    }
+  | {
+      kind: "already_initialized";
     };
 
 export interface UserRepository {
-  consumeInvitationByTokenHash(
-    input: ConsumeInvitationByTokenHashInput
-  ): Promise<ConsumeInvitationByTokenHashResult>;
-  createInvitation(invitation: UserInvitation): Promise<void>;
-  createUser(user: User): Promise<void>;
+  activateUserByInvitationToken(
+    input: ActivateUserByInvitationTokenInput
+  ): Promise<ActivateUserByInvitationTokenResult>;
+  createProvisionedUserWithInvitation(input: CreateProvisionedUserWithInvitationInput): Promise<void>;
   findAuthMethodPolicyByTenantId(tenantId: string): Promise<TenantAuthMethodPolicy | null>;
   findPasswordCredentialByUserId(
     tenantId: string,

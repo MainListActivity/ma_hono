@@ -3,9 +3,9 @@ import { describe, expect, it, vi } from "vitest";
 import { MemoryUserRepository } from "../../src/adapters/db/memory/memory-user-repository";
 import { MemoryUserSessionRepository } from "../../src/adapters/db/memory/memory-user-session-repository";
 import { activateUser } from "../../src/domain/users/activate-user";
-import { verifyPassword } from "../../src/domain/users/passwords";
+import { hashPassword, verifyPassword } from "../../src/domain/users/passwords";
 import { provisionUser } from "../../src/domain/users/provision-user";
-import type { TenantAuthMethodPolicy } from "../../src/domain/users/types";
+import type { PasswordCredential, TenantAuthMethodPolicy } from "../../src/domain/users/types";
 import {
   authenticateBrowserSession,
   createBrowserSession
@@ -76,7 +76,7 @@ describe("user provisioning and activation domain", () => {
       displayName: "Activate Me",
       now: provisionedAt
     });
-    const consumeInvitationSpy = vi.spyOn(repository, "consumeInvitationByTokenHash");
+    const activateUserByInvitationTokenSpy = vi.spyOn(repository, "activateUserByInvitationToken");
 
     const activated = await activateUser({
       userRepository: repository,
@@ -95,11 +95,14 @@ describe("user provisioning and activation domain", () => {
       status: "active",
       emailVerified: true
     });
-    expect(consumeInvitationSpy).toHaveBeenCalledTimes(1);
-    expect(consumeInvitationSpy).toHaveBeenCalledWith({
-      tokenHash: await sha256Base64Url(provisioned.invitationToken),
-      now: activationTime
-    });
+    expect(activateUserByInvitationTokenSpy).toHaveBeenCalledTimes(1);
+    expect(activateUserByInvitationTokenSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tokenHash: await sha256Base64Url(provisioned.invitationToken),
+        now: activationTime,
+        passwordHash: expect.any(String)
+      })
+    );
 
     const credential = await repository.findPasswordCredentialByUserId(
       provisioned.user.tenantId,
@@ -169,7 +172,139 @@ describe("user provisioning and activation domain", () => {
     );
   });
 
-  it("models invitation consumption as a one-time atomic repository operation", async () => {
+  it("rejects activation for disabled users without burning the invitation", async () => {
+    const provisionedAt = new Date("2026-03-21T11:15:00.000Z");
+    const repository = new MemoryUserRepository({
+      policies: [tenantPolicy]
+    });
+    const provisioned = await provisionUser({
+      userRepository: repository,
+      tenantId: "tenant_acme",
+      email: "disabled@acme.test",
+      username: "disableduser",
+      displayName: "Disabled User",
+      now: provisionedAt
+    });
+
+    await repository.updateUser({
+      ...provisioned.user,
+      status: "disabled",
+      updatedAt: new Date("2026-03-21T11:16:00.000Z").toISOString()
+    });
+
+    await expect(
+      activateUser({
+        userRepository: repository,
+        invitationToken: provisioned.invitationToken,
+        password: "CorrectHorseBatteryStaple!42",
+        now: new Date("2026-03-21T11:17:00.000Z")
+      })
+    ).resolves.toEqual({
+      ok: false,
+      reason: "user_disabled"
+    });
+
+    expect(repository.listInvitations()[0]?.consumedAt).toBeNull();
+    expect(
+      await repository.findPasswordCredentialByUserId(provisioned.user.tenantId, provisioned.user.id)
+    ).toBeNull();
+  });
+
+  it("rejects activation for already-initialized users without overwriting the password or burning the invitation", async () => {
+    const repository = new MemoryUserRepository({
+      policies: [tenantPolicy]
+    });
+    const provisioned = await provisionUser({
+      userRepository: repository,
+      tenantId: "tenant_acme",
+      email: "initialized@acme.test",
+      username: "initializeduser",
+      displayName: "Initialized User",
+      now: new Date("2026-03-21T11:20:00.000Z")
+    });
+    const originalCredential: PasswordCredential = {
+      id: "pwd_123",
+      tenantId: provisioned.user.tenantId,
+      userId: provisioned.user.id,
+      passwordHash: await hashPassword("OriginalPassword!42"),
+      createdAt: new Date("2026-03-21T11:21:00.000Z").toISOString(),
+      updatedAt: new Date("2026-03-21T11:21:00.000Z").toISOString()
+    };
+
+    await repository.upsertPasswordCredential(originalCredential);
+
+    await expect(
+      activateUser({
+        userRepository: repository,
+        invitationToken: provisioned.invitationToken,
+        password: "ReplacementPassword!42",
+        now: new Date("2026-03-21T11:22:00.000Z")
+      })
+    ).resolves.toEqual({
+      ok: false,
+      reason: "user_already_initialized"
+    });
+
+    expect(repository.listInvitations()[0]?.consumedAt).toBeNull();
+    expect(await repository.findPasswordCredentialByUserId(provisioned.user.tenantId, provisioned.user.id)).toEqual(
+      originalCredential
+    );
+  });
+
+  it("does not burn the invitation when activation commit fails", async () => {
+    const repository = new MemoryUserRepository({
+      policies: [tenantPolicy],
+      failActivationCommit: true
+    });
+    const provisioned = await provisionUser({
+      userRepository: repository,
+      tenantId: "tenant_acme",
+      email: "activation-failure@acme.test",
+      username: "activationfailure",
+      displayName: "Activation Failure",
+      now: new Date("2026-03-21T11:25:00.000Z")
+    });
+
+    await expect(
+      activateUser({
+        userRepository: repository,
+        invitationToken: provisioned.invitationToken,
+        password: "CorrectHorseBatteryStaple!42",
+        now: new Date("2026-03-21T11:26:00.000Z")
+      })
+    ).rejects.toThrow("simulated activation commit failure");
+
+    expect(repository.listInvitations()[0]?.consumedAt).toBeNull();
+    expect((await repository.findUserById(provisioned.user.tenantId, provisioned.user.id))?.status).toBe(
+      "provisioned"
+    );
+    expect(
+      await repository.findPasswordCredentialByUserId(provisioned.user.tenantId, provisioned.user.id)
+    ).toBeNull();
+  });
+
+  it("does not strand a provisioned user when invitation creation fails", async () => {
+    const repository = new MemoryUserRepository({
+      policies: [tenantPolicy],
+      failProvisionCommit: true
+    });
+
+    await expect(
+      provisionUser({
+        userRepository: repository,
+        tenantId: "tenant_acme",
+        email: "provision-failure@acme.test",
+        username: "provisionfailure",
+        displayName: "Provision Failure",
+        now: new Date("2026-03-21T11:27:00.000Z")
+      })
+    ).rejects.toThrow("simulated provision commit failure");
+
+    expect(repository.listUsers()).toEqual([]);
+    expect(repository.listInvitations()).toEqual([]);
+  });
+
+  it("models activation as a one-time atomic repository operation", async () => {
     const repository = new MemoryUserRepository({
       policies: [tenantPolicy]
     });
@@ -182,23 +317,26 @@ describe("user provisioning and activation domain", () => {
       now: new Date("2026-03-21T11:30:00.000Z")
     });
     const tokenHash = await sha256Base64Url(provisioned.invitationToken);
+    const passwordHash = await hashPassword("CorrectHorseBatteryStaple!42");
 
     await expect(
-      repository.consumeInvitationByTokenHash({
+      repository.activateUserByInvitationToken({
         tokenHash,
+        passwordHash,
         now: new Date("2026-03-21T11:31:00.000Z")
       })
     ).resolves.toMatchObject({
-      kind: "consumed",
-      invitation: {
-        id: provisioned.invitation.id,
-        consumedAt: "2026-03-21T11:31:00.000Z"
+      kind: "activated",
+      user: {
+        id: provisioned.user.id,
+        status: "active"
       }
     });
 
     await expect(
-      repository.consumeInvitationByTokenHash({
+      repository.activateUserByInvitationToken({
         tokenHash,
+        passwordHash,
         now: new Date("2026-03-21T11:32:00.000Z")
       })
     ).resolves.toEqual({

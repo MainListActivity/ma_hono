@@ -63,8 +63,10 @@ export const provisionUser = async ({
     createdAt
   };
 
-  await userRepository.createUser(user);
-  await userRepository.createInvitation(invitation);
+  await userRepository.createProvisionedUserWithInvitation({
+    invitation,
+    user
+  });
 
   return {
     invitation,

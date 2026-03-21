@@ -1,6 +1,7 @@
 import type {
-  ConsumeInvitationByTokenHashInput,
-  ConsumeInvitationByTokenHashResult,
+  ActivateUserByInvitationTokenInput,
+  ActivateUserByInvitationTokenResult,
+  CreateProvisionedUserWithInvitationInput,
   UserRepository
 } from "../../../domain/users/repository";
 import type {
@@ -17,30 +18,36 @@ export class MemoryUserRepository implements UserRepository {
   private readonly users: User[];
 
   constructor({
+    failActivationCommit = false,
+    failProvisionCommit = false,
     invitations = [],
     passwordCredentials = [],
     policies = [],
     users = []
   }: {
+    failActivationCommit?: boolean;
+    failProvisionCommit?: boolean;
     invitations?: UserInvitation[];
     passwordCredentials?: PasswordCredential[];
     policies?: TenantAuthMethodPolicy[];
     users?: User[];
   } = {}) {
+    this.failActivationCommit = failActivationCommit;
+    this.failProvisionCommit = failProvisionCommit;
     this.invitations = [...invitations];
     this.passwordCredentials = [...passwordCredentials];
     this.policies = [...policies];
     this.users = [...users];
   }
 
-  async createInvitation(invitation: UserInvitation): Promise<void> {
-    this.invitations.push(invitation);
-  }
+  private readonly failActivationCommit: boolean;
+  private readonly failProvisionCommit: boolean;
 
-  async consumeInvitationByTokenHash({
+  async activateUserByInvitationToken({
     now,
+    passwordHash,
     tokenHash
-  }: ConsumeInvitationByTokenHashInput): Promise<ConsumeInvitationByTokenHashResult> {
+  }: ActivateUserByInvitationTokenInput): Promise<ActivateUserByInvitationTokenResult> {
     const index = this.invitations.findIndex((invitation) => invitation.tokenHash === tokenHash);
 
     if (index === -1) {
@@ -69,20 +76,74 @@ export class MemoryUserRepository implements UserRepository {
       };
     }
 
+    const userIndex = this.users.findIndex(
+      (user) => user.tenantId === invitation.tenantId && user.id === invitation.userId
+    );
+    const user = this.users[userIndex];
+
+    if (user === undefined) {
+      return {
+        kind: "not_found"
+      };
+    }
+
+    if (user.status === "disabled") {
+      return {
+        kind: "user_disabled"
+      };
+    }
+
+    const existingCredentialIndex = this.passwordCredentials.findIndex(
+      (credential) =>
+        credential.tenantId === invitation.tenantId && credential.userId === invitation.userId
+    );
+
+    if (user.status !== "provisioned" || existingCredentialIndex !== -1) {
+      return {
+        kind: "already_initialized"
+      };
+    }
+
+    if (this.failActivationCommit) {
+      throw new Error("simulated activation commit failure");
+    }
+
+    const updatedAt = now.toISOString();
     const consumedInvitation: UserInvitation = {
       ...invitation,
-      consumedAt: now.toISOString()
+      consumedAt: updatedAt
+    };
+    const activatedUser: User = {
+      ...user,
+      emailVerified: true,
+      status: "active",
+      updatedAt
+    };
+    const credential: PasswordCredential = {
+      id: crypto.randomUUID(),
+      tenantId: user.tenantId,
+      userId: user.id,
+      passwordHash,
+      createdAt: updatedAt,
+      updatedAt
     };
 
     this.invitations[index] = consumedInvitation;
+    this.users[userIndex] = activatedUser;
+    this.passwordCredentials.push(credential);
 
     return {
-      kind: "consumed",
-      invitation: consumedInvitation
+      kind: "activated",
+      credential,
+      invitation: consumedInvitation,
+      user: activatedUser
     };
   }
 
-  async createUser(user: User): Promise<void> {
+  async createProvisionedUserWithInvitation({
+    invitation,
+    user
+  }: CreateProvisionedUserWithInvitationInput): Promise<void> {
     if (this.users.some((storedUser) => storedUser.tenantId === user.tenantId && storedUser.email === user.email)) {
       throw new Error(`user email already exists for tenant: ${user.tenantId}`);
     }
@@ -96,7 +157,12 @@ export class MemoryUserRepository implements UserRepository {
       throw new Error(`username already exists for tenant: ${user.tenantId}`);
     }
 
+    if (this.failProvisionCommit) {
+      throw new Error("simulated provision commit failure");
+    }
+
     this.users.push(user);
+    this.invitations.push(invitation);
   }
 
   async findAuthMethodPolicyByTenantId(tenantId: string): Promise<TenantAuthMethodPolicy | null> {

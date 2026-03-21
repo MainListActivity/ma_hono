@@ -1,7 +1,7 @@
 import { sha256Base64Url } from "../../lib/hash";
 import { hashPassword } from "./passwords";
 import type { UserRepository } from "./repository";
-import type { PasswordCredential, User } from "./types";
+import type { User } from "./types";
 
 export type ActivateUserResult =
   | {
@@ -10,7 +10,12 @@ export type ActivateUserResult =
     }
   | {
       ok: false;
-      reason: "invalid_invitation" | "invitation_already_used" | "invitation_expired";
+      reason:
+        | "invalid_invitation"
+        | "invitation_already_used"
+        | "invitation_expired"
+        | "user_already_initialized"
+        | "user_disabled";
     };
 
 export const activateUser = async ({
@@ -24,68 +29,49 @@ export const activateUser = async ({
   password: string;
   userRepository: UserRepository;
 }): Promise<ActivateUserResult> => {
-  const consumedInvitation = await userRepository.consumeInvitationByTokenHash({
+  const activated = await userRepository.activateUserByInvitationToken({
     tokenHash: await sha256Base64Url(invitationToken),
+    passwordHash: await hashPassword(password),
     now
   });
 
-  if (consumedInvitation.kind === "not_found") {
+  if (activated.kind === "not_found") {
     return {
       ok: false,
       reason: "invalid_invitation"
     };
   }
 
-  if (consumedInvitation.kind === "already_used") {
+  if (activated.kind === "already_used") {
     return {
       ok: false,
       reason: "invitation_already_used"
     };
   }
 
-  if (consumedInvitation.kind === "expired") {
+  if (activated.kind === "expired") {
     return {
       ok: false,
       reason: "invitation_expired"
     };
   }
 
-  const { invitation } = consumedInvitation;
-
-  const user = await userRepository.findUserById(invitation.tenantId, invitation.userId);
-
-  if (user === null) {
+  if (activated.kind === "user_disabled") {
     return {
       ok: false,
-      reason: "invalid_invitation"
+      reason: "user_disabled"
     };
   }
 
-  const updatedAt = now.toISOString();
-  const activatedUser: User = {
-    ...user,
-    emailVerified: true,
-    status: "active",
-    updatedAt
-  };
-  const existingCredential = await userRepository.findPasswordCredentialByUserId(
-    user.tenantId,
-    user.id
-  );
-  const credential: PasswordCredential = {
-    id: existingCredential?.id ?? crypto.randomUUID(),
-    tenantId: user.tenantId,
-    userId: user.id,
-    passwordHash: await hashPassword(password),
-    createdAt: existingCredential?.createdAt ?? updatedAt,
-    updatedAt
-  };
-
-  await userRepository.upsertPasswordCredential(credential);
-  await userRepository.updateUser(activatedUser);
+  if (activated.kind === "already_initialized") {
+    return {
+      ok: false,
+      reason: "user_already_initialized"
+    };
+  }
 
   return {
     ok: true,
-    user: activatedUser
+    user: activated.user
   };
 };
