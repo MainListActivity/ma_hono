@@ -29,5 +29,8 @@
       "binding": "KEY_MATERIAL_R2",
       "bucket_name": "ma-hono-key-material"
     }
-  ]
+  ],
+  "vars": {
+    "ADMIN_ORIGIN": ""
+  }
 }
