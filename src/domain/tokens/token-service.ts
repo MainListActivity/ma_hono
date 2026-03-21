@@ -49,11 +49,13 @@ const parseBasicAuthorization = (
     return null;
   }
 
-  if (!authorizationHeader.startsWith("Basic ")) {
+  const basicPrefixMatch = authorizationHeader.match(/^basic\s+/iu);
+
+  if (basicPrefixMatch === null) {
     return "invalid";
   }
 
-  const encoded = authorizationHeader.slice("Basic ".length).trim();
+  const encoded = authorizationHeader.slice(basicPrefixMatch[0].length).trim();
 
   if (encoded.length === 0) {
     return "invalid";

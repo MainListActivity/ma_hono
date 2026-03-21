@@ -522,7 +522,7 @@ export const createApp = (options: AppOptions = {}) => {
 
       const attemptedBasicAuthentication = context.req
         .header("authorization")
-        ?.startsWith("Basic ");
+        ?.match(/^basic\s+/iu) !== null;
 
       setTokenResponseHeaders({
         includeBasicWwwAuthenticate:

@@ -144,6 +144,7 @@ const exchangeCode = async ({
   includeBodyCredentials,
   includeClientIdInBody = true,
   includeClientSecretInBody = true,
+  basicAuthScheme = "Basic",
   redirectUri,
   secret,
   skipGrantType = false,
@@ -157,6 +158,7 @@ const exchangeCode = async ({
   includeBodyCredentials?: boolean;
   includeClientIdInBody?: boolean;
   includeClientSecretInBody?: boolean;
+  basicAuthScheme?: string;
   redirectUri: string;
   secret: string | null;
   skipGrantType?: boolean;
@@ -190,7 +192,7 @@ const exchangeCode = async ({
   if (useBasicAuth && secret !== null) {
     const credential = btoa(`${clientId}:${secret}`);
 
-    headers.set("authorization", `Basic ${credential}`);
+    headers.set("authorization", `${basicAuthScheme} ${credential}`);
   }
 
   return app.request(requestUrl, {
@@ -881,5 +883,69 @@ describe("/token", () => {
     const statuses = [first.status, second.status].sort();
 
     expect(statuses).toEqual([200, 400]);
+  });
+
+  it("accepts case-insensitive basic scheme and preserves challenge behavior", async () => {
+    const { signer } = await createSigner();
+    const client = await createClient({
+      authMethod: "client_secret_basic",
+      clientId: "client_basic_case",
+      secret: "case-secret"
+    });
+    const codeRepository = new MemoryAuthorizationCodeRepository();
+
+    await seedAuthorizationCode({
+      code: "code-basic-lowercase",
+      clientId: client.clientId,
+      codeRepository,
+      expiresAt: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+      issuer: "https://idp.example.test/t/acme"
+    });
+    await seedAuthorizationCode({
+      code: "code-basic-mixed-invalid",
+      clientId: client.clientId,
+      codeRepository,
+      expiresAt: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+      issuer: "https://idp.example.test/t/acme"
+    });
+
+    const app = createApp({
+      auditRepository: new MemoryAuditRepository(),
+      authorizationCodeRepository: codeRepository,
+      clientRepository: new MemoryClientRepository([client]),
+      platformHost: "idp.example.test",
+      signer,
+      tenantRepository
+    });
+
+    const lowercaseSuccess = await exchangeCode({
+      app,
+      clientId: client.clientId,
+      code: "code-basic-lowercase",
+      codeVerifier: "verifier-123456",
+      redirectUri: "https://app.acme.test/callback",
+      secret: "case-secret",
+      useBasicAuth: true,
+      basicAuthScheme: "basic",
+      requestUrl: "https://idp.example.test/t/acme/token"
+    });
+    expect(lowercaseSuccess.status).toBe(200);
+
+    const mixedCaseInvalid = await exchangeCode({
+      app,
+      clientId: client.clientId,
+      code: "code-basic-mixed-invalid",
+      codeVerifier: "verifier-123456",
+      redirectUri: "https://app.acme.test/callback",
+      secret: "wrong-secret",
+      useBasicAuth: true,
+      basicAuthScheme: "bAsIc",
+      requestUrl: "https://idp.example.test/t/acme/token"
+    });
+    expect(mixedCaseInvalid.status).toBe(401);
+    await expect(mixedCaseInvalid.json()).resolves.toEqual({ error: "invalid_client" });
+    expect(mixedCaseInvalid.headers.get("www-authenticate")).toBe(
+      'Basic realm="token", error="invalid_client"'
+    );
   });
 });
