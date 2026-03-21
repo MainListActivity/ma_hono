@@ -9,7 +9,13 @@ export interface SigningKey {
   alg: string;
   kty: string;
   status: SigningKeyStatus;
+  privateKeyRef?: string | null;
   publicJwk: JWK;
+}
+
+export interface SigningKeyMaterial {
+  key: SigningKey;
+  privateJwk: JWK;
 }
 
 export interface JwksResponse {

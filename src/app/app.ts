@@ -9,6 +9,7 @@ import { sha256Base64Url } from "../lib/hash";
 import { registerClient } from "../domain/clients/register-client";
 import type { ClientRepository } from "../domain/clients/repository";
 import { buildJwks } from "../domain/keys/jwks";
+import type { SigningKeySigner } from "../domain/keys/signer";
 import type { KeyRepository } from "../domain/keys/repository";
 import type { TenantRepository } from "../domain/tenants/repository";
 import { resolveIssuerContext } from "../domain/tenants/issuer-resolution";
@@ -88,6 +89,7 @@ export interface AppOptions {
   managementApiToken?: string;
   platformHost?: string;
   registrationAccessTokenRepository?: RegistrationAccessTokenRepository;
+  signer?: SigningKeySigner;
   tenantRepository?: TenantRepository;
 }
 

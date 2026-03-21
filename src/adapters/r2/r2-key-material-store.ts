@@ -12,7 +12,7 @@ export class R2KeyMaterialStore implements KeyMaterialStore {
   async put(key: string, value: string): Promise<void> {
     await this.bucket.put(key, value, {
       httpMetadata: {
-        contentType: "text/plain"
+        contentType: "application/json"
       }
     });
   }

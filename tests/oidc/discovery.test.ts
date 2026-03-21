@@ -70,6 +70,16 @@ describe("OIDC discovery", () => {
       issuer: "https://idp.example.test/t/acme",
       jwks_uri: "https://idp.example.test/t/acme/jwks.json",
       registration_endpoint: "https://idp.example.test/t/acme/connect/register",
+      authorization_endpoint: "https://idp.example.test/t/acme/authorize",
+      token_endpoint: "https://idp.example.test/t/acme/token",
+      grant_types_supported: ["authorization_code", "refresh_token"],
+      response_types_supported: ["code"],
+      code_challenge_methods_supported: ["S256"],
+      token_endpoint_auth_methods_supported: [
+        "client_secret_basic",
+        "client_secret_post",
+        "none"
+      ],
       subject_types_supported: ["public"],
       id_token_signing_alg_values_supported: ["ES256"]
     });
@@ -87,7 +97,17 @@ describe("OIDC discovery", () => {
     await expect(response.json()).resolves.toMatchObject({
       issuer: "https://login.acme.test",
       jwks_uri: "https://login.acme.test/jwks.json",
-      registration_endpoint: "https://login.acme.test/connect/register"
+      registration_endpoint: "https://login.acme.test/connect/register",
+      authorization_endpoint: "https://login.acme.test/authorize",
+      token_endpoint: "https://login.acme.test/token",
+      grant_types_supported: ["authorization_code", "refresh_token"],
+      response_types_supported: ["code"],
+      code_challenge_methods_supported: ["S256"],
+      token_endpoint_auth_methods_supported: [
+        "client_secret_basic",
+        "client_secret_post",
+        "none"
+      ]
     });
   });
 

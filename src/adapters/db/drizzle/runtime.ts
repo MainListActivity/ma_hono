@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, desc, eq, isNull, or } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 
 import type { AuditRepository } from "../../../domain/audit/repository";
@@ -10,6 +10,7 @@ import type { ClientRepository } from "../../../domain/clients/repository";
 import type { Client } from "../../../domain/clients/types";
 import type { KeyMaterialStore } from "../../../domain/keys/key-material-store";
 import type { KeyRepository } from "../../../domain/keys/repository";
+import { createSigningKeySigner } from "../../../domain/keys/signer";
 import type { SigningKey } from "../../../domain/keys/types";
 import type { RuntimeConfig } from "../../../config/env";
 import type { TenantRepository } from "../../../domain/tenants/repository";
@@ -34,6 +35,47 @@ import {
 
 const adminSessionPrefix = "admin_session:";
 const registrationTokenPrefix = "registration_access_token:";
+class D1SigningKeyBootstrapper {
+  constructor(private readonly db: ReturnType<typeof drizzle>) {}
+
+  async bootstrapSigningKey(input: {
+    alg: string;
+    kid: string;
+    kty: string;
+    privateKeyRef: string;
+    publicJwk: SigningKey["publicJwk"];
+    tenantId: string | null;
+  }): Promise<SigningKey> {
+    const now = new Date().toISOString();
+    const key: SigningKey = {
+      id: crypto.randomUUID(),
+      tenantId: input.tenantId,
+      kid: input.kid,
+      alg: input.alg,
+      kty: input.kty,
+      privateKeyRef: input.privateKeyRef,
+      status: "active",
+      publicJwk: input.publicJwk
+    };
+
+    await this.db.insert(signingKeys).values({
+      id: key.id,
+      tenantId: key.tenantId,
+      kid: key.kid,
+      alg: key.alg,
+      kty: key.kty,
+      publicJwk: key.publicJwk as Record<string, unknown>,
+      privateKeyRef: key.privateKeyRef,
+      status: key.status,
+      activatedAt: now,
+      retireAt: null,
+      createdAt: now
+    });
+
+    return key;
+  }
+}
+
 const toTenant = (
   tenantRow: typeof tenants.$inferSelect,
   issuerRows: Array<typeof tenantIssuers.$inferSelect>
@@ -141,7 +183,13 @@ class D1KeyRepository implements KeyRepository {
     const rows = await this.db
       .select()
       .from(signingKeys)
-      .where(and(eq(signingKeys.tenantId, tenantId), eq(signingKeys.status, "active")));
+      .where(
+        and(
+          eq(signingKeys.status, "active"),
+          or(eq(signingKeys.tenantId, tenantId), isNull(signingKeys.tenantId))
+        )
+      )
+      .orderBy(desc(signingKeys.activatedAt), desc(signingKeys.createdAt));
 
     return rows.map((row) => ({
       id: row.id,
@@ -150,6 +198,7 @@ class D1KeyRepository implements KeyRepository {
       alg: row.alg,
       kty: row.kty,
       status: row.status as SigningKey["status"],
+      privateKeyRef: row.privateKeyRef,
       publicJwk: row.publicJwk as SigningKey["publicJwk"]
     }));
   }
@@ -312,13 +361,31 @@ export const createRuntimeRepositories = async (config: RuntimeConfig) => {
       webauthnCredentials
     }
   });
+  const keyMaterialStore = new R2KeyMaterialStore(config.keyMaterialBucket);
+  const keyRepository = new D1KeyRepository(db);
+  const signingKeyBootstrapper = new D1SigningKeyBootstrapper(db);
+  const signer = createSigningKeySigner({
+    bootstrapSigningKey: signingKeyBootstrapper.bootstrapSigningKey.bind(signingKeyBootstrapper),
+    keyMaterialStore,
+    keyRepository
+  });
+  const [existingSigningKey] = await db
+    .select({ id: signingKeys.id })
+    .from(signingKeys)
+    .where(eq(signingKeys.status, "active"))
+    .limit(1);
+
+  if (existingSigningKey === undefined) {
+    await signer.ensureActiveSigningKeyMaterial(null);
+  }
 
   return {
     adminRepository: new D1KvAdminRepository(db, config.adminSessionsKv),
     auditRepository: new D1AuditRepository(db),
     clientRepository: new D1ClientRepository(db),
-    keyMaterialStore: new R2KeyMaterialStore(config.keyMaterialBucket),
-    keyRepository: new D1KeyRepository(db),
+    keyMaterialStore,
+    keyRepository,
+    signer,
     registrationAccessTokenRepository: new KvRegistrationAccessTokenRepository(
       config.registrationTokensKv
     ),
