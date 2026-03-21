@@ -3,6 +3,7 @@ import type { Client } from "../clients/types";
 export type PkceCodeChallengeMethod = "S256";
 
 export interface AuthorizeSession {
+  tenantId?: string;
   userId: string;
 }
 

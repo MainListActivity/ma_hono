@@ -261,9 +261,6 @@ export const createApp = (options: AppOptions = {}) => {
     return redirectUrl.toString();
   };
 
-  const createOpaqueToken = () => crypto.randomUUID().replaceAll("-", "");
-  const authorizationCodeLifetimeMs = 5 * 60 * 1000;
-
   const recordAuthorizeAuditEvent = async ({
     actorId,
     actorType,
@@ -343,7 +340,13 @@ export const createApp = (options: AppOptions = {}) => {
     }
 
     const url = new URL(context.req.url);
-    const session = await authorizeSessionResolver(context);
+    const resolvedSession = await authorizeSessionResolver(context);
+    const session =
+      resolvedSession !== null &&
+      resolvedSession.tenantId !== undefined &&
+      resolvedSession.tenantId !== issuerContext.tenant.id
+        ? null
+        : resolvedSession;
     const result = await authorizeRequest({
       authorizationCodeRepository,
       clientRepository,
@@ -497,6 +500,7 @@ export const createApp = (options: AppOptions = {}) => {
     const result = await authenticateWithPassword({
       loginChallengeRepository: loginChallengeLookupRepository,
       loginChallengeToken: String(formData.get("login_challenge") ?? ""),
+      issuer: issuerContext.issuer,
       password: String(formData.get("password") ?? ""),
       tenantId: issuerContext.tenant.id,
       userRepository,
@@ -542,24 +546,6 @@ export const createApp = (options: AppOptions = {}) => {
       tenantId: result.user.tenantId,
       userId: result.user.id
     });
-    const authorizationCodeToken = createOpaqueToken();
-
-    await authorizationCodeRepository.create({
-      id: crypto.randomUUID(),
-      tenantId: result.challenge.tenantId,
-      issuer: result.challenge.issuer,
-      clientId: result.challenge.clientId,
-      userId: result.user.id,
-      redirectUri: result.challenge.redirectUri,
-      scope: result.challenge.scope,
-      nonce: result.challenge.nonce,
-      codeChallenge: result.challenge.codeChallenge,
-      codeChallengeMethod: result.challenge.codeChallengeMethod,
-      tokenHash: await sha256Base64Url(authorizationCodeToken),
-      expiresAt: new Date(Date.now() + authorizationCodeLifetimeMs).toISOString(),
-      consumedAt: null,
-      createdAt: new Date().toISOString()
-    });
 
     await recordAuditEventBestEffort({
       actorType: "end_user",
@@ -573,13 +559,6 @@ export const createApp = (options: AppOptions = {}) => {
       }
     });
 
-    const redirectUrl = new URL(result.challenge.redirectUri);
-
-    redirectUrl.searchParams.set("code", authorizationCodeToken);
-    if (result.challenge.state.length > 0) {
-      redirectUrl.searchParams.set("state", result.challenge.state);
-    }
-
     context.header(
       "Set-Cookie",
       buildBrowserSessionCookie({
@@ -588,6 +567,116 @@ export const createApp = (options: AppOptions = {}) => {
         sessionToken
       })
     );
+
+    const authorizationResult = await authorizeRequest({
+      authorizationCodeRepository,
+      clientRepository,
+      issuerContext,
+      loginChallengeRepository,
+      request: {
+        clientId: result.challenge.clientId,
+        redirectUri: result.challenge.redirectUri,
+        responseType: "code",
+        scope: result.challenge.scope,
+        state: result.challenge.state.length === 0 ? null : result.challenge.state,
+        nonce: result.challenge.nonce,
+        codeChallenge: result.challenge.codeChallenge,
+        codeChallengeMethod: result.challenge.codeChallengeMethod
+      },
+      session: {
+        userId: result.user.id,
+        tenantId: result.user.tenantId
+      }
+    });
+
+    if (authorizationResult.kind === "error") {
+      await recordAuthorizeAuditEvent({
+        actorType: "end_user",
+        actorId: result.user.id,
+        tenantId: issuerContext.tenant.id,
+        eventType: "oidc.authorization.failed",
+        targetId: authorizationResult.clientId,
+        payload: {
+          client_id: authorizationResult.clientId,
+          reason: authorizationResult.error,
+          redirect_uri: authorizationResult.redirectUri
+        }
+      });
+
+      if (authorizationResult.shouldRedirect && authorizationResult.redirectUri !== null) {
+        return context.redirect(
+          buildClientErrorRedirectUrl({
+            error: authorizationResult.error,
+            errorDescription: authorizationResult.errorDescription,
+            redirectUri: authorizationResult.redirectUri,
+            state: authorizationResult.state
+          }),
+          302
+        );
+      }
+
+      return context.json(
+        authorizationResult.errorDescription === undefined
+          ? { error: authorizationResult.error }
+          : {
+              error: authorizationResult.error,
+              error_description: authorizationResult.errorDescription
+            },
+        400
+      );
+    }
+
+    if (authorizationResult.kind === "consent_required") {
+      await recordAuthorizeAuditEvent({
+        actorType: "end_user",
+        actorId: result.user.id,
+        tenantId: issuerContext.tenant.id,
+        eventType: "oidc.authorization.deferred",
+        targetId: authorizationResult.request.clientId,
+        payload: {
+          client_id: authorizationResult.request.clientId,
+          reason: "consent_required",
+          redirect_uri: authorizationResult.request.redirectUri
+        }
+      });
+
+      return context.redirect(
+        buildClientErrorRedirectUrl({
+          error: "consent_required",
+          redirectUri: authorizationResult.request.redirectUri,
+          state: authorizationResult.request.state
+        }),
+        302
+      );
+    }
+
+    if (authorizationResult.kind !== "authorization_granted") {
+      return context.json(
+        {
+          error: "invalid_request"
+        },
+        400
+      );
+    }
+
+    await recordAuthorizeAuditEvent({
+      actorType: "end_user",
+      actorId: authorizationResult.session.userId,
+      tenantId: issuerContext.tenant.id,
+      eventType: "oidc.authorization.succeeded",
+      targetId: authorizationResult.request.clientId,
+      payload: {
+        user_id: authorizationResult.session.userId,
+        redirect_uri: authorizationResult.request.redirectUri
+      }
+    });
+
+    const redirectUrl = new URL(authorizationResult.request.redirectUri);
+
+    redirectUrl.searchParams.set("code", authorizationResult.code);
+    if (authorizationResult.request.state !== null) {
+      redirectUrl.searchParams.set("state", authorizationResult.request.state);
+    }
 
     return context.redirect(redirectUrl.toString(), 302);
   };

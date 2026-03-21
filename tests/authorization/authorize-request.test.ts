@@ -631,6 +631,7 @@ describe("worker entrypoint wiring", () => {
         key === `user_session:${hashedSessionToken}`
           ? JSON.stringify({
               id: "session_123",
+              tenantId: "tenant_acme",
               userId: "user_123",
               expiresAt: new Date(Date.now() + 5 * 60 * 1000).toISOString()
             })
@@ -692,6 +693,123 @@ describe("worker entrypoint wiring", () => {
       expect(loginChallengeRepository.listChallenges()).toEqual([]);
       expect(authorizationCodeRepository.listAuthorizationCodes()).toHaveLength(1);
       expect(authorizationCodeRepository.listAuthorizationCodes()[0]?.userId).toBe("user_123");
+      expect(close).toHaveBeenCalled();
+    } finally {
+      vi.doUnmock("../../src/adapters/db/drizzle/runtime");
+      vi.doUnmock("../../src/config/env");
+      vi.resetModules();
+    }
+  });
+
+  it("rejects cross-tenant browser session reuse on the authorize fast-path", async () => {
+    vi.resetModules();
+
+    const authorizationCodeRepository = new MemoryAuthorizationCodeRepository();
+    const loginChallengeRepository = new MemoryLoginChallengeRepository();
+    const clientRepository = new MemoryClientRepository(clients);
+    const auditRepository = new MemoryAuditRepository();
+    const tenantRepositoryForRuntime = new MemoryTenantRepository([
+      {
+        id: "tenant_acme",
+        slug: "acme",
+        displayName: "Acme",
+        status: "active",
+        issuers: [
+          {
+            id: "issuer_platform_acme",
+            issuerType: "platform_path",
+            issuerUrl: "https://idp.example.test/t/acme",
+            domain: null,
+            isPrimary: true,
+            verificationStatus: "verified"
+          }
+        ]
+      },
+      {
+        id: "tenant_beta",
+        slug: "beta",
+        displayName: "Beta",
+        status: "active",
+        issuers: [
+          {
+            id: "issuer_platform_beta",
+            issuerType: "platform_path",
+            issuerUrl: "https://idp.example.test/t/beta",
+            domain: null,
+            isPrimary: true,
+            verificationStatus: "verified"
+          }
+        ]
+      }
+    ]);
+    const browserSessionToken = "browser-session-token-foreign";
+    const hashedSessionToken = await sha256Base64Url(browserSessionToken);
+    const close = vi.fn(async () => undefined);
+    const userSessionsKv = {
+      get: vi.fn(async (key: string) =>
+        key === `user_session:${hashedSessionToken}`
+          ? JSON.stringify({
+              id: "session_beta_123",
+              tenantId: "tenant_beta",
+              userId: "user_123",
+              expiresAt: new Date(Date.now() + 5 * 60 * 1000).toISOString()
+            })
+          : null
+      )
+    } as unknown as KVNamespace;
+    const createRuntimeRepositories = vi.fn(async () => ({
+      adminRepository: {},
+      auditRepository,
+      authorizationCodeRepository,
+      authenticationLoginChallengeRepository: loginChallengeRepository,
+      clientRepository,
+      close,
+      keyRepository: {},
+      loginChallengeRepository,
+      registrationAccessTokenRepository: {},
+      tenantRepository: tenantRepositoryForRuntime
+    }));
+    const readRuntimeConfig = vi.fn(() => ({
+      adminBootstrapPassword: "bootstrap",
+      adminWhitelist: [],
+      adminSessionsKv: {} as KVNamespace,
+      db: {} as D1Database,
+      keyMaterialBucket: {} as R2Bucket,
+      managementApiToken: "manage-token",
+      platformHost: "idp.example.test",
+      registrationTokensKv: {} as KVNamespace,
+      userSessionsKv
+    }));
+
+    vi.doMock("../../src/adapters/db/drizzle/runtime", () => ({
+      createRuntimeRepositories
+    }));
+    vi.doMock("../../src/config/env", () => ({
+      readRuntimeConfig
+    }));
+
+    try {
+      const worker = (await import("../../src/index")).default;
+
+      const response = await worker.fetch(
+        new Request(
+          `https://idp.example.test/t/acme/authorize?${authorizeQuery}`,
+          {
+            headers: {
+              cookie: `user_session=${browserSessionToken}`
+            }
+          }
+        ),
+        {} as Record<string, unknown>,
+        {} as ExecutionContext
+      );
+
+      expect(response.status).toBe(302);
+      expect(response.headers.get("location")).toMatch(
+        /^https:\/\/idp\.example\.test\/t\/acme\/login\?login_challenge=/
+      );
+      expect(authorizationCodeRepository.listAuthorizationCodes()).toHaveLength(0);
+      expect(loginChallengeRepository.listChallenges()).toHaveLength(1);
       expect(close).toHaveBeenCalled();
     } finally {
       vi.doUnmock("../../src/adapters/db/drizzle/runtime");

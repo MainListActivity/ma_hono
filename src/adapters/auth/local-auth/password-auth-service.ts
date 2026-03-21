@@ -26,6 +26,7 @@ export const authenticateWithPassword = async ({
   loginChallengeToken,
   now = new Date(),
   password,
+  issuer,
   tenantId,
   userRepository,
   username
@@ -34,6 +35,7 @@ export const authenticateWithPassword = async ({
   loginChallengeToken: string;
   now?: Date;
   password: string;
+  issuer: string;
   tenantId: string;
   userRepository: UserRepository;
   username: string;
@@ -58,6 +60,7 @@ export const authenticateWithPassword = async ({
 
   if (
     challenge === null ||
+    challenge.issuer !== issuer ||
     challenge.tenantId !== tenantId ||
     new Date(challenge.expiresAt).getTime() <= now.getTime()
   ) {

@@ -12,11 +12,6 @@ type RuntimeEnv = Record<string, unknown>;
 
 const userSessionPrefix = "user_session:";
 
-interface RuntimeAuthorizeSessionRecord {
-  userId: string;
-  expiresAt: string;
-}
-
 const createKvBrowserSessionRepository = (kv: KVNamespace): BrowserSessionRepository => ({
   async create(session: BrowserSession): Promise<void> {
     const expirationTtl = Math.max(
@@ -87,13 +82,14 @@ export default {
         }
 
         try {
-          const session = JSON.parse(storedSession) as RuntimeAuthorizeSessionRecord;
+          const session = JSON.parse(storedSession) as BrowserSession;
 
           if (new Date(session.expiresAt).getTime() <= Date.now()) {
             return null;
           }
 
           return {
+            tenantId: session.tenantId,
             userId: session.userId
           };
         } catch {

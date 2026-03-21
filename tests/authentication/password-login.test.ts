@@ -111,6 +111,20 @@ const clients: Client[] = [
     clientSecretHash: "hashed-secret",
     trustLevel: "first_party_trusted",
     consentPolicy: "skip"
+  },
+  {
+    id: "client_record_acme_consent_required",
+    tenantId: "tenant_acme",
+    clientId: "client_acme_consent_required",
+    clientName: "Acme Consent Required",
+    applicationType: "web",
+    grantTypes: ["authorization_code"],
+    redirectUris: ["https://app.acme.test/consent"],
+    responseTypes: ["code"],
+    tokenEndpointAuthMethod: "client_secret_basic",
+    clientSecretHash: "hashed-secret",
+    trustLevel: "first_party_trusted",
+    consentPolicy: "require"
   }
 ];
 
@@ -303,6 +317,83 @@ describe("password login", () => {
     );
   });
 
+  it("consent-required client does not receive a code after password login resume", async () => {
+    const loginChallengeToken = "challenge-consent-required";
+    const loginChallengeRepository = new TestLoginChallengeRepository([
+      {
+        ...(await buildChallenge({ token: loginChallengeToken })),
+        clientId: "client_acme_consent_required",
+        redirectUri: "https://app.acme.test/consent"
+      }
+    ]);
+    const authorizationCodeRepository = new MemoryAuthorizationCodeRepository();
+    const sessionRepository = new MemoryUserSessionRepository();
+    const app = createApp({
+      auditRepository: new MemoryAuditRepository(),
+      authorizationCodeRepository,
+      browserSessionRepository: sessionRepository,
+      clientRepository: new MemoryClientRepository(clients),
+      loginChallengeLookupRepository: loginChallengeRepository,
+      loginChallengeRepository,
+      platformHost: "idp.example.test",
+      tenantRepository,
+      userRepository: new MemoryUserRepository({
+        policies: [
+          {
+            tenantId: "tenant_acme",
+            password: { enabled: true },
+            emailMagicLink: { enabled: true },
+            passkey: { enabled: true }
+          }
+        ],
+        users: [
+          {
+            id: "user_123",
+            tenantId: "tenant_acme",
+            email: "user@acme.test",
+            emailVerified: true,
+            username: "alice",
+            displayName: "Alice",
+            status: "active",
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+          }
+        ],
+        passwordCredentials: [
+          {
+            id: "credential_123",
+            tenantId: "tenant_acme",
+            userId: "user_123",
+            passwordHash: await hashPassword("correct-password"),
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+          }
+        ]
+      })
+    });
+
+    const response = await app.request("https://idp.example.test/t/acme/login/password", {
+      body: new URLSearchParams({
+        login_challenge: loginChallengeToken,
+        username: "alice",
+        password: "correct-password"
+      }),
+      headers: {
+        "content-type": "application/x-www-form-urlencoded"
+      },
+      method: "POST"
+    });
+
+    expect(response.status).toBe(302);
+    const location = new URL(response.headers.get("location") ?? "");
+
+    expect(location.origin + location.pathname).toBe("https://app.acme.test/consent");
+    expect(location.searchParams.get("error")).toBe("consent_required");
+    expect(location.searchParams.get("code")).toBeNull();
+    expect(authorizationCodeRepository.listAuthorizationCodes()).toHaveLength(0);
+    expect(sessionRepository.listSessions()).toHaveLength(1);
+  });
+
   it("rejects second submit when challenge consume claim is lost", async () => {
     const loginChallengeToken = "challenge-racy-double-submit";
     const loginChallengeRepository = new TestLoginChallengeRepository(
@@ -388,6 +479,76 @@ describe("password login", () => {
     });
     expect(authorizationCodeRepository.listAuthorizationCodes()).toHaveLength(1);
     expect(sessionRepository.listSessions()).toHaveLength(1);
+  });
+
+  it("rejects mixed-issuer challenge redemption", async () => {
+    const loginChallengeToken = "challenge-wrong-issuer";
+    const loginChallengeRepository = new TestLoginChallengeRepository([
+      {
+        ...(await buildChallenge({ token: loginChallengeToken })),
+        issuer: "https://login.acme.test"
+      }
+    ]);
+    const app = createApp({
+      auditRepository: new MemoryAuditRepository(),
+      authorizationCodeRepository: new MemoryAuthorizationCodeRepository(),
+      browserSessionRepository: new MemoryUserSessionRepository(),
+      clientRepository: new MemoryClientRepository(clients),
+      loginChallengeLookupRepository: loginChallengeRepository,
+      loginChallengeRepository,
+      platformHost: "idp.example.test",
+      tenantRepository,
+      userRepository: new MemoryUserRepository({
+        policies: [
+          {
+            tenantId: "tenant_acme",
+            password: { enabled: true },
+            emailMagicLink: { enabled: true },
+            passkey: { enabled: true }
+          }
+        ],
+        users: [
+          {
+            id: "user_123",
+            tenantId: "tenant_acme",
+            email: "user@acme.test",
+            emailVerified: true,
+            username: "alice",
+            displayName: "Alice",
+            status: "active",
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+          }
+        ],
+        passwordCredentials: [
+          {
+            id: "credential_123",
+            tenantId: "tenant_acme",
+            userId: "user_123",
+            passwordHash: await hashPassword("correct-password"),
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+          }
+        ]
+      })
+    });
+
+    const response = await app.request("https://idp.example.test/t/acme/login/password", {
+      body: new URLSearchParams({
+        login_challenge: loginChallengeToken,
+        username: "alice",
+        password: "correct-password"
+      }),
+      headers: {
+        "content-type": "application/x-www-form-urlencoded"
+      },
+      method: "POST"
+    });
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      error: "invalid_request"
+    });
   });
 
   it("disabled tenant or disabled user is rejected", async () => {
