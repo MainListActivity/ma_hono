@@ -1,5 +1,12 @@
 import { sql } from "drizzle-orm";
-import { index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import {
+  foreignKey,
+  index,
+  integer,
+  sqliteTable,
+  text,
+  uniqueIndex
+} from "drizzle-orm/sqlite-core";
 
 export const tenants = sqliteTable(
   "tenants",
@@ -63,7 +70,11 @@ export const oidcClients = sqliteTable(
   },
   (table) => ({
     tenantIdIdx: index("oidc_clients_tenant_id_idx").on(table.tenantId),
-    clientIdUnique: uniqueIndex("oidc_clients_client_id_unique").on(table.clientId)
+    clientIdUnique: uniqueIndex("oidc_clients_client_id_unique").on(table.clientId),
+    tenantClientUnique: uniqueIndex("oidc_clients_tenant_id_client_id_unique").on(
+      table.tenantId,
+      table.clientId
+    )
   })
 );
 
@@ -137,6 +148,7 @@ export const users = sqliteTable(
   },
   (table) => ({
     tenantIdIdx: index("users_tenant_id_idx").on(table.tenantId),
+    tenantIdIdUnique: uniqueIndex("users_tenant_id_id_unique").on(table.tenantId, table.id),
     tenantEmailUnique: uniqueIndex("users_tenant_id_email_unique").on(table.tenantId, table.email),
     tenantUsernameUnique: uniqueIndex("users_tenant_id_username_unique").on(table.tenantId, table.username)
   })
@@ -157,6 +169,10 @@ export const userPasswordCredentials = sqliteTable(
     updatedAt: text("updated_at").notNull()
   },
   (table) => ({
+    tenantUserFk: foreignKey({
+      columns: [table.tenantId, table.userId],
+      foreignColumns: [users.tenantId, users.id]
+    }).onDelete("cascade"),
     tenantIdIdx: index("user_password_credentials_tenant_id_idx").on(table.tenantId),
     userIdUnique: uniqueIndex("user_password_credentials_user_id_unique").on(table.userId)
   })
@@ -182,6 +198,10 @@ export const webauthnCredentials = sqliteTable(
     updatedAt: text("updated_at").notNull()
   },
   (table) => ({
+    tenantUserFk: foreignKey({
+      columns: [table.tenantId, table.userId],
+      foreignColumns: [users.tenantId, users.id]
+    }).onDelete("cascade"),
     tenantIdIdx: index("webauthn_credentials_tenant_id_idx").on(table.tenantId),
     userIdIdx: index("webauthn_credentials_user_id_idx").on(table.userId),
     credentialIdUnique: uniqueIndex("webauthn_credentials_credential_id_unique").on(table.credentialId)
@@ -224,6 +244,10 @@ export const userInvitations = sqliteTable(
     createdAt: text("created_at").notNull()
   },
   (table) => ({
+    tenantUserFk: foreignKey({
+      columns: [table.tenantId, table.userId],
+      foreignColumns: [users.tenantId, users.id]
+    }).onDelete("cascade"),
     tenantIdIdx: index("user_invitations_tenant_id_idx").on(table.tenantId),
     userIdIdx: index("user_invitations_user_id_idx").on(table.userId),
     tokenHashActiveUnique: uniqueIndex("user_invitations_token_hash_active_unique")
@@ -246,12 +270,17 @@ export const loginChallenges = sqliteTable(
     state: text("state").notNull(),
     codeChallenge: text("code_challenge").notNull(),
     codeChallengeMethod: text("code_challenge_method").notNull(),
+    nonce: text("nonce"),
     tokenHash: text("token_hash").notNull(),
     expiresAt: text("expires_at").notNull(),
     consumedAt: text("consumed_at"),
     createdAt: text("created_at").notNull()
   },
   (table) => ({
+    tenantClientFk: foreignKey({
+      columns: [table.tenantId, table.clientId],
+      foreignColumns: [oidcClients.tenantId, oidcClients.clientId]
+    }).onDelete("cascade"),
     tenantIdIdx: index("login_challenges_tenant_id_idx").on(table.tenantId),
     tokenHashActiveUnique: uniqueIndex("login_challenges_token_hash_active_unique")
       .on(table.tokenHash)
@@ -282,6 +311,14 @@ export const authorizationCodes = sqliteTable(
     createdAt: text("created_at").notNull()
   },
   (table) => ({
+    tenantUserFk: foreignKey({
+      columns: [table.tenantId, table.userId],
+      foreignColumns: [users.tenantId, users.id]
+    }).onDelete("cascade"),
+    tenantClientFk: foreignKey({
+      columns: [table.tenantId, table.clientId],
+      foreignColumns: [oidcClients.tenantId, oidcClients.clientId]
+    }).onDelete("cascade"),
     tenantIdIdx: index("authorization_codes_tenant_id_idx").on(table.tenantId),
     userIdIdx: index("authorization_codes_user_id_idx").on(table.userId),
     tokenHashActiveUnique: uniqueIndex("authorization_codes_token_hash_active_unique")
@@ -308,6 +345,10 @@ export const emailLoginTokens = sqliteTable(
     createdAt: text("created_at").notNull()
   },
   (table) => ({
+    tenantUserFk: foreignKey({
+      columns: [table.tenantId, table.userId],
+      foreignColumns: [users.tenantId, users.id]
+    }).onDelete("cascade"),
     tenantIdIdx: index("email_login_tokens_tenant_id_idx").on(table.tenantId),
     userIdIdx: index("email_login_tokens_user_id_idx").on(table.userId),
     tokenHashActiveUnique: uniqueIndex("email_login_tokens_token_hash_active_unique")

@@ -3,6 +3,9 @@ PRAGMA foreign_keys = ON;
 ALTER TABLE oidc_clients ADD COLUMN trust_level TEXT NOT NULL DEFAULT 'first_party_trusted';
 ALTER TABLE oidc_clients ADD COLUMN consent_policy TEXT NOT NULL DEFAULT 'skip';
 
+CREATE UNIQUE INDEX IF NOT EXISTS oidc_clients_tenant_id_client_id_unique
+  ON oidc_clients (tenant_id, client_id);
+
 CREATE TABLE IF NOT EXISTS users (
   id TEXT PRIMARY KEY NOT NULL,
   tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
@@ -15,6 +18,8 @@ CREATE TABLE IF NOT EXISTS users (
   updated_at TEXT NOT NULL
 );
 
+CREATE UNIQUE INDEX IF NOT EXISTS users_tenant_id_id_unique
+  ON users (tenant_id, id);
 CREATE UNIQUE INDEX IF NOT EXISTS users_tenant_id_email_unique
   ON users (tenant_id, email);
 CREATE UNIQUE INDEX IF NOT EXISTS users_tenant_id_username_unique
@@ -24,11 +29,12 @@ CREATE INDEX IF NOT EXISTS users_tenant_id_idx
 
 CREATE TABLE IF NOT EXISTS user_password_credentials (
   id TEXT PRIMARY KEY NOT NULL,
-  tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
-  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  tenant_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
   password_hash TEXT NOT NULL,
   created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (tenant_id, user_id) REFERENCES users (tenant_id, id) ON DELETE CASCADE
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS user_password_credentials_user_id_unique
@@ -38,8 +44,8 @@ CREATE INDEX IF NOT EXISTS user_password_credentials_tenant_id_idx
 
 CREATE TABLE IF NOT EXISTS webauthn_credentials (
   id TEXT PRIMARY KEY NOT NULL,
-  tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
-  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  tenant_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
   credential_id TEXT NOT NULL,
   public_key TEXT NOT NULL,
   counter INTEGER NOT NULL,
@@ -47,7 +53,8 @@ CREATE TABLE IF NOT EXISTS webauthn_credentials (
   device_type TEXT NOT NULL,
   backed_up INTEGER NOT NULL,
   created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (tenant_id, user_id) REFERENCES users (tenant_id, id) ON DELETE CASCADE
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS webauthn_credentials_credential_id_unique
@@ -71,13 +78,14 @@ CREATE INDEX IF NOT EXISTS tenant_auth_method_policies_password_enabled_idx
 
 CREATE TABLE IF NOT EXISTS user_invitations (
   id TEXT PRIMARY KEY NOT NULL,
-  tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
-  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  tenant_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
   token_hash TEXT NOT NULL,
   purpose TEXT NOT NULL,
   expires_at TEXT NOT NULL,
   consumed_at TEXT,
-  created_at TEXT NOT NULL
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (tenant_id, user_id) REFERENCES users (tenant_id, id) ON DELETE CASCADE
 );
 
 CREATE INDEX IF NOT EXISTS user_invitations_tenant_id_idx
@@ -90,7 +98,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS user_invitations_token_hash_active_unique
 
 CREATE TABLE IF NOT EXISTS login_challenges (
   id TEXT PRIMARY KEY NOT NULL,
-  tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  tenant_id TEXT NOT NULL,
   issuer TEXT NOT NULL,
   client_id TEXT NOT NULL,
   redirect_uri TEXT NOT NULL,
@@ -98,10 +106,12 @@ CREATE TABLE IF NOT EXISTS login_challenges (
   state TEXT NOT NULL,
   code_challenge TEXT NOT NULL,
   code_challenge_method TEXT NOT NULL,
+  nonce TEXT,
   token_hash TEXT NOT NULL,
   expires_at TEXT NOT NULL,
   consumed_at TEXT,
-  created_at TEXT NOT NULL
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (tenant_id, client_id) REFERENCES oidc_clients (tenant_id, client_id) ON DELETE CASCADE
 );
 
 CREATE INDEX IF NOT EXISTS login_challenges_tenant_id_idx
@@ -112,10 +122,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS login_challenges_token_hash_active_unique
 
 CREATE TABLE IF NOT EXISTS authorization_codes (
   id TEXT PRIMARY KEY NOT NULL,
-  tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  tenant_id TEXT NOT NULL,
   issuer TEXT NOT NULL,
   client_id TEXT NOT NULL,
-  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL,
   redirect_uri TEXT NOT NULL,
   scope TEXT NOT NULL,
   nonce TEXT NOT NULL,
@@ -124,7 +134,9 @@ CREATE TABLE IF NOT EXISTS authorization_codes (
   token_hash TEXT NOT NULL,
   expires_at TEXT NOT NULL,
   consumed_at TEXT,
-  created_at TEXT NOT NULL
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (tenant_id, user_id) REFERENCES users (tenant_id, id) ON DELETE CASCADE,
+  FOREIGN KEY (tenant_id, client_id) REFERENCES oidc_clients (tenant_id, client_id) ON DELETE CASCADE
 );
 
 CREATE INDEX IF NOT EXISTS authorization_codes_tenant_id_idx
@@ -137,14 +149,15 @@ CREATE UNIQUE INDEX IF NOT EXISTS authorization_codes_token_hash_active_unique
 
 CREATE TABLE IF NOT EXISTS email_login_tokens (
   id TEXT PRIMARY KEY NOT NULL,
-  tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
-  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  tenant_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
   issuer TEXT NOT NULL,
   token_hash TEXT NOT NULL,
   redirect_after_login TEXT NOT NULL,
   expires_at TEXT NOT NULL,
   consumed_at TEXT,
-  created_at TEXT NOT NULL
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (tenant_id, user_id) REFERENCES users (tenant_id, id) ON DELETE CASCADE
 );
 
 CREATE INDEX IF NOT EXISTS email_login_tokens_tenant_id_idx

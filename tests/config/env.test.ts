@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { getTableColumns, getTableName } from "drizzle-orm";
+import { getTableConfig } from "drizzle-orm/sqlite-core";
 
 import { readRuntimeConfig } from "../../src/config/env";
 import { createRuntimeRepositories } from "../../src/adapters/db/drizzle/runtime";
@@ -25,6 +26,29 @@ const fakeAdminSessionsKv = {} as KVNamespace;
 const fakeUserSessionsKv = {} as KVNamespace;
 const fakeRegistrationTokensKv = {} as KVNamespace;
 const fakeKeyMaterialBucket = {} as R2Bucket;
+
+const getForeignKeySignatures = (table: Parameters<typeof getTableConfig>[0]) =>
+  getTableConfig(table).foreignKeys.map((foreignKey) => {
+    const reference = foreignKey.reference();
+
+    return {
+      columns: reference.columns.map((column) => column.name),
+      foreignColumns: reference.foreignColumns.map((column) => column.name),
+      foreignTable: getTableName(reference.foreignTable)
+    };
+  });
+
+const hasUniqueIndex = (
+  table: Parameters<typeof getTableConfig>[0],
+  columns: string[]
+) =>
+  getTableConfig(table).indexes.some(
+    (index) =>
+      index.config.unique &&
+      index.config.columns
+        .map((column) => ("name" in column ? column.name : ""))
+        .join(",") === columns.join(",")
+  );
 
 describe("readRuntimeConfig", () => {
   it("reads the required runtime configuration", () => {
@@ -105,11 +129,53 @@ describe("drizzle schema", () => {
     expect(getTableName(emailLoginTokens)).toBe("email_login_tokens");
   });
 
-  it("includes the oidc client trust and consent columns", () => {
+  it("includes the oidc client trust, consent, and tenant-scoped client lookup shape", () => {
     const columns = getTableColumns(oidcClients);
 
     expect(columns).toHaveProperty("trustLevel");
     expect(columns).toHaveProperty("consentPolicy");
+    expect(hasUniqueIndex(oidcClients, ["tenant_id", "client_id"])).toBe(true);
+  });
+
+  it("enforces tenant scoped user and client foreign keys", () => {
+    expect(hasUniqueIndex(users, ["tenant_id", "id"])).toBe(true);
+    expect(getTableColumns(loginChallenges)).toHaveProperty("nonce");
+
+    expect(getForeignKeySignatures(userPasswordCredentials)).toContainEqual({
+      columns: ["tenant_id", "user_id"],
+      foreignColumns: ["tenant_id", "id"],
+      foreignTable: "users"
+    });
+    expect(getForeignKeySignatures(webauthnCredentials)).toContainEqual({
+      columns: ["tenant_id", "user_id"],
+      foreignColumns: ["tenant_id", "id"],
+      foreignTable: "users"
+    });
+    expect(getForeignKeySignatures(userInvitations)).toContainEqual({
+      columns: ["tenant_id", "user_id"],
+      foreignColumns: ["tenant_id", "id"],
+      foreignTable: "users"
+    });
+    expect(getForeignKeySignatures(authorizationCodes)).toContainEqual({
+      columns: ["tenant_id", "user_id"],
+      foreignColumns: ["tenant_id", "id"],
+      foreignTable: "users"
+    });
+    expect(getForeignKeySignatures(emailLoginTokens)).toContainEqual({
+      columns: ["tenant_id", "user_id"],
+      foreignColumns: ["tenant_id", "id"],
+      foreignTable: "users"
+    });
+    expect(getForeignKeySignatures(loginChallenges)).toContainEqual({
+      columns: ["tenant_id", "client_id"],
+      foreignColumns: ["tenant_id", "client_id"],
+      foreignTable: "oidc_clients"
+    });
+    expect(getForeignKeySignatures(authorizationCodes)).toContainEqual({
+      columns: ["tenant_id", "client_id"],
+      foreignColumns: ["tenant_id", "client_id"],
+      foreignTable: "oidc_clients"
+    });
   });
 });
 
