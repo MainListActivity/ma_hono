@@ -31,9 +31,8 @@ echo "[D1] DATABASE_ID=$DATABASE_ID"
 # --- KV ---
 declare -A KV_IDS
 for KV_NAME in "${KV_NAMES[@]}"; do
-  TITLE="${WORKER_NAME}-${KV_NAME}"
-  echo "[KV] 查找或创建 $TITLE ..."
-  KV_ID=$(npx wrangler kv namespace list 2>/dev/null | jq -r ".[] | select(.title==\"$TITLE\") | .id // empty")
+  echo "[KV] 查找或创建 $KV_NAME ..."
+  KV_ID=$(npx wrangler kv namespace list 2>/dev/null | jq -r ".[] | select(.title==\"$KV_NAME\") | .id // empty")
   if [ -z "$KV_ID" ]; then
     echo "[KV] 不存在，创建中..."
     npx wrangler kv namespace create "$KV_NAME" > /dev/null
