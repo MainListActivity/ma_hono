@@ -2,7 +2,7 @@
 
 ## Project Structure
 - src: hono code, domain is `auth.{domain}/api*` and `o.{domain}*`
-- admin: admin ui code, domain is `auth.{domain}/*`
+- admin: ui code, domain is `auth.{domain}/*`. Tenant Login Page, Admin Login, User Information Page, MFA Page
 - test: test code
 - docs: docs code
 
