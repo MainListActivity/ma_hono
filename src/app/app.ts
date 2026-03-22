@@ -82,6 +82,10 @@ class EmptyClientRepository implements ClientRepository {
   async findByClientId(): Promise<null> {
     return null;
   }
+
+  async listByTenantId(): Promise<[]> {
+    return [];
+  }
 }
 
 class EmptyRegistrationAccessTokenRepository implements RegistrationAccessTokenRepository {
@@ -1812,6 +1816,118 @@ export const createApp = (options: AppOptions) => {
         status: u.status
       }))
     });
+  });
+
+  app.get("/admin/tenants/:tenantId/clients", async (context) => {
+    const session = await authenticateAdminSession({
+      adminRepository,
+      authorizationHeader: context.req.header("authorization")
+    });
+    if (session === null) {
+      return context.json({ error: "unauthorized" }, 401);
+    }
+    const tenantId = context.req.param("tenantId");
+    const tenant = await tenantRepository.findById(tenantId);
+    if (tenant === null) {
+      return context.notFound();
+    }
+    const clients = await clientRepository.listByTenantId(tenantId);
+    return context.json({
+      clients: clients.map((c) => ({
+        id: c.id,
+        client_id: c.clientId,
+        client_name: c.clientName,
+        application_type: c.applicationType,
+        redirect_uris: c.redirectUris,
+        grant_types: c.grantTypes,
+        response_types: c.responseTypes,
+        token_endpoint_auth_method: c.tokenEndpointAuthMethod,
+        trust_level: c.trustLevel,
+        consent_policy: c.consentPolicy
+      }))
+    });
+  });
+
+  app.post("/admin/tenants/:tenantId/clients", async (context) => {
+    const session = await authenticateAdminSession({
+      adminRepository,
+      authorizationHeader: context.req.header("authorization")
+    });
+    if (session === null) {
+      return context.json({ error: "unauthorized" }, 401);
+    }
+    const tenantId = context.req.param("tenantId");
+    const tenant = await tenantRepository.findById(tenantId);
+    if (tenant === null) {
+      return context.notFound();
+    }
+    const issuerContext = await resolveIssuerContextBySlug({
+      slug: tenant.slug,
+      oidcHost,
+      tenantRepository
+    });
+    if (issuerContext === null) {
+      return context.json({ error: "issuer_not_found" }, 422);
+    }
+    let payload: unknown;
+    try {
+      payload = await context.req.json();
+    } catch {
+      return context.json({ error: "invalid_request" }, 400);
+    }
+    try {
+      const result = await registerClient({ clientRepository, input: payload, issuerContext });
+      const tokenHash = await sha256Base64Url(result.registrationAccessToken);
+      try {
+        await registrationAccessTokenRepository.store({
+          clientId: result.client.clientId,
+          expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+          issuer: issuerContext.issuer,
+          tenantId,
+          tokenHash
+        });
+        await auditRepository.record({
+          id: crypto.randomUUID(),
+          actorType: "admin_user",
+          actorId: session.adminUserId,
+          tenantId,
+          eventType: "oidc.client.registered",
+          targetType: "oidc_client",
+          targetId: result.client.clientId,
+          payload: {
+            application_type: result.client.applicationType,
+            client_name: result.client.clientName
+          },
+          occurredAt: new Date().toISOString()
+        });
+      } catch (error) {
+        await Promise.allSettled([
+          clientRepository.deleteByClientId(result.client.clientId),
+          registrationAccessTokenRepository.deleteByTokenHash(tokenHash)
+        ]);
+        throw error;
+      }
+      return context.json(
+        {
+          client_id: result.client.clientId,
+          client_secret: result.clientSecret,
+          client_name: result.client.clientName,
+          redirect_uris: result.client.redirectUris,
+          application_type: result.client.applicationType,
+          token_endpoint_auth_method: result.client.tokenEndpointAuthMethod,
+          grant_types: result.client.grantTypes,
+          response_types: result.client.responseTypes,
+          trust_level: result.client.trustLevel,
+          consent_policy: result.client.consentPolicy
+        },
+        201
+      );
+    } catch (error) {
+      if (error instanceof ZodError) {
+        return context.json({ error: "invalid_client_metadata", issues: error.issues }, 400);
+      }
+      throw error;
+    }
   });
 
   app.post("/activate-account", async (context) => {

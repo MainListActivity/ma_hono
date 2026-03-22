@@ -23,4 +23,8 @@ export class MemoryClientRepository implements ClientRepository {
   listClients(): Client[] {
     return [...this.clients];
   }
+
+  async listByTenantId(tenantId: string): Promise<Client[]> {
+    return this.clients.filter((client) => client.tenantId === tenantId);
+  }
 }

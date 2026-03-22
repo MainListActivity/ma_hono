@@ -105,6 +105,50 @@ export const provisionUser = async (
   return res.json();
 };
 
+// ─── Client management API ───────────────────────────────────────────────────
+
+export interface ClientSummary {
+  id: string;
+  client_id: string;
+  client_name: string;
+  application_type: "web" | "native";
+  redirect_uris: string[];
+  grant_types: string[];
+  response_types: string[];
+  token_endpoint_auth_method: string;
+  trust_level: string;
+  consent_policy: string;
+}
+
+export const listClients = async (token: string, tenantId: string) => {
+  const res = await checkOk(
+    await fetch(`${BASE_URL}/admin/tenants/${tenantId}/clients`, { headers: authHeaders(token) })
+  );
+  return res.json() as Promise<{ clients: ClientSummary[] }>;
+};
+
+export const createClient = async (
+  token: string,
+  tenantId: string,
+  payload: {
+    client_name: string;
+    application_type: "web" | "native";
+    redirect_uris: string[];
+    token_endpoint_auth_method: string;
+    grant_types: string[];
+    response_types: string[];
+  }
+) => {
+  const res = await checkOk(
+    await fetch(`${BASE_URL}/admin/tenants/${tenantId}/clients`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify(payload)
+    })
+  );
+  return res.json() as Promise<ClientSummary & { client_secret?: string }>;
+};
+
 // ─── Tenant login API ────────────────────────────────────────────────────────
 
 export interface ChallengeInfo {

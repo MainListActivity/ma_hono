@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useParams } from "react-router";
+import { useParams, useNavigate } from "react-router";
 import {
   getTenant,
   listUsers,
@@ -44,6 +44,7 @@ const statusColor = (status: string) => {
 export default function TenantUsersPage() {
   const { tenantId } = useParams<{ tenantId: string }>();
   const { token } = useAuth();
+  const navigate = useNavigate();
   const [tenant, setTenant] = useState<TenantSummary | null>(null);
   const [users, setUsers] = useState<UserSummary[]>([]);
   const [loading, setLoading] = useState(true);
@@ -162,6 +163,29 @@ export default function TenantUsersPage() {
             </div>
           </div>
 
+          <div style={{ display: 'flex', gap: '8px' }}>
+          <button
+            onClick={() => navigate(`/tenants/${tenantId}/clients`)}
+            style={{
+              background: 'transparent',
+              border: '1px solid var(--border)',
+              color: 'var(--text-muted)',
+              padding: '8px 16px',
+              fontSize: '11px',
+              fontFamily: "'Space Mono', monospace",
+              letterSpacing: '0.12em',
+              textTransform: 'uppercase',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              whiteSpace: 'nowrap'
+            }}
+            onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--accent-cyan)'; (e.currentTarget as HTMLButtonElement).style.color = 'var(--accent-cyan)'; }}
+            onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--border)'; (e.currentTarget as HTMLButtonElement).style.color = 'var(--text-muted)'; }}
+          >
+            CLIENTS →
+          </button>
           <button
             onClick={() => { setShowModal(true); setFormError(null); }}
             style={{
@@ -194,6 +218,7 @@ export default function TenantUsersPage() {
             <span style={{ fontSize: '14px', lineHeight: '1' }}>+</span>
             PROVISION USER
           </button>
+          </div>
         </div>
       </div>
 

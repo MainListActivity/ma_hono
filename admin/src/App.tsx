@@ -9,6 +9,7 @@ import LoginPage from "./pages/LoginPage";
 import TenantLoginPage from "./pages/TenantLoginPage";
 import TenantsPage from "./pages/TenantsPage";
 import TenantUsersPage from "./pages/TenantUsersPage";
+import TenantClientsPage from "./pages/TenantClientsPage";
 import AuthGuard from "./components/AuthGuard";
 
 interface AuthContextValue {
@@ -46,6 +47,7 @@ export default function App() {
           <Route element={<AuthGuard />}>
             <Route path="/tenants" element={<TenantsPage />} />
             <Route path="/tenants/:tenantId/users" element={<TenantUsersPage />} />
+            <Route path="/tenants/:tenantId/clients" element={<TenantClientsPage />} />
           </Route>
           <Route path="*" element={<Navigate to="/tenants" replace />} />
         </Routes>

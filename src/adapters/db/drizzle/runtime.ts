@@ -375,6 +375,28 @@ class D1ClientRepository implements ClientRepository {
           consentPolicy: row.consentPolicy as Client["consentPolicy"]
         };
   }
+
+  async listByTenantId(tenantId: string): Promise<Client[]> {
+    const rows = await this.db
+      .select()
+      .from(oidcClients)
+      .where(eq(oidcClients.tenantId, tenantId));
+
+    return rows.map((row) => ({
+      id: row.id,
+      tenantId: row.tenantId,
+      clientId: row.clientId,
+      clientSecretHash: row.clientSecretHash,
+      clientName: row.clientName,
+      applicationType: row.applicationType as Client["applicationType"],
+      grantTypes: row.grantTypes as Client["grantTypes"],
+      redirectUris: row.redirectUris as Client["redirectUris"],
+      responseTypes: row.responseTypes as Client["responseTypes"],
+      tokenEndpointAuthMethod: row.tokenEndpointAuthMethod as Client["tokenEndpointAuthMethod"],
+      trustLevel: row.trustLevel as Client["trustLevel"],
+      consentPolicy: row.consentPolicy as Client["consentPolicy"]
+    }));
+  }
 }
 
 class D1LoginChallengeRepository
