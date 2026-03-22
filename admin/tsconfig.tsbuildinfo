@@ -1,1 +1,1 @@
-{"root":["./src/app.tsx","./src/main.tsx","./src/routes.ts","./src/api/client.ts","./src/components/authguard.tsx","./src/components/layout.tsx","./src/components/modal.tsx","./src/pages/loginpage.tsx","./src/pages/tenantuserspage.tsx","./src/pages/tenantspage.tsx"],"version":"5.9.3"}
+{"root":["./src/app.tsx","./src/main.tsx","./src/api/client.ts","./src/components/authguard.tsx","./src/components/layout.tsx","./src/components/modal.tsx","./src/pages/loginpage.tsx","./src/pages/tenantuserspage.tsx","./src/pages/tenantspage.tsx"],"version":"5.9.3"}

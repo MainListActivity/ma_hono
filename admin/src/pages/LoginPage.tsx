@@ -2,7 +2,6 @@ import { useState } from "react";
 import { useNavigate } from "react-router";
 import { login } from "../api/client";
 import { useAuth } from "../App";
-import { TENANTS_ROUTE } from "../routes";
 
 export default function LoginPage() {
   const { setToken } = useAuth();
@@ -19,7 +18,7 @@ export default function LoginPage() {
     try {
       const res = await login(email, password);
       setToken(res.session_token);
-      navigate(TENANTS_ROUTE);
+      navigate("/tenants");
     } catch {
       setError("AUTH FAILED — CHECK CREDENTIALS");
     } finally {

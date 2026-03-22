@@ -3,7 +3,6 @@ import { useNavigate } from "react-router";
 import { createTenant, listTenants, type TenantSummary } from "../api/client";
 import { useAuth } from "../App";
 import Modal from "../components/Modal";
-import { tenantUsersRoute } from "../routes";
 
 const inputStyle: React.CSSProperties = {
   width: '100%',
@@ -207,7 +206,7 @@ export default function TenantsPage() {
           {tenants.map((t, i) => (
             <div
               key={t.id}
-              onClick={() => navigate(tenantUsersRoute(t.id))}
+              onClick={() => navigate(`/tenants/${t.id}/users`)}
               style={{
                 display: 'grid',
                 gridTemplateColumns: '1.5fr 1fr 1.5fr 90px 2fr',
