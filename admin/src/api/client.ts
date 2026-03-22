@@ -324,3 +324,104 @@ export const finishPasskeyLogin = async (
     redirect: "manual"
   });
 };
+
+// ─── MFA API ─────────────────────────────────────────────────────────────────
+
+export interface MfaRequiredResponse {
+  mfa_state: "pending_totp" | "pending_passkey_step_up" | "pending_enrollment";
+  login_challenge: string;
+  has_totp_fallback?: boolean;
+}
+
+export const mfaTotpVerify = async (
+  tenantSlug: string,
+  loginChallenge: string,
+  code: string
+): Promise<Response> =>
+  fetch(`${BASE_URL}/login/${tenantSlug}/mfa/totp/verify`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ login_challenge: loginChallenge, code }),
+    redirect: "manual"
+  });
+
+export const mfaPasskeyStart = async (
+  tenantSlug: string,
+  loginChallenge: string
+): Promise<{ challenge: string; allowed_credentials: string[] }> => {
+  const res = await fetch(`${BASE_URL}/login/${tenantSlug}/mfa/passkey/start`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ login_challenge: loginChallenge })
+  });
+  if (!res.ok) throw new ApiError(res.status, "Failed to start passkey step-up");
+  return res.json() as Promise<{ challenge: string; allowed_credentials: string[] }>;
+};
+
+export const mfaPasskeyFinish = async (
+  tenantSlug: string,
+  loginChallenge: string,
+  rawNonce: string,        // the raw base64url nonce from mfaPasskeyStart — NOT yet hashed
+  credential: PublicKeyCredential
+): Promise<Response> => {
+  const assertion = credential.response as AuthenticatorAssertionResponse;
+  const toBase64 = (buf: ArrayBuffer) => btoa(String.fromCharCode(...new Uint8Array(buf)));
+  // The server looks up MfaPasskeyChallenge by SHA-256(nonce), so hash before sending
+  const nonceBytes = Uint8Array.from(atob(rawNonce.replace(/-/g, "+").replace(/_/g, "/")), c => c.charCodeAt(0));
+  const hashBuf = await crypto.subtle.digest("SHA-256", nonceBytes);
+  const challengeHash = btoa(String.fromCharCode(...new Uint8Array(hashBuf)))
+    .replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
+  return fetch(`${BASE_URL}/login/${tenantSlug}/mfa/passkey/finish`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      login_challenge: loginChallenge,
+      challenge_hash: challengeHash,
+      challenge: rawNonce,  // also send the raw nonce for WebAuthn expectedChallenge
+      credential_id: credential.id,
+      response: {
+        authenticator_data: toBase64(assertion.authenticatorData),
+        client_data_json: toBase64(assertion.clientDataJSON),
+        signature: toBase64(assertion.signature)
+      }
+    }),
+    redirect: "manual"
+  });
+};
+
+export const mfaSwitchToTotp = async (
+  tenantSlug: string,
+  loginChallenge: string
+): Promise<void> => {
+  const res = await fetch(`${BASE_URL}/login/${tenantSlug}/mfa/switch-to-totp`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ login_challenge: loginChallenge })
+  });
+  if (!res.ok) throw new ApiError(res.status, "Failed to switch to TOTP");
+};
+
+export const mfaEnrollStart = async (
+  tenantSlug: string,
+  loginChallenge: string
+): Promise<{ provisioning_uri: string; secret: string }> => {
+  const res = await fetch(`${BASE_URL}/login/${tenantSlug}/mfa/totp/enroll/start`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ login_challenge: loginChallenge })
+  });
+  if (!res.ok) throw new ApiError(res.status, "Failed to start enrollment");
+  return res.json() as Promise<{ provisioning_uri: string; secret: string }>;
+};
+
+export const mfaEnrollFinish = async (
+  tenantSlug: string,
+  loginChallenge: string,
+  code: string
+): Promise<Response> =>
+  fetch(`${BASE_URL}/login/${tenantSlug}/mfa/totp/enroll/finish`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ login_challenge: loginChallenge, code }),
+    redirect: "manual"
+  });

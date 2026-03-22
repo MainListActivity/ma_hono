@@ -5,9 +5,17 @@ import {
   consumeMagicLink,
   getChallengeInfo,
   loginWithPassword,
+  mfaEnrollFinish,
+  mfaEnrollStart,
+  mfaPasskeyFinish,
+  mfaPasskeyStart,
+  mfaSwitchToTotp,
+  mfaTotpVerify,
   registerUser,
   requestMagicLink
 } from "../api/client";
+
+type MfaState = "pending_totp" | "pending_passkey_step_up" | "pending_enrollment";
 
 // ─── Shared visual primitives ─────────────────────────────────────────────────
 
@@ -179,11 +187,13 @@ function RegisterForm({
 function PasswordForm({
   tenantSlug,
   loginChallenge,
-  allowRegistration
+  allowRegistration,
+  onMfaRequired
 }: {
   tenantSlug: string;
   loginChallenge: string;
   allowRegistration: boolean;
+  onMfaRequired: (ctx: { mfaState: MfaState; loginChallenge: string; hasTotpFallback: boolean }) => void;
 }) {
   const [showRegister, setShowRegister] = useState(false);
   const [username, setUsername] = useState("");
@@ -209,7 +219,20 @@ function PasswordForm({
         setError(body.error ?? "Login failed");
         return;
       }
-      const body = await res.json().catch(() => ({})) as { redirect_uri?: string };
+      const body = await res.json().catch(() => ({})) as {
+        redirect_uri?: string;
+        mfa_state?: string;
+        login_challenge?: string;
+        has_totp_fallback?: boolean;
+      };
+      if (body.mfa_state && body.login_challenge) {
+        onMfaRequired({
+          mfaState: body.mfa_state as MfaState,
+          loginChallenge: body.login_challenge,
+          hasTotpFallback: body.has_totp_fallback ?? false
+        });
+        return;
+      }
       if (body.redirect_uri) window.location.href = body.redirect_uri;
     } catch {
       setError("Network error — please try again");
@@ -363,10 +386,12 @@ function MagicLinkForm({
 
 function PasskeyForm({
   tenantSlug,
-  loginChallenge
+  loginChallenge,
+  onMfaRequired
 }: {
   tenantSlug: string;
   loginChallenge: string;
+  onMfaRequired: (ctx: { mfaState: MfaState; loginChallenge: string; hasTotpFallback: boolean }) => void;
 }) {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -402,7 +427,23 @@ function PasskeyForm({
       if (!res.ok) {
         const body = await res.json().catch(() => ({})) as { error?: string };
         setError(body.error ?? "Passkey authentication failed");
+        return;
       }
+      const body = await res.json().catch(() => ({})) as {
+        redirect_uri?: string;
+        mfa_state?: string;
+        login_challenge?: string;
+        has_totp_fallback?: boolean;
+      };
+      if (body.mfa_state && body.login_challenge) {
+        onMfaRequired({
+          mfaState: body.mfa_state as MfaState,
+          loginChallenge: body.login_challenge,
+          hasTotpFallback: body.has_totp_fallback ?? false
+        });
+        return;
+      }
+      if (body.redirect_uri) window.location.href = body.redirect_uri;
     } catch (err) {
       if (err instanceof Error && err.name === "NotAllowedError") {
         setError("Passkey prompt was cancelled");
@@ -440,6 +481,259 @@ function PasskeyForm({
         {loading ? "Waiting for passkey..." : "Sign In with Passkey"}
       </button>
     </div>
+  );
+}
+
+// ─── MFA view components ──────────────────────────────────────────────────────
+
+function MfaTotpVerifyView({
+  tenantSlug, loginChallenge
+}: {
+  tenantSlug: string; loginChallenge: string;
+}) {
+  const [code, setCode] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const handleVerify = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    setLoading(true);
+    try {
+      const res = await mfaTotpVerify(tenantSlug, loginChallenge, code);
+      if (res.status === 302 || res.type === "opaqueredirect") {
+        const location = res.headers.get("location");
+        if (location) { window.location.href = location; return; }
+      }
+      const body = await res.json().catch(() => ({})) as {
+        error?: string; remaining_attempts?: number; redirect_uri?: string
+      };
+      if (body.redirect_uri) { window.location.href = body.redirect_uri; return; }
+      if (body.error === "challenge_invalidated") {
+        setError("Too many failed attempts. Please return to the application and try again.");
+      } else {
+        setError(`Invalid code${body.remaining_attempts !== undefined ? ` — ${body.remaining_attempts} attempts remaining` : ""}`);
+      }
+    } catch { setError("Network error — please try again"); }
+    finally { setLoading(false); }
+  };
+
+  return (
+    <form onSubmit={handleVerify}>
+      <div className="font-display" style={{ fontSize: "10px", letterSpacing: "0.12em",
+        textTransform: "uppercase", color: "var(--text-muted)", marginBottom: "16px" }}>
+        TWO-FACTOR VERIFICATION
+      </div>
+      {error && (
+        <div style={{ marginBottom: "16px", padding: "10px 12px",
+          border: "1px solid rgba(239,68,68,0.3)", background: "rgba(239,68,68,0.05)" }}>
+          <span className="font-display" style={{ fontSize: "10px", color: "#ef4444", letterSpacing: "0.08em" }}>
+            ✕ {error}
+          </span>
+        </div>
+      )}
+      <div style={{ marginBottom: "24px" }}>
+        <label className="font-display" style={labelStyle}>Authenticator Code</label>
+        <input type="text" inputMode="numeric" pattern="[0-9]{6}" maxLength={6}
+          value={code} onChange={e => setCode(e.target.value.replace(/\D/g, ""))}
+          required autoComplete="one-time-code"
+          placeholder="000000"
+          style={inputStyle}
+          onFocus={e => (e.target.style.borderColor = "var(--accent-cyan)")}
+          onBlur={e => (e.target.style.borderColor = "var(--border)")} />
+      </div>
+      <button type="submit" disabled={loading || code.length !== 6} style={primaryButtonStyle(loading || code.length !== 6)}>
+        {loading ? "Verifying..." : "Verify"}
+      </button>
+    </form>
+  );
+}
+
+function MfaPasskeyStepUpView({
+  tenantSlug, loginChallenge, hasTotpFallback, onSwitchToTotp
+}: {
+  tenantSlug: string; loginChallenge: string; hasTotpFallback: boolean;
+  onSwitchToTotp: () => void;
+}) {
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const handleStepUp = async () => {
+    setError(null); setLoading(true);
+    try {
+      const startResult = await mfaPasskeyStart(tenantSlug, loginChallenge);
+      const challengeBytes = Uint8Array.from(
+        atob(startResult.challenge.replace(/-/g, "+").replace(/_/g, "/")),
+        c => c.charCodeAt(0)
+      );
+      const credential = await navigator.credentials.get({
+        publicKey: { challenge: challengeBytes, timeout: 60000, userVerification: "required" }
+      }) as PublicKeyCredential | null;
+      if (!credential) { setError("No passkey selected"); return; }
+      // Pass the raw nonce; mfaPasskeyFinish will SHA-256 hash it before sending to the server
+      const res = await mfaPasskeyFinish(tenantSlug, loginChallenge, startResult.challenge, credential);
+      if (res.status === 302 || res.type === "opaqueredirect") {
+        const loc = res.headers.get("location");
+        if (loc) { window.location.href = loc; return; }
+      }
+      const body = await res.json().catch(() => ({})) as { error?: string; redirect_uri?: string };
+      if (body.redirect_uri) { window.location.href = body.redirect_uri; return; }
+      if (body.error === "challenge_invalidated") {
+        setError("Too many failed attempts. Please return to the application and try again.");
+      } else {
+        setError("Passkey verification failed — please try again");
+      }
+    } catch (err) {
+      if (err instanceof Error && err.name === "NotAllowedError") setError("Passkey prompt cancelled");
+      else setError("Passkey verification failed — please try again");
+    } finally { setLoading(false); }
+  };
+
+  return (
+    <div>
+      <div className="font-display" style={{ fontSize: "10px", letterSpacing: "0.12em",
+        textTransform: "uppercase", color: "var(--text-muted)", marginBottom: "16px" }}>
+        PASSKEY VERIFICATION
+      </div>
+      {error && (
+        <div style={{ marginBottom: "16px", padding: "10px 12px",
+          border: "1px solid rgba(239,68,68,0.3)", background: "rgba(239,68,68,0.05)" }}>
+          <span className="font-display" style={{ fontSize: "10px", color: "#ef4444", letterSpacing: "0.08em" }}>✕ {error}</span>
+        </div>
+      )}
+      <p style={{ fontSize: "13px", color: "var(--text-secondary)", marginBottom: "24px" }}>
+        Use your registered passkey to complete sign-in.
+      </p>
+      <button type="button" disabled={loading} onClick={handleStepUp} style={primaryButtonStyle(loading)}>
+        {loading ? "Waiting for passkey..." : "Verify with Passkey"}
+      </button>
+      {hasTotpFallback && (
+        <div style={{ textAlign: "center", marginTop: "16px" }}>
+          <button type="button" onClick={onSwitchToTotp}
+            style={{ background: "none", border: "none", color: "var(--text-muted)",
+              fontSize: "12px", cursor: "pointer", textDecoration: "underline" }}>
+            Use authenticator app instead
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MfaEnrollTotpView({
+  tenantSlug, loginChallenge
+}: {
+  tenantSlug: string; loginChallenge: string;
+}) {
+  const [step, setStep] = useState<"loading" | "setup" | "confirm">("loading");
+  const [secret, setSecret] = useState("");
+  const [qrDataUrl, setQrDataUrl] = useState("");
+  const [code, setCode] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    mfaEnrollStart(tenantSlug, loginChallenge)
+      .then(async ({ provisioning_uri, secret: rawSecret }) => {
+        setSecret(rawSecret);
+        // Render QR code using qrcode package
+        const QRCode = await import("qrcode");
+        const dataUrl = await QRCode.toDataURL(provisioning_uri);
+        setQrDataUrl(dataUrl);
+        setStep("setup");
+      })
+      .catch(() => setError("Failed to start enrollment — please try again"));
+  }, [tenantSlug, loginChallenge]);
+
+  const handleConfirm = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null); setLoading(true);
+    try {
+      const res = await mfaEnrollFinish(tenantSlug, loginChallenge, code);
+      if (res.status === 302 || res.type === "opaqueredirect") {
+        const loc = res.headers.get("location");
+        if (loc) { window.location.href = loc; return; }
+      }
+      const body = await res.json().catch(() => ({})) as { error?: string; redirect_uri?: string };
+      if (body.redirect_uri) { window.location.href = body.redirect_uri; return; }
+      if (body.error === "challenge_invalidated") {
+        setError("Too many failed attempts. Please return to the application and try again.");
+      } else {
+        setError("Incorrect code — please try again");
+      }
+    } catch { setError("Network error — please try again"); }
+    finally { setLoading(false); }
+  };
+
+  if (step === "loading") {
+    return <div style={{ textAlign: "center", padding: "24px 0" }}>
+      <p className="font-display" style={{ fontSize: "10px", color: "var(--text-muted)", letterSpacing: "0.08em" }}>
+        SETTING UP MFA...
+      </p>
+      {error && <p style={{ color: "#ef4444", fontSize: "12px" }}>{error}</p>}
+    </div>;
+  }
+
+  if (step === "setup") {
+    return (
+      <div>
+        <div className="font-display" style={{ fontSize: "10px", letterSpacing: "0.12em",
+          textTransform: "uppercase", color: "var(--text-muted)", marginBottom: "16px" }}>
+          SET UP AUTHENTICATOR
+        </div>
+        <p style={{ fontSize: "13px", color: "var(--text-secondary)", marginBottom: "16px" }}>
+          Scan this QR code with your authenticator app (Google Authenticator, Authy, etc.)
+        </p>
+        {qrDataUrl && <img src={qrDataUrl} alt="TOTP QR code"
+          style={{ display: "block", margin: "0 auto 16px", width: "180px", height: "180px" }} />}
+        <div style={{ background: "var(--bg-elevated)", padding: "8px 12px", marginBottom: "24px",
+          fontFamily: "'Space Mono', monospace", fontSize: "11px", color: "var(--text-dim)",
+          wordBreak: "break-all" }}>
+          {secret}
+        </div>
+        <button type="button" onClick={() => setStep("confirm")} style={primaryButtonStyle(false)}>
+          I've Scanned the Code
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <form onSubmit={handleConfirm}>
+      <div className="font-display" style={{ fontSize: "10px", letterSpacing: "0.12em",
+        textTransform: "uppercase", color: "var(--text-muted)", marginBottom: "16px" }}>
+        CONFIRM SETUP
+      </div>
+      {error && (
+        <div style={{ marginBottom: "16px", padding: "10px 12px",
+          border: "1px solid rgba(239,68,68,0.3)", background: "rgba(239,68,68,0.05)" }}>
+          <span className="font-display" style={{ fontSize: "10px", color: "#ef4444", letterSpacing: "0.08em" }}>✕ {error}</span>
+        </div>
+      )}
+      <p style={{ fontSize: "13px", color: "var(--text-secondary)", marginBottom: "16px" }}>
+        Enter the 6-digit code from your authenticator app to confirm setup.
+      </p>
+      <div style={{ marginBottom: "24px" }}>
+        <label className="font-display" style={labelStyle}>Confirmation Code</label>
+        <input type="text" inputMode="numeric" pattern="[0-9]{6}" maxLength={6}
+          value={code} onChange={e => setCode(e.target.value.replace(/\D/g, ""))}
+          required autoComplete="one-time-code" placeholder="000000"
+          style={inputStyle}
+          onFocus={e => (e.target.style.borderColor = "var(--accent-cyan)")}
+          onBlur={e => (e.target.style.borderColor = "var(--border)")} />
+      </div>
+      <button type="submit" disabled={loading || code.length !== 6}
+        style={primaryButtonStyle(loading || code.length !== 6)}>
+        {loading ? "Confirming..." : "Confirm and Sign In"}
+      </button>
+      <div style={{ textAlign: "center", marginTop: "16px" }}>
+        <button type="button" onClick={() => setStep("setup")}
+          style={{ background: "none", border: "none", color: "var(--text-muted)",
+            fontSize: "12px", cursor: "pointer", textDecoration: "underline" }}>
+          Back to QR code
+        </button>
+      </div>
+    </form>
   );
 }
 
@@ -500,6 +794,11 @@ export default function TenantLoginPage() {
   const [info, setInfo] = useState<ChallengeInfo | null>(null);
   const [activeMethod, setActiveMethod] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [mfaContext, setMfaContext] = useState<{
+    mfaState: MfaState;
+    loginChallenge: string;
+    hasTotpFallback: boolean;
+  } | null>(null);
 
   useEffect(() => {
     if (!tenantSlug || !loginChallenge) {
@@ -569,6 +868,32 @@ export default function TenantLoginPage() {
             <div style={{ padding: "24px" }}>
               <MagicLinkConsuming tenantSlug={tenantSlug!} token={magicLinkToken} />
             </div>
+          ) : mfaContext !== null ? (
+            <div style={{ padding: "24px" }}>
+              {mfaContext.mfaState === "pending_totp" && (
+                <MfaTotpVerifyView
+                  tenantSlug={tenantSlug!}
+                  loginChallenge={mfaContext.loginChallenge}
+                />
+              )}
+              {mfaContext.mfaState === "pending_passkey_step_up" && (
+                <MfaPasskeyStepUpView
+                  tenantSlug={tenantSlug!}
+                  loginChallenge={mfaContext.loginChallenge}
+                  hasTotpFallback={mfaContext.hasTotpFallback}
+                  onSwitchToTotp={async () => {
+                    await mfaSwitchToTotp(tenantSlug!, mfaContext.loginChallenge);
+                    setMfaContext(prev => prev ? { ...prev, mfaState: "pending_totp" } : null);
+                  }}
+                />
+              )}
+              {mfaContext.mfaState === "pending_enrollment" && (
+                <MfaEnrollTotpView
+                  tenantSlug={tenantSlug!}
+                  loginChallenge={mfaContext.loginChallenge}
+                />
+              )}
+            </div>
           ) : (
             <>
               {/* Method tabs — only shown when multiple methods available */}
@@ -599,11 +924,16 @@ export default function TenantLoginPage() {
                     allowRegistration={
                       info.methods.find((m) => m.method === "password")?.allow_registration ?? false
                     }
+                    onMfaRequired={(ctx) => setMfaContext(ctx)}
                   />
                 ) : activeMethod === "magic_link" ? (
                   <MagicLinkForm tenantSlug={tenantSlug!} loginChallenge={loginChallenge} />
                 ) : activeMethod === "passkey" ? (
-                  <PasskeyForm tenantSlug={tenantSlug!} loginChallenge={loginChallenge} />
+                  <PasskeyForm
+                    tenantSlug={tenantSlug!}
+                    loginChallenge={loginChallenge}
+                    onMfaRequired={(ctx) => setMfaContext(ctx)}
+                  />
                 ) : null}
               </div>
             </>
