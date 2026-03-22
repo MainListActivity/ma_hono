@@ -4,8 +4,11 @@ import {
   getTenant,
   listClients,
   createClient,
+  getClient,
+  updateClientAuthMethodPolicy,
   type TenantSummary,
-  type ClientSummary
+  type ClientSummary,
+  type AuthMethodPolicyWire
 } from "../api/client";
 import { useAuth } from "../App";
 import Modal from "../components/Modal";
@@ -80,6 +83,159 @@ function buildAuthorizeUrl(
   return url.toString();
 }
 
+function AuthMethodPolicyModal({
+  token,
+  tenantId,
+  client,
+  onClose
+}: {
+  token: string;
+  tenantId: string;
+  client: ClientSummary;
+  onClose: () => void;
+}) {
+  const [policy, setPolicy] = useState<AuthMethodPolicyWire | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+
+  const defaultPolicy = (): AuthMethodPolicyWire => ({
+    password: { enabled: false, allow_registration: false },
+    magic_link: { enabled: false, allow_registration: false },
+    passkey: { enabled: false, allow_registration: false },
+    google: { enabled: false },
+    apple: { enabled: false },
+    facebook: { enabled: false },
+    wechat: { enabled: false }
+  });
+
+  useEffect(() => {
+    getClient(token, tenantId, client.client_id).then((c) => {
+      setPolicy(c.auth_method_policy ?? defaultPolicy());
+    }).catch(() => setError("FAILED TO LOAD POLICY")).finally(() => setLoading(false));
+  }, []);
+
+  const handleSave = async () => {
+    if (!policy) return;
+    setSaving(true);
+    setError(null);
+    setSaved(false);
+    try {
+      await updateClientAuthMethodPolicy(token, tenantId, client.client_id, policy);
+      setSaved(true);
+    } catch {
+      setError("FAILED TO SAVE");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const toggleStyle = (active: boolean): React.CSSProperties => ({
+    display: 'inline-block',
+    width: '36px',
+    height: '18px',
+    background: active ? 'var(--accent-cyan)' : 'var(--bg-elevated)',
+    border: `1px solid ${active ? 'var(--accent-cyan)' : 'var(--border)'}`,
+    cursor: 'pointer',
+    position: 'relative',
+    transition: 'all 0.15s',
+    verticalAlign: 'middle'
+  });
+
+  const knobStyle = (active: boolean): React.CSSProperties => ({
+    position: 'absolute',
+    top: '2px',
+    left: active ? '18px' : '2px',
+    width: '12px',
+    height: '12px',
+    background: active ? 'var(--bg-base)' : 'var(--text-muted)',
+    transition: 'left 0.15s'
+  });
+
+  const Toggle = ({ active, onChange }: { active: boolean; onChange: (v: boolean) => void }) => (
+    <button
+      type="button"
+      onClick={() => onChange(!active)}
+      style={toggleStyle(active)}
+      aria-label={active ? "enabled" : "disabled"}
+    >
+      <div style={knobStyle(active)} />
+    </button>
+  );
+
+  if (loading) {
+    return (
+      <Modal title={`AUTH METHOD POLICY — ${client.client_name}`} onClose={onClose}>
+        <div style={{ padding: '24px', textAlign: 'center', color: 'var(--text-muted)', fontFamily: "'Space Mono', monospace", fontSize: '11px' }}>LOADING...</div>
+      </Modal>
+    );
+  }
+
+  const methods: { key: keyof AuthMethodPolicyWire; label: string; hasReg: boolean }[] = [
+    { key: 'password', label: 'Password', hasReg: true },
+    { key: 'magic_link', label: 'Magic Link', hasReg: true },
+    { key: 'passkey', label: 'Passkey', hasReg: true },
+    { key: 'google', label: 'Google', hasReg: false },
+    { key: 'apple', label: 'Apple', hasReg: false },
+    { key: 'facebook', label: 'Facebook', hasReg: false },
+    { key: 'wechat', label: 'WeChat', hasReg: false }
+  ];
+
+  return (
+    <Modal title={`AUTH METHOD POLICY — ${client.client_name}`} onClose={onClose}>
+      {error && (
+        <div style={{ padding: '8px 12px', marginBottom: '16px', background: 'rgba(239,68,68,0.05)', border: '1px solid rgba(239,68,68,0.2)' }}>
+          <span className="font-display" style={{ fontSize: '10px', color: '#ef4444', letterSpacing: '0.08em' }}>✕ {error}</span>
+        </div>
+      )}
+      {saved && (
+        <div style={{ padding: '8px 12px', marginBottom: '16px', background: 'rgba(0,229,128,0.05)', border: '1px solid rgba(0,229,128,0.2)' }}>
+          <span className="font-display" style={{ fontSize: '10px', color: 'var(--accent-green)', letterSpacing: '0.08em' }}>✓ SAVED</span>
+        </div>
+      )}
+      <div style={{ marginBottom: '20px' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1.5fr', padding: '6px 0', borderBottom: '1px solid var(--border)', marginBottom: '8px' }}>
+          {['METHOD', 'ENABLED', 'ALLOW REG.'].map(h => (
+            <span key={h} className="font-display" style={{ fontSize: '9px', letterSpacing: '0.15em', color: 'var(--text-dim)' }}>{h}</span>
+          ))}
+        </div>
+        {policy && methods.map(({ key, label, hasReg }, i) => {
+          const val = policy[key] as { enabled: boolean; allow_registration?: boolean };
+          return (
+            <div key={key}>
+              {i === 3 && <div style={{ borderTop: '1px solid var(--border)', margin: '8px 0' }} />}
+              <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1.5fr', padding: '6px 0', alignItems: 'center' }}>
+                <span style={{ fontSize: '13px', color: 'var(--text-primary)' }}>{label}</span>
+                <Toggle
+                  active={val.enabled}
+                  onChange={(v) => setPolicy({ ...policy, [key]: { ...val, enabled: v } })}
+                />
+                {hasReg ? (
+                  <Toggle
+                    active={val.allow_registration ?? false}
+                    onChange={(v) => setPolicy({ ...policy, [key]: { ...val, allow_registration: v } })}
+                  />
+                ) : (
+                  <span style={{ fontSize: '11px', color: 'var(--text-dim)', fontFamily: "'Space Mono', monospace" }}>—</span>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <button
+        type="button"
+        onClick={handleSave}
+        disabled={saving}
+        style={{ width: '100%', background: 'transparent', border: '1px solid var(--accent-cyan)', color: saving ? 'var(--text-muted)' : 'var(--accent-cyan)', padding: '10px', fontSize: '11px', fontFamily: "'Space Mono', monospace", letterSpacing: '0.15em', textTransform: 'uppercase', cursor: saving ? 'not-allowed' : 'pointer' }}
+      >
+        {saving ? 'SAVING...' : 'SAVE'}
+      </button>
+    </Modal>
+  );
+}
+
 export default function TenantClientsPage() {
   const { tenantId } = useParams<{ tenantId: string }>();
   const { token } = useAuth();
@@ -101,6 +257,9 @@ export default function TenantClientsPage() {
 
   // Test login state
   const [testingClientId, setTestingClientId] = useState<string | null>(null);
+
+  // Auth policy modal state
+  const [policyClient, setPolicyClient] = useState<ClientSummary | null>(null);
 
   const load = async () => {
     if (!token || !tenantId) return;
@@ -248,14 +407,14 @@ export default function TenantClientsPage() {
       ) : (
         <div style={{ border: '1px solid var(--border)', background: 'var(--bg-surface)', overflow: 'hidden' }}>
           {/* Table header */}
-          <div style={{ display: 'grid', gridTemplateColumns: '2fr 1.2fr 1fr 1fr 160px', padding: '10px 16px', borderBottom: '1px solid var(--border)', background: 'var(--bg-elevated)' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '2fr 1.2fr 1fr 1fr 220px', padding: '10px 16px', borderBottom: '1px solid var(--border)', background: 'var(--bg-elevated)' }}>
             {['CLIENT NAME', 'CLIENT ID', 'TYPE', 'AUTH METHOD', 'ACTIONS'].map(h => (
               <span key={h} className="font-display" style={{ fontSize: '9px', letterSpacing: '0.15em', color: 'var(--text-dim)', textTransform: 'uppercase' }}>{h}</span>
             ))}
           </div>
 
           {clients.map((c, i) => (
-            <div key={c.id} style={{ display: 'grid', gridTemplateColumns: '2fr 1.2fr 1fr 1fr 160px', padding: '12px 16px', borderBottom: i < clients.length - 1 ? '1px solid var(--border)' : 'none', alignItems: 'center' }}>
+            <div key={c.id} style={{ display: 'grid', gridTemplateColumns: '2fr 1.2fr 1fr 1fr 220px', padding: '12px 16px', borderBottom: i < clients.length - 1 ? '1px solid var(--border)' : 'none', alignItems: 'center' }}>
               <div>
                 <div style={{ fontSize: '13px', color: 'var(--text-primary)', marginBottom: '2px' }}>{c.client_name}</div>
                 <div style={{ fontSize: '10px', color: 'var(--text-muted)', fontFamily: "'Space Mono', monospace" }}>
@@ -275,6 +434,14 @@ export default function TenantClientsPage() {
                   onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = 'transparent'; }}
                 >
                   {testingClientId === c.client_id ? '...' : '▶ TEST'}
+                </button>
+                <button
+                  onClick={() => setPolicyClient(c)}
+                  style={{ ...btnStyle('var(--accent-amber, #fbbf24)'), padding: '5px 10px' }}
+                  onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = 'rgba(251,191,36,0.08)'; }}
+                  onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = 'transparent'; }}
+                >
+                  AUTH
                 </button>
               </div>
             </div>
@@ -339,6 +506,16 @@ export default function TenantClientsPage() {
             </button>
           </form>
         </Modal>
+      )}
+
+      {/* Auth method policy modal */}
+      {policyClient && (
+        <AuthMethodPolicyModal
+          token={token!}
+          tenantId={tenantId!}
+          client={policyClient}
+          onClose={() => setPolicyClient(null)}
+        />
       )}
 
       {/* Created secret modal */}
