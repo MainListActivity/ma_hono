@@ -168,7 +168,7 @@ Request: `{ login_challenge: string, code: string }`
 3. Decrypt `totp_enrollment_secret_encrypted` to obtain the enrollment secret.
 4. Verify the provided TOTP code against the enrollment secret (same ±1 window logic as TOTP verification).
 5. On success:
-   - Insert a `totp_credentials` row WHERE `tenant_id = challenge.tenant_id` AND `user_id = challenge.authenticated_user_id`, with `secret_encrypted` reused from `totp_enrollment_secret_encrypted`, `last_used_window` set to the matched window index. If a unique constraint violation occurs (concurrent duplicate `enroll/finish` submissions), treat the insert as a success — the credential already exists from the concurrent request. This makes the operation safe under concurrent duplicate submission.
+   - Insert a `totp_credentials` row WHERE `tenant_id = challenge.tenant_id` AND `user_id = challenge.authenticated_user_id`, with `secret_encrypted` reused from `totp_enrollment_secret_encrypted`, `last_used_window` set to the matched window index. If a unique constraint violation occurs (concurrent duplicate `enroll/finish` submissions), treat the insert as a success and skip the remaining steps (the first concurrent request will complete the consume and issue the authorization code). Do NOT attempt to consume the challenge again — return a generic success response indicating enrollment completed and login is in progress.
    - Clear `totp_enrollment_secret_encrypted` to null on the challenge.
    - Update `mfa_state = 'satisfied'`.
    - Consume the challenge, create browser session, issue authorization code, redirect.
@@ -181,8 +181,8 @@ All paths follow the existing pattern: platform path includes `:tenant`, custom-
 | Method | Path | Description |
 |---|---|---|
 | `POST` | `/api/login/:tenant/mfa/totp/verify` | Verify TOTP code |
-| `POST` | `/api/login/:tenant/mfa/passkey/start` | Start passkey step-up (stores WebAuthn nonce in KV) |
-| `POST` | `/api/login/:tenant/mfa/passkey/finish` | Finish passkey step-up (reads and deletes nonce from KV) |
+| `POST` | `/api/login/:tenant/mfa/passkey/start` | Start passkey step-up (stores WebAuthn nonce in D1 `mfa_passkey_challenges` with atomic-consume pattern) |
+| `POST` | `/api/login/:tenant/mfa/passkey/finish` | Finish passkey step-up (atomically consumes nonce from D1 `mfa_passkey_challenges`, then verifies assertion) |
 | `POST` | `/api/login/:tenant/mfa/switch-to-totp` | Transition challenge from `pending_passkey_step_up` to `pending_totp`. Validation: (1) challenge must be unconsumed and not expired; (2) `mfa_state` must be exactly `pending_passkey_step_up` — reject with `400` for any other state; (3) user must have a `totp_credentials` row (WHERE `tenant_id = challenge.tenant_id` AND `user_id = challenge.authenticated_user_id`) — reject with `400` if not enrolled. |
 | `POST` | `/api/login/:tenant/mfa/totp/enroll/start` | Get TOTP provisioning URI |
 | `POST` | `/api/login/:tenant/mfa/totp/enroll/finish` | Confirm enrollment and complete login |
@@ -246,8 +246,9 @@ The existing `PATCH /api/admin/clients/:clientId/auth-method-policy` endpoint ac
 src/
   domain/
     mfa/
-      totp-service.ts           — TOTP code generation and verification logic
-      totp-repository.ts        — TotpCredential repository interface
+      totp-service.ts                       — TOTP code generation and verification logic
+      totp-repository.ts                    — TotpCredential repository interface
+      mfa-passkey-challenge-repository.ts   — MfaPasskeyChallenge repository interface
   adapters/
     auth/
       totp/
