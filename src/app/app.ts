@@ -29,7 +29,7 @@ import type { AuthorizeSession } from "../domain/authorization/types";
 import type { RegistrationAccessTokenRepository } from "../domain/clients/registration-access-token-repository";
 import { sha256Base64Url } from "../lib/hash";
 import { registerClient } from "../domain/clients/register-client";
-import type { ClientRepository } from "../domain/clients/repository";
+import type { ClientAuthMethodPolicyRepository, ClientRepository } from "../domain/clients/repository";
 import { buildJwks } from "../domain/keys/jwks";
 import type { SigningKeySigner } from "../domain/keys/signer";
 import type { KeyRepository } from "../domain/keys/repository";
@@ -94,6 +94,12 @@ class EmptyClientRepository implements ClientRepository {
   async listByTenantId(): Promise<[]> {
     return [];
   }
+}
+
+class EmptyClientAuthMethodPolicyRepository implements ClientAuthMethodPolicyRepository {
+  async create(): Promise<void> { return; }
+  async findByClientId(): Promise<null> { return null; }
+  async update(): Promise<void> { return; }
 }
 
 class EmptyRegistrationAccessTokenRepository implements RegistrationAccessTokenRepository {
@@ -248,6 +254,7 @@ export interface AppOptions {
   /** Root domain, e.g. "maplayer.top". Used to build login redirect URLs: https://auth.{authDomain}/login/{slug} */
   authDomain: string;
   browserSessionRepository?: BrowserSessionRepository;
+  clientAuthMethodPolicyRepository?: ClientAuthMethodPolicyRepository;
   clientRepository?: ClientRepository;
   keyRepository?: KeyRepository;
   loginChallengeLookupRepository?: AuthenticationLoginChallengeRepository;
@@ -275,6 +282,8 @@ export const createApp = (options: AppOptions) => {
   const authorizeSessionResolver = options.authorizeSessionResolver ?? (async () => null);
   const browserSessionRepository =
     options.browserSessionRepository ?? new EmptyBrowserSessionRepository();
+  const clientAuthMethodPolicyRepository =
+    options.clientAuthMethodPolicyRepository ?? new EmptyClientAuthMethodPolicyRepository();
   const clientRepository = options.clientRepository ?? new EmptyClientRepository();
   const keyRepository = options.keyRepository ?? new EmptyKeyRepository();
   const loginChallengeLookupRepository =
