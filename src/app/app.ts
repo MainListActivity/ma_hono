@@ -579,12 +579,26 @@ export const createApp = (options: AppOptions) => {
       return context.json({ error: "invalid_login_challenge" }, 400);
     }
 
-    const policy = await userRepository.findAuthMethodPolicyByTenantId(issuerContext.tenant.id);
-    const methods: string[] = [];
+    // Look up client policy using the oidcClients.id (UUID) from the challenge's clientId (OAuth string)
+    const client = await clientRepository.findByClientId(challenge.clientId);
+    const policy = client !== null
+      ? await clientAuthMethodPolicyRepository.findByClientId(client.id)
+      : null;
 
-    if (policy === null || policy.password.enabled) methods.push("password");
-    if (policy === null || policy.emailMagicLink.enabled) methods.push("magic_link");
-    if (policy === null || policy.passkey.enabled) methods.push("passkey");
+    const methods: { method: string; allow_registration: boolean }[] = [];
+
+    if (policy !== null) {
+      if (policy.password.enabled) {
+        methods.push({ method: "password", allow_registration: policy.password.allowRegistration });
+      }
+      if (policy.emailMagicLink.enabled) {
+        methods.push({ method: "magic_link", allow_registration: policy.emailMagicLink.allowRegistration });
+      }
+      if (policy.passkey.enabled) {
+        methods.push({ method: "passkey", allow_registration: policy.passkey.allowRegistration });
+      }
+    }
+    // If policy is null (no row), return empty methods array (fail-safe: deny all)
 
     return context.json({
       tenant_display_name: issuerContext.tenant.displayName,
