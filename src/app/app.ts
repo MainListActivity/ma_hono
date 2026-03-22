@@ -40,6 +40,7 @@ import type { Tenant } from "../domain/tenants/types";
 import { buildDiscoveryMetadata } from "../domain/oidc/discovery";
 import { exchangeAuthorizationCode } from "../domain/tokens/token-service";
 import { activateUser } from "../domain/users/activate-user";
+import { hashPassword } from "../domain/users/passwords";
 import { provisionUser } from "../domain/users/provision-user";
 import type { UserRepository } from "../domain/users/repository";
 
@@ -1600,6 +1601,230 @@ export const createApp = (options: AppOptions) => {
     }
 
     return context.json(result.body ?? { error: "unauthorized" }, result.status);
+  });
+
+  app.post("/t/:tenant/register", async (context) => {
+    const issuerContext = await resolveIssuerContextBySlug({
+      slug: context.req.param("tenant"),
+      oidcHost,
+      tenantRepository
+    });
+    if (issuerContext === null) {
+      return context.notFound();
+    }
+
+    let payload: { login_challenge?: string; email?: string; username?: string; password?: string };
+    try {
+      payload = await context.req.json();
+    } catch {
+      return context.json({ error: "invalid_request" }, 400);
+    }
+
+    const loginChallengeToken = (payload.login_challenge ?? "").trim();
+    if (!loginChallengeToken) {
+      return context.json({ error: "invalid_request" }, 400);
+    }
+
+    const tokenHash = await sha256Base64Url(loginChallengeToken);
+    const challenge = await loginChallengeLookupRepository.findByTokenHash(tokenHash);
+
+    if (challenge === null || challenge.consumedAt !== null) {
+      return context.json({ error: "invalid_login_challenge" }, 400);
+    }
+    if (challenge.tenantId !== issuerContext.tenant.id) {
+      return context.json({ error: "invalid_login_challenge" }, 400);
+    }
+
+    // Look up client policy — registration must be allowed
+    const client = await clientRepository.findByClientId(challenge.clientId);
+    const policy =
+      client !== null ? await clientAuthMethodPolicyRepository.findByClientId(client.id) : null;
+
+    if (policy === null || !policy.password.allowRegistration) {
+      return context.json({ error: "registration_not_allowed" }, 403);
+    }
+
+    // Validate input
+    const email = (payload.email ?? "").trim().toLowerCase();
+    const username = (payload.username ?? "").trim() || null;
+    const password = payload.password ?? "";
+
+    if (!email.includes("@") || password.length < 8) {
+      return context.json({ error: "invalid_request" }, 400);
+    }
+
+    // Check for duplicate email
+    const existing = await userRepository.findUserByEmail(issuerContext.tenant.id, email);
+    if (existing !== null) {
+      return context.json({ error: "email_already_exists" }, 409);
+    }
+
+    const now = new Date().toISOString();
+    const newUser = {
+      id: crypto.randomUUID(),
+      tenantId: issuerContext.tenant.id,
+      email,
+      emailVerified: false,
+      username,
+      displayName: username ?? email.split("@")[0],
+      status: "active" as const,
+      createdAt: now,
+      updatedAt: now
+    };
+
+    const passwordHash = await hashPassword(password);
+
+    const credential = {
+      id: crypto.randomUUID(),
+      tenantId: issuerContext.tenant.id,
+      userId: newUser.id,
+      passwordHash,
+      createdAt: now,
+      updatedAt: now
+    };
+
+    // Create user with immediately-consumed invitation (for D1 batch atomicity)
+    await userRepository.createProvisionedUserWithInvitation({
+      user: newUser,
+      invitation: {
+        id: crypto.randomUUID(),
+        tenantId: issuerContext.tenant.id,
+        userId: newUser.id,
+        tokenHash: crypto.randomUUID(), // placeholder — never used
+        purpose: "account_activation",
+        expiresAt: new Date(Date.now() + 1000).toISOString(), // immediately expired
+        consumedAt: now, // mark consumed immediately
+        createdAt: now
+      }
+    });
+    await userRepository.upsertPasswordCredential(credential);
+
+    const { session, sessionToken } = await createBrowserSession({
+      sessionRepository: browserSessionRepository,
+      tenantId: newUser.tenantId,
+      userId: newUser.id
+    });
+
+    await recordAuditEventBestEffort({
+      actorType: "end_user",
+      actorId: newUser.id,
+      tenantId: issuerContext.tenant.id,
+      eventType: "user.self_registration.succeeded",
+      targetType: "user",
+      targetId: newUser.id,
+      payload: { client_id: challenge.clientId }
+    });
+
+    context.header(
+      "Set-Cookie",
+      buildBrowserSessionCookie({
+        expiresAt: session.expiresAt,
+        secure: new URL(issuerContext.issuer).protocol === "https:",
+        sessionToken
+      })
+    );
+
+    const authorizationResult = await authorizeRequest({
+      authorizationCodeRepository,
+      clientRepository,
+      issuerContext,
+      loginChallengeRepository,
+      request: {
+        clientId: challenge.clientId,
+        redirectUri: challenge.redirectUri,
+        responseType: "code",
+        scope: challenge.scope,
+        state: challenge.state.length === 0 ? null : challenge.state,
+        nonce: challenge.nonce,
+        codeChallenge: challenge.codeChallenge,
+        codeChallengeMethod: challenge.codeChallengeMethod
+      },
+      session: { userId: newUser.id, tenantId: newUser.tenantId }
+    });
+
+    if (authorizationResult.kind === "error") {
+      await recordAuthorizeAuditEvent({
+        actorType: "end_user",
+        actorId: newUser.id,
+        tenantId: issuerContext.tenant.id,
+        eventType: "oidc.authorization.failed",
+        targetId: authorizationResult.clientId,
+        payload: {
+          client_id: authorizationResult.clientId,
+          reason: authorizationResult.error,
+          redirect_uri: authorizationResult.redirectUri
+        }
+      });
+
+      if (authorizationResult.shouldRedirect && authorizationResult.redirectUri !== null) {
+        return context.redirect(
+          buildClientErrorRedirectUrl({
+            error: authorizationResult.error,
+            errorDescription: authorizationResult.errorDescription,
+            redirectUri: authorizationResult.redirectUri,
+            state: authorizationResult.state
+          }),
+          302
+        );
+      }
+
+      return context.json(
+        authorizationResult.errorDescription === undefined
+          ? { error: authorizationResult.error }
+          : {
+              error: authorizationResult.error,
+              error_description: authorizationResult.errorDescription
+            },
+        400
+      );
+    }
+
+    if (authorizationResult.kind === "consent_required") {
+      await recordAuthorizeAuditEvent({
+        actorType: "end_user",
+        actorId: newUser.id,
+        tenantId: issuerContext.tenant.id,
+        eventType: "oidc.authorization.deferred",
+        targetId: authorizationResult.request.clientId,
+        payload: {
+          client_id: authorizationResult.request.clientId,
+          reason: "consent_required",
+          redirect_uri: authorizationResult.request.redirectUri
+        }
+      });
+
+      return context.redirect(
+        buildClientErrorRedirectUrl({
+          error: "consent_required",
+          redirectUri: authorizationResult.request.redirectUri,
+          state: authorizationResult.request.state
+        }),
+        302
+      );
+    }
+
+    if (authorizationResult.kind !== "authorization_granted") {
+      return context.json({ error: "authorization_failed" }, 500);
+    }
+
+    await recordAuthorizeAuditEvent({
+      actorType: "end_user",
+      actorId: newUser.id,
+      tenantId: issuerContext.tenant.id,
+      eventType: "oidc.authorization.succeeded",
+      targetId: authorizationResult.request.clientId,
+      payload: {
+        user_id: newUser.id,
+        redirect_uri: authorizationResult.request.redirectUri
+      }
+    });
+
+    const redirectUrl = new URL(authorizationResult.request.redirectUri);
+    redirectUrl.searchParams.set("code", authorizationResult.code);
+    if (authorizationResult.request.state !== null) {
+      redirectUrl.searchParams.set("state", authorizationResult.request.state);
+    }
+    return context.redirect(redirectUrl.toString(), 302);
   });
 
   const tenantToWire = (tenant: Tenant) => ({
