@@ -25,49 +25,58 @@ const userRow = {
   updatedAt: "2026-03-21T00:00:00.000Z"
 };
 
-const createMockTx = (selectResults: unknown[], insertError: Error) => {
-  let selectIndex = 0;
-
-  return {
-    select: vi.fn(() => ({
-      from: vi.fn(() => ({
-        where: vi.fn(() => ({
-          limit: vi.fn(async () => (selectResults[selectIndex++] as unknown[] | undefined) ?? [])
-        }))
-      }))
-    })),
-    update: vi.fn(() => ({
-      set: vi.fn(() => ({
-        where: vi.fn(async () => undefined)
-      }))
-    })),
-    insert: vi.fn(() => ({
-      values: vi.fn(async () => {
-        throw insertError;
-      })
+const makeSelectChain = (result: unknown[]) => ({
+  from: vi.fn(() => ({
+    where: vi.fn(() => ({
+      limit: vi.fn(() => result)
     }))
-  };
-};
+  }))
+});
+
+const makeUpdateChain = () => ({
+  set: vi.fn(() => ({
+    where: vi.fn(() => undefined)
+  }))
+});
 
 describe("D1UserRepository activation conflict translation", () => {
   it("returns already_used instead of throwing a raw storage error on conflicting second activation", async () => {
-    const tx = createMockTx(
-      [
-        [invitationRow],
-        [userRow],
-        [],
-        [
-          {
-            ...invitationRow,
-            consumedAt: "2026-03-21T10:01:00.000Z"
-          }
-        ]
-      ],
-      new Error("UNIQUE constraint failed: user_password_credentials.user_id")
-    );
+    const insertError = new Error("UNIQUE constraint failed: user_password_credentials.user_id");
+
+    // batch call 1: fetch user + credential (returns user row, no credential)
+    const batchReadChain1 = [[userRow], []];
+    // batch call 2: write batch — throws insertError
+    // batch call 3: re-check reads — invitation is now consumed
+    const batchReadChain2 = [
+      [{ ...invitationRow, consumedAt: "2026-03-21T10:01:00.000Z" }],
+      [{ ...userRow, status: "active" }],
+      []
+    ];
+
+    let batchCallCount = 0;
+
     const db = {
-      transaction: async (callback: (transaction: typeof tx) => Promise<unknown>) => callback(tx)
+      select: vi.fn(() => makeSelectChain([invitationRow])),
+      update: vi.fn(() => makeUpdateChain()),
+      insert: vi.fn(() => ({
+        values: vi.fn(() => ({ _tag: "insert" }))
+      })),
+      batch: vi.fn(async (stmts: unknown[]) => {
+        batchCallCount++;
+        if (batchCallCount === 1) {
+          // read batch: user + credential
+          return batchReadChain1;
+        }
+        if (batchCallCount === 2) {
+          // write batch — simulate constraint error
+          void stmts;
+          throw insertError;
+        }
+        // re-check batch
+        return batchReadChain2;
+      })
     };
+
     const repository = new D1UserRepository(db as never);
 
     await expect(

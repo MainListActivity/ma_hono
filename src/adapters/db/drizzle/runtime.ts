@@ -190,33 +190,34 @@ class D1TenantRepository implements TenantRepository {
   async create(tenant: Tenant): Promise<void> {
     const now = new Date().toISOString();
 
-    await this.db.transaction(async (tx) => {
-      await tx.insert(tenants).values({
-        id: tenant.id,
-        slug: tenant.slug,
-        displayName: tenant.displayName,
-        status: tenant.status,
-        createdAt: now,
-        updatedAt: now
-      });
-
-      if (tenant.issuers.length > 0) {
-        await tx.insert(tenantIssuers).values(
-          tenant.issuers.map((issuer) => ({
-            id: issuer.id,
-            tenantId: tenant.id,
-            issuerType: issuer.issuerType,
-            issuerUrl: issuer.issuerUrl,
-            domain: issuer.domain,
-            isPrimary: issuer.isPrimary,
-            verificationStatus: issuer.verificationStatus,
-            verifiedAt: issuer.verificationStatus === "verified" ? now : null,
-            createdAt: now,
-            updatedAt: now
-          }))
-        );
-      }
+    const insertTenant = this.db.insert(tenants).values({
+      id: tenant.id,
+      slug: tenant.slug,
+      displayName: tenant.displayName,
+      status: tenant.status,
+      createdAt: now,
+      updatedAt: now
     });
+
+    if (tenant.issuers.length > 0) {
+      const insertIssuers = this.db.insert(tenantIssuers).values(
+        tenant.issuers.map((issuer) => ({
+          id: issuer.id,
+          tenantId: tenant.id,
+          issuerType: issuer.issuerType,
+          issuerUrl: issuer.issuerUrl,
+          domain: issuer.domain,
+          isPrimary: issuer.isPrimary,
+          verificationStatus: issuer.verificationStatus,
+          verifiedAt: issuer.verificationStatus === "verified" ? now : null,
+          createdAt: now,
+          updatedAt: now
+        }))
+      );
+      await this.db.batch([insertTenant, insertIssuers]);
+    } else {
+      await insertTenant;
+    }
   }
 
   async findById(id: string): Promise<Tenant | null> {
@@ -632,40 +633,31 @@ export class D1UserRepository implements UserRepository {
     now,
     tokenHash
   }: ActivateUserByInvitationTokenInput): Promise<ActivateUserByInvitationTokenResult> {
-    return this.db.transaction(async (tx) => {
-      const [invitationRow] = await tx
-        .select()
-        .from(userInvitations)
-        .where(eq(userInvitations.tokenHash, tokenHash))
-        .limit(1);
+    const [invitationRow] = await this.db
+      .select()
+      .from(userInvitations)
+      .where(eq(userInvitations.tokenHash, tokenHash))
+      .limit(1);
 
-      if (invitationRow === undefined) {
-        return { kind: "not_found" };
-      }
+    if (invitationRow === undefined) {
+      return { kind: "not_found" };
+    }
 
-      if (invitationRow.consumedAt !== null) {
-        return { kind: "already_used" };
-      }
+    if (invitationRow.consumedAt !== null) {
+      return { kind: "already_used" };
+    }
 
-      if (new Date(invitationRow.expiresAt).getTime() <= now.getTime()) {
-        return { kind: "expired" };
-      }
+    if (new Date(invitationRow.expiresAt).getTime() <= now.getTime()) {
+      return { kind: "expired" };
+    }
 
-      const [userRow] = await tx
+    const [[userRow], [credentialRow]] = await this.db.batch([
+      this.db
         .select()
         .from(users)
         .where(and(eq(users.tenantId, invitationRow.tenantId), eq(users.id, invitationRow.userId)))
-        .limit(1);
-
-      if (userRow === undefined) {
-        return { kind: "not_found" };
-      }
-
-      if (userRow.status === "disabled") {
-        return { kind: "user_disabled" };
-      }
-
-      const [credentialRow] = await tx
+        .limit(1),
+      this.db
         .select()
         .from(userPasswordCredentials)
         .where(
@@ -674,85 +666,84 @@ export class D1UserRepository implements UserRepository {
             eq(userPasswordCredentials.userId, invitationRow.userId)
           )
         )
-        .limit(1);
+        .limit(1)
+    ]);
 
-      if (userRow.status !== "provisioned" || credentialRow !== undefined) {
-        return { kind: "already_initialized" };
-      }
+    if (userRow === undefined) {
+      return { kind: "not_found" };
+    }
 
-      try {
-        const updatedAt = now.toISOString();
-        const passwordHash = await createPasswordHash();
-        const credential: PasswordCredential = {
-          id: crypto.randomUUID(),
-          tenantId: invitationRow.tenantId,
-          userId: invitationRow.userId,
-          passwordHash,
-          createdAt: updatedAt,
-          updatedAt
-        };
+    if (userRow.status === "disabled") {
+      return { kind: "user_disabled" };
+    }
 
-        await tx
+    if (userRow.status !== "provisioned" || credentialRow !== undefined) {
+      return { kind: "already_initialized" };
+    }
+
+    try {
+      const updatedAt = now.toISOString();
+      const passwordHash = await createPasswordHash();
+      const credential: PasswordCredential = {
+        id: crypto.randomUUID(),
+        tenantId: invitationRow.tenantId,
+        userId: invitationRow.userId,
+        passwordHash,
+        createdAt: updatedAt,
+        updatedAt
+      };
+
+      await this.db.batch([
+        this.db
           .update(userInvitations)
           .set({ consumedAt: updatedAt })
-          .where(eq(userInvitations.id, invitationRow.id));
-        await tx
+          .where(eq(userInvitations.id, invitationRow.id)),
+        this.db
           .update(users)
           .set({
             emailVerified: true,
             status: "active",
             updatedAt
           })
-          .where(and(eq(users.tenantId, invitationRow.tenantId), eq(users.id, invitationRow.userId)));
-        await tx.insert(userPasswordCredentials).values({
+          .where(and(eq(users.tenantId, invitationRow.tenantId), eq(users.id, invitationRow.userId))),
+        this.db.insert(userPasswordCredentials).values({
           id: credential.id,
           tenantId: credential.tenantId,
           userId: credential.userId,
           passwordHash: credential.passwordHash,
           createdAt: credential.createdAt,
           updatedAt: credential.updatedAt
-        });
+        })
+      ]);
 
-        return {
-          kind: "activated",
-          invitation: {
-            ...toInvitation(invitationRow),
-            consumedAt: updatedAt
-          },
-          user: {
-            ...toUser(userRow),
-            emailVerified: true,
-            status: "active",
-            updatedAt
-          },
-          credential
-        };
-      } catch (error) {
-        const [latestInvitationRow] = await tx
+      return {
+        kind: "activated",
+        invitation: {
+          ...toInvitation(invitationRow),
+          consumedAt: updatedAt
+        },
+        user: {
+          ...toUser(userRow),
+          emailVerified: true,
+          status: "active",
+          updatedAt
+        },
+        credential
+      };
+    } catch (error) {
+      // Re-check state to give a precise error for concurrent activation
+      const [[latestInvitationRow], [latestUserRow], [latestCredentialRow]] = await this.db.batch([
+        this.db
           .select()
           .from(userInvitations)
           .where(eq(userInvitations.id, invitationRow.id))
-          .limit(1);
-
-        if (latestInvitationRow?.consumedAt !== null && latestInvitationRow !== undefined) {
-          return { kind: "already_used" };
-        }
-
-        const [latestUserRow] = await tx
+          .limit(1),
+        this.db
           .select()
           .from(users)
           .where(and(eq(users.tenantId, invitationRow.tenantId), eq(users.id, invitationRow.userId)))
-          .limit(1);
-
-        if (latestUserRow === undefined) {
-          return { kind: "not_found" };
-        }
-
-        if (latestUserRow.status === "disabled") {
-          return { kind: "user_disabled" };
-        }
-
-        const [latestCredentialRow] = await tx
+          .limit(1),
+        this.db
           .select()
           .from(userPasswordCredentials)
           .where(
@@ -761,27 +752,39 @@ export class D1UserRepository implements UserRepository {
               eq(userPasswordCredentials.userId, invitationRow.userId)
             )
           )
-          .limit(1);
+          .limit(1)
+      ]);
 
-        if (latestUserRow.status !== "provisioned" || latestCredentialRow !== undefined) {
-          return { kind: "already_initialized" };
-        }
-
-        if (isConstraintConflictError(error)) {
-          return { kind: "already_initialized" };
-        }
-
-        throw error;
+      if (latestInvitationRow !== undefined && latestInvitationRow.consumedAt !== null) {
+        return { kind: "already_used" };
       }
-    });
+
+      if (latestUserRow === undefined) {
+        return { kind: "not_found" };
+      }
+
+      if (latestUserRow.status === "disabled") {
+        return { kind: "user_disabled" };
+      }
+
+      if (latestUserRow.status !== "provisioned" || latestCredentialRow !== undefined) {
+        return { kind: "already_initialized" };
+      }
+
+      if (isConstraintConflictError(error)) {
+        return { kind: "already_initialized" };
+      }
+
+      throw error;
+    }
   }
 
   async createProvisionedUserWithInvitation({
     invitation,
     user
   }: CreateProvisionedUserWithInvitationInput): Promise<void> {
-    await this.db.transaction(async (tx) => {
-      await tx.insert(users).values({
+    await this.db.batch([
+      this.db.insert(users).values({
         id: user.id,
         tenantId: user.tenantId,
         email: user.email,
@@ -791,8 +794,8 @@ export class D1UserRepository implements UserRepository {
         status: user.status,
         createdAt: user.createdAt,
         updatedAt: user.updatedAt
-      });
-      await tx.insert(userInvitations).values({
+      }),
+      this.db.insert(userInvitations).values({
         id: invitation.id,
         tenantId: invitation.tenantId,
         userId: invitation.userId,
@@ -801,8 +804,8 @@ export class D1UserRepository implements UserRepository {
         expiresAt: invitation.expiresAt,
         consumedAt: invitation.consumedAt,
         createdAt: invitation.createdAt
-      });
-    });
+      })
+    ]);
   }
 
   async findAuthMethodPolicyByTenantId(tenantId: string): Promise<TenantAuthMethodPolicy | null> {
