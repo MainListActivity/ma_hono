@@ -2135,6 +2135,18 @@ export const createApp = (options: AppOptions) => {
           tenantId,
           tokenHash
         });
+        // Create default all-disabled auth method policy
+        await clientAuthMethodPolicyRepository.create({
+          clientId: result.client.id,
+          tenantId: result.client.tenantId,
+          password: { enabled: false, allowRegistration: false },
+          emailMagicLink: { enabled: false, allowRegistration: false },
+          passkey: { enabled: false, allowRegistration: false },
+          google: { enabled: false },
+          apple: { enabled: false },
+          facebook: { enabled: false },
+          wechat: { enabled: false }
+        });
         await auditRepository.record({
           id: crypto.randomUUID(),
           actorType: "admin_user",
