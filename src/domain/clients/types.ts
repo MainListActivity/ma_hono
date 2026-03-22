@@ -9,6 +9,18 @@ export type ClientTrustLevel = "first_party_trusted" | "third_party";
 
 export type ClientConsentPolicy = "skip" | "require";
 
+export interface ClientAuthMethodPolicy {
+  clientId: string; // oidc_clients.id (UUID), NOT the OAuth client_id string
+  tenantId: string;
+  password: { enabled: boolean; allowRegistration: boolean };
+  emailMagicLink: { enabled: boolean; allowRegistration: boolean };
+  passkey: { enabled: boolean; allowRegistration: boolean };
+  google: { enabled: boolean };
+  apple: { enabled: boolean };
+  facebook: { enabled: boolean };
+  wechat: { enabled: boolean };
+}
+
 export interface Client {
   id: string;
   tenantId: string;
@@ -22,6 +34,7 @@ export interface Client {
   clientSecretHash: string | null;
   trustLevel: ClientTrustLevel;
   consentPolicy: ClientConsentPolicy;
+  authMethodPolicy?: ClientAuthMethodPolicy;
 }
 
 export interface RegisterClientResult {
