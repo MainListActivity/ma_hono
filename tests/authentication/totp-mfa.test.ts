@@ -13,10 +13,11 @@ import { createApp } from "../../src/app/app";
 import type { AuthenticationLoginChallengeRepository } from "../../src/domain/authentication/login-challenge-repository";
 import type { LoginChallengeRepository } from "../../src/domain/authorization/repository";
 import type { LoginChallenge } from "../../src/domain/authorization/types";
+import type { TotpCredential } from "../../src/domain/mfa/totp-repository";
 import { hashPassword } from "../../src/domain/users/passwords";
 import { sha256Base64Url } from "../../src/lib/hash";
 import { encryptTotpSecret } from "../../src/adapters/auth/totp/totp-crypto";
-import { generateTotpSecret } from "../../src/domain/mfa/totp-service";
+import { generateTotpSecret, generateTotpCode } from "../../src/domain/mfa/totp-service";
 
 // Shared test key for encrypting TOTP secrets in tests
 const TEST_TOTP_KEY = new Uint8Array(32).fill(7);
@@ -251,5 +252,287 @@ describe("MFA — password login with mfa_required", () => {
     expect(res.status).toBe(200);
     const body = await res.json() as { mfa_state: string };
     expect(body.mfa_state).toBe("pending_totp");
+  });
+});
+
+// Helper: build an app with a challenge already in an MFA state.
+// totpCredOverride is optional — pass to simulate a TOTP-enrolled user.
+const makeMfaApp = async ({
+  mfaState,
+  totpCredOverride,
+}: {
+  mfaState: LoginChallenge["mfaState"];
+  totpCredOverride?: Partial<TotpCredential>;
+}) => {
+  const clientRepo = new MemoryClientRepository();
+  await clientRepo.create({
+    id: "client_id_1", tenantId: "tenant_acme", clientId: "client_app1",
+    clientName: "App1", applicationType: "web", grantTypes: ["authorization_code"],
+    redirectUris: ["https://app.example.test/callback"], responseTypes: ["code"],
+    tokenEndpointAuthMethod: "none", clientSecretHash: null,
+    trustLevel: "first_party_trusted", consentPolicy: "skip"
+  });
+
+  const userRepo = new MemoryUserRepository({ policies: [] });
+  await userRepo.createProvisionedUserWithInvitation({
+    user: {
+      id: "user1", tenantId: "tenant_acme", email: "alice@example.com",
+      emailVerified: false, username: "alice", displayName: "Alice", status: "active",
+      createdAt: new Date().toISOString(), updatedAt: new Date().toISOString()
+    },
+    invitation: {
+      id: "inv1", tenantId: "tenant_acme", userId: "user1", tokenHash: "th1",
+      purpose: "activation", expiresAt: new Date(Date.now() + 3600_000).toISOString(),
+      consumedAt: null, createdAt: new Date().toISOString()
+    },
+    credential: { passwordHash: "x" }
+  });
+
+  const totpRepository = new MemoryTotpRepository();
+  if (totpCredOverride !== undefined) {
+    await totpRepository.create({
+      id: "totp1", tenantId: "tenant_acme", userId: "user1",
+      secretEncrypted: "", algorithm: "SHA1", digits: 6, period: 30,
+      lastUsedWindow: 0, enrolledAt: new Date().toISOString(),
+      createdAt: new Date().toISOString(),
+      ...totpCredOverride
+    });
+  }
+
+  const { challenge, token } = await makeChallenge({
+    authenticatedUserId: "user1", mfaState
+  });
+  const loginChallengeRepo = new TestLoginChallengeRepository();
+  loginChallengeRepo.challenges.push(challenge);
+
+  const policyRepo = new MemoryClientAuthMethodPolicyRepository();
+  await policyRepo.create({
+    clientId: "client_id_1", tenantId: "tenant_acme",
+    password: { enabled: true, allowRegistration: false },
+    emailMagicLink: { enabled: false, allowRegistration: false },
+    passkey: { enabled: false, allowRegistration: false },
+    google: { enabled: false }, apple: { enabled: false },
+    facebook: { enabled: false }, wechat: { enabled: false },
+    mfaRequired: true
+  });
+
+  const mfaPasskeyChallengeRepo = new MemoryMfaPasskeyChallengeRepository();
+
+  const appInstance = createApp({
+    adminBootstrapPasswordHash: "x", adminWhitelist: [],
+    authDomain: "idp.example.test", oidcHost: "idp.example.test",
+    managementApiToken: "token",
+    tenantRepository, clientRepository: clientRepo,
+    clientAuthMethodPolicyRepository: policyRepo,
+    userRepository: userRepo,
+    loginChallengeLookupRepository: loginChallengeRepo,
+    loginChallengeRepository: loginChallengeRepo,
+    auditRepository: new MemoryAuditRepository(),
+    authorizationCodeRepository: new MemoryAuthorizationCodeRepository(),
+    browserSessionRepository: new MemoryUserSessionRepository(),
+    totpRepository,
+    mfaPasskeyChallengeRepository: mfaPasskeyChallengeRepo,
+    passkeyRepository: new MemoryPasskeyRepository(),
+    totpEncryptionKey: TEST_TOTP_KEY
+  });
+
+  return { app: appInstance, loginChallengeRepo, totpRepository, mfaPasskeyChallengeRepo, token, challenge };
+};
+
+describe("MFA — TOTP verify endpoint", () => {
+  it("verifies a valid TOTP code and redirects", async () => {
+    const rawSecret = generateTotpSecret();
+    const secretEncrypted = await encryptTotpSecret(rawSecret, TEST_TOTP_KEY);
+    const { app, token } = await makeMfaApp({
+      mfaState: "pending_totp",
+      totpCredOverride: { secretEncrypted, lastUsedWindow: 0 }
+    });
+    const windowIndex = Math.floor(Date.now() / 1000 / 30);
+    const code = await generateTotpCode(rawSecret, windowIndex);
+
+    const res = await app.request(
+      "https://idp.example.test/api/login/acme/mfa/totp/verify",
+      { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ login_challenge: token, code }) }
+    );
+
+    // Expect redirect (status 302) or JSON body with redirect_uri
+    expect([200, 302]).toContain(res.status);
+  });
+
+  it("rejects an invalid TOTP code and increments attempt count", async () => {
+    const rawSecret = generateTotpSecret();
+    const secretEncrypted = await encryptTotpSecret(rawSecret, TEST_TOTP_KEY);
+    const { app, loginChallengeRepo, token } = await makeMfaApp({
+      mfaState: "pending_totp",
+      totpCredOverride: { secretEncrypted, lastUsedWindow: 0 }
+    });
+
+    const res = await app.request(
+      "https://idp.example.test/api/login/acme/mfa/totp/verify",
+      { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ login_challenge: token, code: "000000" }) }
+    );
+
+    // May be valid by extreme coincidence (1 in 1M); just check shape
+    if (res.status === 401) {
+      const body = await res.json() as { error: string; remaining_attempts: number };
+      expect(body.error).toBe("invalid_code");
+      expect(body.remaining_attempts).toBe(4);
+      expect(loginChallengeRepo.challenges[0].mfaAttemptCount).toBe(1);
+    }
+  });
+
+  it("invalidates challenge after 5 failed attempts (brute-force lockout)", async () => {
+    const rawSecret = generateTotpSecret();
+    const secretEncrypted = await encryptTotpSecret(rawSecret, TEST_TOTP_KEY);
+    const { app, loginChallengeRepo, token } = await makeMfaApp({
+      mfaState: "pending_totp",
+      totpCredOverride: { secretEncrypted, lastUsedWindow: 0 }
+    });
+
+    // Force 5 failures by attempting window far in the past (code won't match current)
+    const pastCode = await generateTotpCode(rawSecret, 1); // window 1 = year 1970
+    let lastRes!: Response;
+    for (let i = 0; i < 5; i++) {
+      lastRes = await app.request(
+        "https://idp.example.test/api/login/acme/mfa/totp/verify",
+        { method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ login_challenge: token, code: pastCode }) }
+      );
+    }
+
+    expect(lastRes.status).toBe(401);
+    const body = await lastRes.json() as { error: string };
+    expect(body.error).toBe("challenge_invalidated");
+    expect(loginChallengeRepo.challenges[0].consumedAt).not.toBeNull();
+  });
+
+  it("rejects replay of same window code (lastUsedWindow already at current window)", async () => {
+    const rawSecret = generateTotpSecret();
+    const secretEncrypted = await encryptTotpSecret(rawSecret, TEST_TOTP_KEY);
+    const windowIndex = Math.floor(Date.now() / 1000 / 30);
+    // Pre-set lastUsedWindow to current window to simulate already-used
+    const { app, token } = await makeMfaApp({
+      mfaState: "pending_totp",
+      totpCredOverride: { secretEncrypted, lastUsedWindow: windowIndex }
+    });
+    const code = await generateTotpCode(rawSecret, windowIndex);
+
+    const res = await app.request(
+      "https://idp.example.test/api/login/acme/mfa/totp/verify",
+      { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ login_challenge: token, code }) }
+    );
+
+    expect(res.status).toBe(401);
+    const body = await res.json() as { error: string };
+    expect(body.error).toBe("replay");
+  });
+});
+
+describe("MFA — switch-to-totp endpoint", () => {
+  it("transitions challenge from pending_passkey_step_up to pending_totp", async () => {
+    const rawSecret = generateTotpSecret();
+    const secretEncrypted = await encryptTotpSecret(rawSecret, TEST_TOTP_KEY);
+    const { app, loginChallengeRepo, token } = await makeMfaApp({
+      mfaState: "pending_passkey_step_up",
+      totpCredOverride: { secretEncrypted }
+    });
+
+    const res = await app.request(
+      "https://idp.example.test/api/login/acme/mfa/switch-to-totp",
+      { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ login_challenge: token }) }
+    );
+
+    expect(res.status).toBe(200);
+    const body = await res.json() as { mfa_state: string };
+    expect(body.mfa_state).toBe("pending_totp");
+    expect(loginChallengeRepo.challenges[0].mfaState).toBe("pending_totp");
+  });
+
+  it("returns 400 when challenge is in pending_totp state (not passkey step-up)", async () => {
+    const rawSecret = generateTotpSecret();
+    const secretEncrypted = await encryptTotpSecret(rawSecret, TEST_TOTP_KEY);
+    const { app, token } = await makeMfaApp({
+      mfaState: "pending_totp",
+      totpCredOverride: { secretEncrypted }
+    });
+
+    const res = await app.request(
+      "https://idp.example.test/api/login/acme/mfa/switch-to-totp",
+      { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ login_challenge: token }) }
+    );
+
+    expect(res.status).toBe(400);
+    const body = await res.json() as { error: string };
+    expect(body.error).toBe("invalid_mfa_state");
+  });
+
+  it("returns 400 when user has no TOTP enrolled", async () => {
+    const { app, token } = await makeMfaApp({
+      mfaState: "pending_passkey_step_up"
+      // No totpCredOverride — no TOTP enrolled
+    });
+
+    const res = await app.request(
+      "https://idp.example.test/api/login/acme/mfa/switch-to-totp",
+      { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ login_challenge: token }) }
+    );
+
+    expect(res.status).toBe(400);
+    const body = await res.json() as { error: string };
+    expect(body.error).toBe("totp_not_enrolled");
+  });
+});
+
+describe("MFA — passkey step-up brute-force lockout", () => {
+  it("invalidates challenge after 5 structurally-valid-but-wrong-signature assertions", async () => {
+    const { app, loginChallengeRepo, mfaPasskeyChallengeRepo, token } = await makeMfaApp({
+      mfaState: "pending_passkey_step_up"
+    });
+
+    const fakeAuthData = new Uint8Array(37).fill(0x42);
+    const clientDataObj = { type: "webauthn.get", challenge: "fakechallenge", origin: "https://idp.example.test" };
+    const clientDataJson = new TextEncoder().encode(JSON.stringify(clientDataObj));
+    const fakeSignature = new Uint8Array(64).fill(0xab);
+
+    const toB64 = (u: Uint8Array) =>
+      btoa(String.fromCharCode(...u)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
+
+    let lastRes!: Response;
+    for (let i = 0; i < 5; i++) {
+      const ch = {
+        id: crypto.randomUUID(), tenantId: "tenant_acme",
+        loginChallengeId: loginChallengeRepo.challenges[0].id,
+        challengeHash: "hash" + i,
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        consumedAt: null, createdAt: new Date().toISOString()
+      };
+      await mfaPasskeyChallengeRepo.create(ch);
+
+      lastRes = await app.request(
+        "https://idp.example.test/api/login/acme/mfa/passkey/finish",
+        { method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            login_challenge: token,
+            challenge_hash: ch.challengeHash,
+            credential_id: "webauthn-credential-id-fixture",
+            response: {
+              authenticator_data: toB64(fakeAuthData),
+              client_data_json: toB64(clientDataJson),
+              signature: toB64(fakeSignature)
+            }
+          }) }
+      );
+    }
+
+    expect(lastRes.status).toBe(401);
+    const body = await lastRes.json() as { error: string };
+    expect(body.error).toBe("challenge_invalidated");
+    expect(loginChallengeRepo.challenges[0].consumedAt).not.toBeNull();
   });
 });

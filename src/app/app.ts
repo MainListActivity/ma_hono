@@ -3,12 +3,14 @@ import { ZodError } from "zod";
 
 import { authenticateWithPassword } from "../adapters/auth/local-auth/password-auth-service";
 import { consumeMagicLink, requestMagicLink } from "../adapters/auth/local-auth/magic-link-service";
+import { decryptTotpSecret } from "../adapters/auth/totp/totp-crypto";
 import {
   finishPasskeyEnrollment,
   finishPasskeyLogin,
   startPasskeyEnrollment,
   startPasskeyLogin
 } from "../adapters/auth/webauthn/webauthn-service";
+import { generateTotpSecret, verifyTotpCode } from "../domain/mfa/totp-service";
 import type { MagicLinkRepository } from "../domain/authentication/magic-link-repository";
 import type { PasskeyRepository } from "../domain/authentication/passkey-repository";
 import type { TotpRepository } from "../domain/mfa/totp-repository";
@@ -1487,6 +1489,514 @@ export const createApp = (options: AppOptions) => {
     return context.redirect(redirectUrl.toString(), 302);
   };
 
+  // Shared helper called after any MFA step succeeds.
+  // Consumes the login challenge, creates a browser session, sets the cookie,
+  // runs authorizeRequest, and redirects to the callback with code+state.
+  const handlePostMfaSuccess = async (
+    context: Context,
+    issuerContext: import("../domain/tenants/types").ResolvedIssuerContext,
+    challenge: import("../domain/authorization/types").LoginChallenge,
+    userId: string
+  ): Promise<Response> => {
+    const consumed = await loginChallengeLookupRepository.consume(challenge.id, new Date().toISOString());
+    if (!consumed) {
+      return context.json({ error: "invalid_request" }, 400);
+    }
+
+    const { session, sessionToken } = await createBrowserSession({
+      sessionRepository: browserSessionRepository,
+      tenantId: challenge.tenantId,
+      userId
+    });
+
+    context.header(
+      "Set-Cookie",
+      buildBrowserSessionCookie({
+        expiresAt: session.expiresAt,
+        secure: new URL(issuerContext.issuer).protocol === "https:",
+        sessionToken
+      })
+    );
+
+    const authorizationResult = await authorizeRequest({
+      authorizationCodeRepository,
+      clientRepository,
+      issuerContext,
+      loginChallengeRepository,
+      request: {
+        clientId: challenge.clientId,
+        redirectUri: challenge.redirectUri,
+        responseType: "code",
+        scope: challenge.scope,
+        state: challenge.state.length === 0 ? null : challenge.state,
+        nonce: challenge.nonce,
+        codeChallenge: challenge.codeChallenge,
+        codeChallengeMethod: challenge.codeChallengeMethod
+      },
+      session: { userId, tenantId: challenge.tenantId }
+    });
+
+    if (authorizationResult.kind === "error") {
+      await recordAuthorizeAuditEvent({
+        actorType: "end_user",
+        actorId: userId,
+        tenantId: challenge.tenantId,
+        eventType: "oidc.authorization.failed",
+        targetId: authorizationResult.clientId,
+        payload: {
+          client_id: authorizationResult.clientId,
+          reason: authorizationResult.error,
+          redirect_uri: authorizationResult.redirectUri
+        }
+      });
+
+      if (authorizationResult.shouldRedirect && authorizationResult.redirectUri !== null) {
+        return context.redirect(
+          buildClientErrorRedirectUrl({
+            error: authorizationResult.error,
+            errorDescription: authorizationResult.errorDescription,
+            redirectUri: authorizationResult.redirectUri,
+            state: authorizationResult.state
+          }),
+          302
+        );
+      }
+
+      return context.json({ error: authorizationResult.error }, 400);
+    }
+
+    if (authorizationResult.kind === "consent_required") {
+      return context.redirect(
+        buildClientErrorRedirectUrl({
+          error: "consent_required",
+          redirectUri: authorizationResult.request.redirectUri,
+          state: authorizationResult.request.state
+        }),
+        302
+      );
+    }
+
+    if (authorizationResult.kind !== "authorization_granted") {
+      return context.json({ error: "invalid_request" }, 400);
+    }
+
+    await recordAuthorizeAuditEvent({
+      actorType: "end_user",
+      actorId: userId,
+      tenantId: challenge.tenantId,
+      eventType: "oidc.authorization.succeeded",
+      targetId: authorizationResult.request.clientId,
+      payload: {
+        user_id: userId,
+        redirect_uri: authorizationResult.request.redirectUri
+      }
+    });
+
+    const redirectUrl = new URL(authorizationResult.request.redirectUri);
+    redirectUrl.searchParams.set("code", authorizationResult.code);
+    if (authorizationResult.request.state !== null) {
+      redirectUrl.searchParams.set("state", authorizationResult.request.state);
+    }
+
+    return context.redirect(redirectUrl.toString(), 302);
+  };
+
+  const handleMfaTotpVerify = async (context: Context) => {
+    const issuerContext = await resolveLoginIssuerContext(context);
+    if (issuerContext === null) return context.notFound();
+
+    let payload: { login_challenge?: string; code?: string };
+    try { payload = await context.req.json(); } catch {
+      return context.json({ error: "invalid_request" }, 400);
+    }
+
+    const token = (payload.login_challenge ?? "").trim();
+    const code = (payload.code ?? "").trim();
+    if (!token || !code) return context.json({ error: "invalid_request" }, 400);
+
+    const challenge = await loginChallengeLookupRepository.findByTokenHash(
+      await sha256Base64Url(token)
+    );
+
+    if (challenge === null || challenge.tenantId !== issuerContext.tenant.id) {
+      return context.json({ error: "invalid_request" }, 400);
+    }
+    if (challenge.mfaState !== "pending_totp" || challenge.authenticatedUserId === null) {
+      return context.json({ error: "invalid_mfa_state" }, 400);
+    }
+
+    const totpCred = await totpRepository.findByTenantAndUser(
+      challenge.tenantId, challenge.authenticatedUserId
+    );
+    if (totpCred === null) return context.json({ error: "totp_not_enrolled" }, 400);
+
+    const secret = await decryptTotpSecret(totpCred.secretEncrypted, totpEncryptionKey);
+    const result = await verifyTotpCode({ secret, code, lastUsedWindow: totpCred.lastUsedWindow });
+
+    if (result.kind !== "valid") {
+      const newCount = await loginChallengeLookupRepository.incrementMfaAttemptCount(challenge.id);
+      if (newCount >= 5) {
+        await loginChallengeLookupRepository.consume(challenge.id, new Date().toISOString());
+        await recordAuditEventBestEffort({
+          actorType: "user", actorId: challenge.authenticatedUserId,
+          tenantId: challenge.tenantId, eventType: "mfa.challenge.invalidated",
+          targetType: "login_challenge", targetId: challenge.id, payload: null
+        });
+        return context.json({ error: "challenge_invalidated" }, 401);
+      }
+      await recordAuditEventBestEffort({
+        actorType: "user", actorId: challenge.authenticatedUserId,
+        tenantId: challenge.tenantId, eventType: "mfa.totp.failed",
+        targetType: "login_challenge", targetId: challenge.id, payload: null
+      });
+      return context.json({
+        error: result.kind === "replay" ? "replay" : "invalid_code",
+        remaining_attempts: 5 - newCount
+      }, 401);
+    }
+
+    await totpRepository.updateLastUsedWindow(totpCred.id, result.windowIndex);
+    await loginChallengeLookupRepository.satisfyMfa(challenge.id);
+    await recordAuditEventBestEffort({
+      actorType: "user", actorId: challenge.authenticatedUserId,
+      tenantId: challenge.tenantId, eventType: "mfa.totp.verified",
+      targetType: "login_challenge", targetId: challenge.id, payload: null
+    });
+
+    return handlePostMfaSuccess(context, issuerContext, challenge, challenge.authenticatedUserId);
+  };
+
+  const handleMfaPasskeyStart = async (context: Context) => {
+    const issuerContext = await resolveLoginIssuerContext(context);
+    if (issuerContext === null) return context.notFound();
+
+    let payload: { login_challenge?: string };
+    try { payload = await context.req.json(); } catch {
+      return context.json({ error: "invalid_request" }, 400);
+    }
+
+    const token = (payload.login_challenge ?? "").trim();
+    if (!token) return context.json({ error: "invalid_request" }, 400);
+
+    const challenge = await loginChallengeLookupRepository.findByTokenHash(
+      await sha256Base64Url(token)
+    );
+
+    if (challenge === null || challenge.tenantId !== issuerContext.tenant.id) {
+      return context.json({ error: "invalid_request" }, 400);
+    }
+    if (challenge.mfaState !== "pending_passkey_step_up" || challenge.authenticatedUserId === null) {
+      return context.json({ error: "invalid_mfa_state" }, 400);
+    }
+
+    const credentials = await passkeyRepository.listCredentialsByUserId(
+      challenge.tenantId, challenge.authenticatedUserId
+    );
+
+    const nonceBytes = crypto.getRandomValues(new Uint8Array(32));
+    const nonce = btoa(String.fromCharCode(...nonceBytes))
+      .replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
+    const challengeHash = await sha256Base64Url(nonce);
+    const now = new Date();
+
+    await mfaPasskeyChallengeRepository.create({
+      id: crypto.randomUUID(),
+      tenantId: challenge.tenantId,
+      loginChallengeId: challenge.id,
+      challengeHash,
+      expiresAt: new Date(now.getTime() + 5 * 60 * 1000).toISOString(),
+      consumedAt: null,
+      createdAt: now.toISOString()
+    });
+
+    return context.json({
+      challenge: nonce,
+      allowed_credentials: credentials.map(c => c.credentialId)
+    });
+  };
+
+  const handleMfaPasskeyFinish = async (context: Context) => {
+    const issuerContext = await resolveLoginIssuerContext(context);
+    if (issuerContext === null) return context.notFound();
+
+    let payload: {
+      login_challenge?: string;
+      challenge_hash?: string;
+      credential_id?: string;
+      response?: {
+        authenticator_data?: string;
+        client_data_json?: string;
+        signature?: string;
+      };
+    };
+    try { payload = await context.req.json(); } catch {
+      return context.json({ error: "invalid_request" }, 400);
+    }
+
+    const token = (payload.login_challenge ?? "").trim();
+    const challengeHash = (payload.challenge_hash ?? "").trim();
+    const credentialId = (payload.credential_id ?? "").trim();
+    if (!token || !challengeHash || !credentialId) {
+      return context.json({ error: "invalid_request" }, 400);
+    }
+
+    const challenge = await loginChallengeLookupRepository.findByTokenHash(
+      await sha256Base64Url(token)
+    );
+
+    if (challenge === null || challenge.tenantId !== issuerContext.tenant.id) {
+      return context.json({ error: "invalid_request" }, 400);
+    }
+    if (challenge.mfaState !== "pending_passkey_step_up" || challenge.authenticatedUserId === null) {
+      return context.json({ error: "invalid_mfa_state" }, 400);
+    }
+
+    const now = new Date().toISOString();
+    const mfaChallenge = await mfaPasskeyChallengeRepository.consumeByChallengeHash(
+      challengeHash, now, now
+    );
+    if (mfaChallenge === null) {
+      return context.json({ error: "invalid_request" }, 400);
+    }
+
+    const credential = await passkeyRepository.findCredentialByCredentialId(
+      challenge.tenantId, credentialId
+    );
+    if (credential === null) {
+      const newCount = await loginChallengeLookupRepository.incrementMfaAttemptCount(challenge.id);
+      if (newCount >= 5) {
+        await loginChallengeLookupRepository.consume(challenge.id, new Date().toISOString());
+        await recordAuditEventBestEffort({
+          actorType: "user", actorId: challenge.authenticatedUserId,
+          tenantId: challenge.tenantId, eventType: "mfa.challenge.invalidated",
+          targetType: "login_challenge", targetId: challenge.id, payload: null
+        });
+        return context.json({ error: "challenge_invalidated" }, 401);
+      }
+      return context.json({ error: "credential_not_found", remaining_attempts: 5 - newCount }, 400);
+    }
+
+    // Attempt to verify the WebAuthn assertion using @simplewebauthn/server
+    let verificationSucceeded = false;
+    try {
+      const { verifyAuthenticationResponse } = await import("@simplewebauthn/server");
+      const authResponse = payload.response ?? {};
+      const verificationResult = await verifyAuthenticationResponse({
+        response: {
+          id: credentialId,
+          rawId: credentialId,
+          type: "public-key",
+          response: {
+            authenticatorData: authResponse.authenticator_data ?? "",
+            clientDataJSON: authResponse.client_data_json ?? "",
+            signature: authResponse.signature ?? ""
+          }
+        } as Parameters<typeof verifyAuthenticationResponse>[0]["response"],
+        expectedChallenge: challengeHash,
+        expectedOrigin: new URL(issuerContext.issuer).origin,
+        expectedRPID: new URL(issuerContext.issuer).hostname,
+        credential: {
+          id: credentialId,
+          publicKey: Uint8Array.from(
+            atob(credential.publicKeyCbor.replace(/-/g, "+").replace(/_/g, "/")),
+            c => c.charCodeAt(0)
+          ),
+          counter: credential.signCount,
+          transports: undefined
+        }
+      });
+      verificationSucceeded = verificationResult.verified;
+    } catch {
+      verificationSucceeded = false;
+    }
+
+    if (!verificationSucceeded) {
+      const newCount = await loginChallengeLookupRepository.incrementMfaAttemptCount(challenge.id);
+      if (newCount >= 5) {
+        await loginChallengeLookupRepository.consume(challenge.id, new Date().toISOString());
+        await recordAuditEventBestEffort({
+          actorType: "user", actorId: challenge.authenticatedUserId,
+          tenantId: challenge.tenantId, eventType: "mfa.challenge.invalidated",
+          targetType: "login_challenge", targetId: challenge.id, payload: null
+        });
+        return context.json({ error: "challenge_invalidated" }, 401);
+      }
+      await recordAuditEventBestEffort({
+        actorType: "user", actorId: challenge.authenticatedUserId,
+        tenantId: challenge.tenantId, eventType: "mfa.passkey_stepup.failed",
+        targetType: "login_challenge", targetId: challenge.id, payload: null
+      });
+      return context.json({ error: "passkey_verification_failed", remaining_attempts: 5 - newCount }, 401);
+    }
+
+    await loginChallengeLookupRepository.satisfyMfa(challenge.id);
+    await recordAuditEventBestEffort({
+      actorType: "user", actorId: challenge.authenticatedUserId,
+      tenantId: challenge.tenantId, eventType: "mfa.passkey_stepup.verified",
+      targetType: "login_challenge", targetId: challenge.id, payload: null
+    });
+
+    return handlePostMfaSuccess(context, issuerContext, challenge, challenge.authenticatedUserId);
+  };
+
+  const handleMfaTotpEnrollStart = async (context: Context) => {
+    const issuerContext = await resolveLoginIssuerContext(context);
+    if (issuerContext === null) return context.notFound();
+
+    let payload: { login_challenge?: string };
+    try { payload = await context.req.json(); } catch {
+      return context.json({ error: "invalid_request" }, 400);
+    }
+
+    const token = (payload.login_challenge ?? "").trim();
+    if (!token) return context.json({ error: "invalid_request" }, 400);
+
+    const challenge = await loginChallengeLookupRepository.findByTokenHash(
+      await sha256Base64Url(token)
+    );
+
+    if (challenge === null || challenge.tenantId !== issuerContext.tenant.id) {
+      return context.json({ error: "invalid_request" }, 400);
+    }
+    if (challenge.mfaState !== "pending_enrollment" || challenge.authenticatedUserId === null) {
+      return context.json({ error: "invalid_mfa_state" }, 400);
+    }
+
+    const rawSecret = generateTotpSecret();
+    const secretEncrypted = await (await import("../adapters/auth/totp/totp-crypto")).encryptTotpSecret(
+      rawSecret, totpEncryptionKey
+    );
+
+    await loginChallengeLookupRepository.setTotpEnrollmentSecret(challenge.id, secretEncrypted);
+
+    const user = await userRepository.findUserById(challenge.tenantId, challenge.authenticatedUserId);
+    const userEmail = user?.email ?? challenge.authenticatedUserId;
+    const issuerLabel = encodeURIComponent(issuerContext.tenant.displayName);
+    const accountLabel = encodeURIComponent(userEmail);
+    const provisioningUri = `otpauth://totp/${issuerLabel}:${accountLabel}?secret=${rawSecret}&issuer=${issuerLabel}&algorithm=SHA1&digits=6&period=30`;
+
+    return context.json({ provisioning_uri: provisioningUri, secret: rawSecret });
+  };
+
+  const handleMfaTotpEnrollFinish = async (context: Context) => {
+    const issuerContext = await resolveLoginIssuerContext(context);
+    if (issuerContext === null) return context.notFound();
+
+    let payload: { login_challenge?: string; code?: string };
+    try { payload = await context.req.json(); } catch {
+      return context.json({ error: "invalid_request" }, 400);
+    }
+
+    const token = (payload.login_challenge ?? "").trim();
+    const code = (payload.code ?? "").trim();
+    if (!token || !code) return context.json({ error: "invalid_request" }, 400);
+
+    const challenge = await loginChallengeLookupRepository.findByTokenHash(
+      await sha256Base64Url(token)
+    );
+
+    if (challenge === null || challenge.tenantId !== issuerContext.tenant.id) {
+      return context.json({ error: "invalid_request" }, 400);
+    }
+    if (
+      challenge.mfaState !== "pending_enrollment" ||
+      challenge.authenticatedUserId === null ||
+      challenge.totpEnrollmentSecretEncrypted === null
+    ) {
+      return context.json({ error: "invalid_mfa_state" }, 400);
+    }
+
+    const secret = await decryptTotpSecret(
+      challenge.totpEnrollmentSecretEncrypted, totpEncryptionKey
+    );
+    const result = await verifyTotpCode({ secret, code, lastUsedWindow: 0 });
+
+    if (result.kind !== "valid") {
+      const newCount = await loginChallengeLookupRepository.incrementEnrollmentAttemptCount(challenge.id);
+      if (newCount >= 5) {
+        await loginChallengeLookupRepository.consume(challenge.id, new Date().toISOString());
+        await recordAuditEventBestEffort({
+          actorType: "user", actorId: challenge.authenticatedUserId,
+          tenantId: challenge.tenantId, eventType: "mfa.enrollment.invalidated",
+          targetType: "login_challenge", targetId: challenge.id, payload: null
+        });
+        return context.json({ error: "challenge_invalidated" }, 401);
+      }
+      return context.json({ error: "invalid_code", remaining_attempts: 5 - newCount }, 401);
+    }
+
+    // Create TOTP credential
+    const now = new Date().toISOString();
+    try {
+      await totpRepository.create({
+        id: crypto.randomUUID(),
+        tenantId: challenge.tenantId,
+        userId: challenge.authenticatedUserId,
+        secretEncrypted: challenge.totpEnrollmentSecretEncrypted,
+        algorithm: "SHA1",
+        digits: 6,
+        period: 30,
+        lastUsedWindow: result.windowIndex,
+        enrolledAt: now,
+        createdAt: now
+      });
+    } catch (err) {
+      if (isProvisionConflictError(err)) {
+        // Duplicate enrollment — already enrolled, treat as success
+        return context.json({ mfa_enrolled: true }, 200);
+      }
+      throw err;
+    }
+
+    await loginChallengeLookupRepository.completeEnrollment(challenge.id);
+    await recordAuditEventBestEffort({
+      actorType: "user", actorId: challenge.authenticatedUserId,
+      tenantId: challenge.tenantId, eventType: "mfa.totp.enrolled",
+      targetType: "login_challenge", targetId: challenge.id, payload: null
+    });
+
+    return handlePostMfaSuccess(context, issuerContext, challenge, challenge.authenticatedUserId);
+  };
+
+  const handleMfaSwitchToTotp = async (context: Context) => {
+    const issuerContext = await resolveLoginIssuerContext(context);
+    if (issuerContext === null) return context.notFound();
+
+    let payload: { login_challenge?: string };
+    try { payload = await context.req.json(); } catch {
+      return context.json({ error: "invalid_request" }, 400);
+    }
+
+    const token = (payload.login_challenge ?? "").trim();
+    if (!token) return context.json({ error: "invalid_request" }, 400);
+
+    const challenge = await loginChallengeLookupRepository.findByTokenHash(
+      await sha256Base64Url(token)
+    );
+
+    if (challenge === null || challenge.tenantId !== issuerContext.tenant.id) {
+      return context.json({ error: "invalid_request" }, 400);
+    }
+    if (challenge.mfaState !== "pending_passkey_step_up") {
+      return context.json({ error: "invalid_mfa_state" }, 400);
+    }
+    if (challenge.authenticatedUserId === null) {
+      return context.json({ error: "invalid_request" }, 400);
+    }
+
+    const totpCred = await totpRepository.findByTenantAndUser(
+      challenge.tenantId, challenge.authenticatedUserId
+    );
+    if (totpCred === null) {
+      return context.json({ error: "totp_not_enrolled" }, 400);
+    }
+
+    await loginChallengeLookupRepository.setMfaState(
+      challenge.id, challenge.authenticatedUserId, "pending_totp"
+    );
+    return context.json({ mfa_state: "pending_totp" }, 200);
+  };
+
   const handlePlaceholderEndpoint = async (context: Context) => {
     const issuerContext = await resolveIssuerContext({
       requestUrl: context.req.url,
@@ -1667,6 +2177,22 @@ export const createApp = (options: AppOptions) => {
   app.post("/passkey/:tenant/enroll/finish", handlePasskeyEnrollFinish);
   app.post("/login/:tenant/passkey/start", handlePasskeyLoginStart);
   app.post("/login/:tenant/passkey/finish", handlePasskeyLoginFinish);
+
+  // MFA endpoints (platform-path: /api/login/:tenant/mfa/*)
+  app.post("/api/login/:tenant/mfa/totp/verify", handleMfaTotpVerify);
+  app.post("/api/login/:tenant/mfa/passkey/start", handleMfaPasskeyStart);
+  app.post("/api/login/:tenant/mfa/passkey/finish", handleMfaPasskeyFinish);
+  app.post("/api/login/:tenant/mfa/switch-to-totp", handleMfaSwitchToTotp);
+  app.post("/api/login/:tenant/mfa/totp/enroll/start", handleMfaTotpEnrollStart);
+  app.post("/api/login/:tenant/mfa/totp/enroll/finish", handleMfaTotpEnrollFinish);
+
+  // MFA endpoints (custom-domain: /mfa/*)
+  app.post("/mfa/totp/verify", handleMfaTotpVerify);
+  app.post("/mfa/passkey/start", handleMfaPasskeyStart);
+  app.post("/mfa/passkey/finish", handleMfaPasskeyFinish);
+  app.post("/mfa/switch-to-totp", handleMfaSwitchToTotp);
+  app.post("/mfa/totp/enroll/start", handleMfaTotpEnrollStart);
+  app.post("/mfa/totp/enroll/finish", handleMfaTotpEnrollFinish);
 
   // OIDC protocol routes (host = o.{domain})
   app.get("/authorize", handleAuthorize);
