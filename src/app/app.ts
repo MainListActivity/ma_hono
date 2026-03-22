@@ -1964,6 +1964,54 @@ export const createApp = (options: AppOptions) => {
     });
   });
 
+  app.get("/admin/tenants/:tenantId/clients/:clientId", async (context) => {
+    const session = await authenticateAdminSession({
+      adminRepository,
+      authorizationHeader: context.req.header("authorization")
+    });
+    if (session === null) {
+      return context.json({ error: "unauthorized" }, 401);
+    }
+    const tenantId = context.req.param("tenantId");
+    const clientId = context.req.param("clientId");
+    const tenant = await tenantRepository.findById(tenantId);
+    if (tenant === null) return context.notFound();
+
+    const client = await clientRepository.findByClientId(clientId);
+    if (client === null || client.tenantId !== tenantId) return context.notFound();
+
+    let policy = await clientAuthMethodPolicyRepository.findByClientId(client.id);
+    if (policy === null) {
+      // Synthesize and persist default all-disabled policy on first access (handles pre-migration clients)
+      policy = {
+        clientId: client.id,
+        tenantId: client.tenantId,
+        password: { enabled: false, allowRegistration: false },
+        emailMagicLink: { enabled: false, allowRegistration: false },
+        passkey: { enabled: false, allowRegistration: false },
+        google: { enabled: false },
+        apple: { enabled: false },
+        facebook: { enabled: false },
+        wechat: { enabled: false }
+      };
+      await clientAuthMethodPolicyRepository.create(policy);
+    }
+
+    return context.json({
+      id: client.id,
+      client_id: client.clientId,
+      client_name: client.clientName,
+      application_type: client.applicationType,
+      redirect_uris: client.redirectUris,
+      grant_types: client.grantTypes,
+      response_types: client.responseTypes,
+      token_endpoint_auth_method: client.tokenEndpointAuthMethod,
+      trust_level: client.trustLevel,
+      consent_policy: client.consentPolicy,
+      auth_method_policy: policyToWire(policy)
+    });
+  });
+
   app.post("/admin/tenants/:tenantId/clients", async (context) => {
     const session = await authenticateAdminSession({
       adminRepository,
