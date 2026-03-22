@@ -258,16 +258,6 @@ export const finishPasskeyLogin = async ({
     return { kind: "rejected", reason: "invalid_session" };
   }
 
-  // Consume login challenge
-  const challengeConsumed = await loginChallengeRepository.consume(
-    loginChallenge.id,
-    now.toISOString()
-  );
-
-  if (!challengeConsumed) {
-    return { kind: "rejected", reason: "invalid_credentials" };
-  }
-
   // Update sign count
   await passkeyRepository.updateCredentialSignCount(credential.id, signCount);
 

@@ -134,15 +134,6 @@ export const consumeMagicLink = async ({
     return { kind: "rejected", reason: "invalid_or_expired_token" };
   }
 
-  const consumedChallenge = await loginChallengeRepository.consume(
-    challenge.id,
-    now.toISOString()
-  );
-
-  if (!consumedChallenge) {
-    return { kind: "rejected", reason: "invalid_or_expired_token" };
-  }
-
   const user = await userRepository.findUserById(magicLinkRecord.tenantId, magicLinkRecord.userId);
 
   if (user === null || user.status !== "active") {

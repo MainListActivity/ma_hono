@@ -5,6 +5,8 @@ import { MemoryClientAuthMethodPolicyRepository } from "../../src/adapters/db/me
 import { MemoryClientRepository } from "../../src/adapters/db/memory/memory-client-repository";
 import { MemoryTenantRepository } from "../../src/adapters/db/memory/memory-tenant-repository";
 import { MemoryUserRepository } from "../../src/adapters/db/memory/memory-user-repository";
+import { MemoryTotpRepository } from "../../src/adapters/db/memory/memory-totp-repository";
+import { MemoryMfaPasskeyChallengeRepository } from "../../src/adapters/db/memory/memory-mfa-passkey-challenge-repository";
 import { createApp } from "../../src/app/app";
 import type { AuthenticationLoginChallengeRepository } from "../../src/domain/authentication/login-challenge-repository";
 import type { ClientAuthMethodPolicy } from "../../src/domain/clients/types";
@@ -153,7 +155,10 @@ const makeApp = (
     clientRepository,
     clientAuthMethodPolicyRepository: policyRepo,
     loginChallengeLookupRepository: challengeRepo,
-    loginChallengeRepository: challengeRepo
+    loginChallengeRepository: challengeRepo,
+    totpRepository: new MemoryTotpRepository(),
+    mfaPasskeyChallengeRepository: new MemoryMfaPasskeyChallengeRepository(),
+    totpEncryptionKey: new Uint8Array(32).fill(7)
   });
 
 const makePolicy = (

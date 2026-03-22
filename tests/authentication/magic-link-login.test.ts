@@ -7,6 +7,8 @@ import { MemoryTenantRepository } from "../../src/adapters/db/memory/memory-tena
 import { MemoryUserRepository } from "../../src/adapters/db/memory/memory-user-repository";
 import { MemoryUserSessionRepository } from "../../src/adapters/db/memory/memory-user-session-repository";
 import { MemoryMagicLinkRepository } from "../../src/adapters/db/memory/memory-magic-link-repository";
+import { MemoryTotpRepository } from "../../src/adapters/db/memory/memory-totp-repository";
+import { MemoryMfaPasskeyChallengeRepository } from "../../src/adapters/db/memory/memory-mfa-passkey-challenge-repository";
 import { createApp } from "../../src/app/app";
 import type { AuthenticationLoginChallengeRepository } from "../../src/domain/authentication/login-challenge-repository";
 import type { LoginChallengeRepository } from "../../src/domain/authorization/repository";
@@ -211,6 +213,9 @@ describe("magic link login", () => {
       managementApiToken: "",
       oidcHost: "idp.example.test", authDomain: "auth.example.test",
       tenantRepository,
+      totpRepository: new MemoryTotpRepository(),
+      mfaPasskeyChallengeRepository: new MemoryMfaPasskeyChallengeRepository(),
+      totpEncryptionKey: new Uint8Array(32).fill(7),
       userRepository: buildUserRepository()
     });
 
@@ -255,6 +260,9 @@ describe("magic link login", () => {
       managementApiToken: "",
       oidcHost: "idp.example.test", authDomain: "auth.example.test",
       tenantRepository,
+      totpRepository: new MemoryTotpRepository(),
+      mfaPasskeyChallengeRepository: new MemoryMfaPasskeyChallengeRepository(),
+      totpEncryptionKey: new Uint8Array(32).fill(7),
       userRepository: buildUserRepository()
     });
 
@@ -316,6 +324,9 @@ describe("magic link login", () => {
       managementApiToken: "",
       oidcHost: "idp.example.test", authDomain: "auth.example.test",
       tenantRepository,
+      totpRepository: new MemoryTotpRepository(),
+      mfaPasskeyChallengeRepository: new MemoryMfaPasskeyChallengeRepository(),
+      totpEncryptionKey: new Uint8Array(32).fill(7),
       userRepository: buildUserRepository()
     });
 
@@ -371,6 +382,9 @@ describe("magic link login", () => {
       managementApiToken: "",
       oidcHost: "idp.example.test", authDomain: "auth.example.test",
       tenantRepository,
+      totpRepository: new MemoryTotpRepository(),
+      mfaPasskeyChallengeRepository: new MemoryMfaPasskeyChallengeRepository(),
+      totpEncryptionKey: new Uint8Array(32).fill(7),
       userRepository: buildUserRepository()
     });
 
@@ -427,6 +441,9 @@ describe("magic link login", () => {
       managementApiToken: "",
       oidcHost: "idp.example.test", authDomain: "auth.example.test",
       tenantRepository,
+      totpRepository: new MemoryTotpRepository(),
+      mfaPasskeyChallengeRepository: new MemoryMfaPasskeyChallengeRepository(),
+      totpEncryptionKey: new Uint8Array(32).fill(7),
       userRepository: new MemoryUserRepository({
         policies: [
           {
@@ -488,6 +505,9 @@ describe("magic link login", () => {
       managementApiToken: "",
       oidcHost: "idp.example.test", authDomain: "auth.example.test",
       tenantRepository,
+      totpRepository: new MemoryTotpRepository(),
+      mfaPasskeyChallengeRepository: new MemoryMfaPasskeyChallengeRepository(),
+      totpEncryptionKey: new Uint8Array(32).fill(7),
       userRepository: buildUserRepository()
     });
 

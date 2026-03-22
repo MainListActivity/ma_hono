@@ -996,6 +996,8 @@ export const createApp = (options: AppOptions) => {
       return context.json({ error: "invalid_request" }, 400);
     }
 
+    const loginChallengeToken = String(formData.get("login_challenge") ?? "");
+
     const result = await consumeMagicLink({
       loginChallengeRepository: loginChallengeLookupRepository,
       magicLinkRepository,
@@ -1016,11 +1018,29 @@ export const createApp = (options: AppOptions) => {
       return context.json(
         {
           mfa_state: mfaCheckMl.mfaState,
-          login_challenge: result.challenge.tokenHash,
+          login_challenge: loginChallengeToken,
           ...(mfaCheckMl.hasTotpFallback ? { has_totp_fallback: true } : {})
         },
         200
       );
+    }
+
+    const consumeSucceeded = await loginChallengeLookupRepository.consume(
+      result.challenge.id,
+      new Date().toISOString()
+    );
+
+    if (!consumeSucceeded) {
+      await recordAuditEventBestEffort({
+        actorType: "anonymous",
+        actorId: null,
+        tenantId: issuerContext.tenant.id,
+        eventType: "user.magic_link.consumed",
+        targetType: "user",
+        targetId: null,
+        payload: { reason: "invalid_login_challenge" }
+      });
+      return context.json({ error: "invalid_request" }, 400);
     }
 
     const { session, sessionToken } = await createBrowserSession({
@@ -1275,12 +1295,15 @@ export const createApp = (options: AppOptions) => {
       assertion_session_id?: string;
       credential_id?: string;
       sign_count?: number;
+      login_challenge?: string;
     };
     try {
       payload = await context.req.json();
     } catch {
       return context.json({ error: "invalid_request" }, 400);
     }
+
+    const loginChallengeToken = String(payload.login_challenge ?? "");
 
     const result = await finishPasskeyLogin({
       assertionSessionId: payload.assertion_session_id ?? "",
@@ -1315,11 +1338,29 @@ export const createApp = (options: AppOptions) => {
       return context.json(
         {
           mfa_state: mfaCheckPk.mfaState,
-          login_challenge: result.challenge.tokenHash,
+          login_challenge: loginChallengeToken,
           ...(mfaCheckPk.hasTotpFallback ? { has_totp_fallback: true } : {})
         },
         200
       );
+    }
+
+    const consumeSucceeded = await loginChallengeLookupRepository.consume(
+      result.challenge.id,
+      new Date().toISOString()
+    );
+
+    if (!consumeSucceeded) {
+      await recordAuditEventBestEffort({
+        actorType: "anonymous",
+        actorId: null,
+        tenantId: issuerContext.tenant.id,
+        eventType: "user.passkey.login.failed",
+        targetType: "user",
+        targetId: null,
+        payload: { reason: "invalid_login_challenge" }
+      });
+      return context.json({ error: "invalid_request" }, 400);
     }
 
     const { session, sessionToken } = await createBrowserSession({
