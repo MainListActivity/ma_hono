@@ -78,10 +78,15 @@ describe("PATCH /admin/tenants/:tenantId/clients/:clientId/auth-method-policy", 
       id: "client_1",
       tenantId: "tenant_acme",
       clientId: "test-client",
-      clientSecret: "secret",
+      clientName: "Test Client",
+      applicationType: "web",
+      grantTypes: ["authorization_code"],
       redirectUris: ["https://app.example.test/callback"],
-      scope: "openid profile email",
-      allowedOrigins: []
+      responseTypes: ["code"],
+      tokenEndpointAuthMethod: "none",
+      clientSecretHash: null,
+      trustLevel: "first_party_trusted",
+      consentPolicy: "skip"
     });
 
     // PATCH the auth-method-policy with mfa_required: true
@@ -111,10 +116,15 @@ describe("PATCH /admin/tenants/:tenantId/clients/:clientId/auth-method-policy", 
       id: "client_2",
       tenantId: "tenant_acme",
       clientId: "test-client-2",
-      clientSecret: "secret",
+      clientName: "Test Client 2",
+      applicationType: "web",
+      grantTypes: ["authorization_code"],
       redirectUris: ["https://app.example.test/callback"],
-      scope: "openid profile email",
-      allowedOrigins: []
+      responseTypes: ["code"],
+      tokenEndpointAuthMethod: "none",
+      clientSecretHash: null,
+      trustLevel: "first_party_trusted",
+      consentPolicy: "skip"
     });
 
     // First PATCH: set mfa_required to true

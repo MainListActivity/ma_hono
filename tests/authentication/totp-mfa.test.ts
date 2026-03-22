@@ -282,10 +282,13 @@ const makeMfaApp = async ({
     },
     invitation: {
       id: "inv1", tenantId: "tenant_acme", userId: "user1", tokenHash: "th1",
-      purpose: "activation", expiresAt: new Date(Date.now() + 3600_000).toISOString(),
+      purpose: "account_activation", expiresAt: new Date(Date.now() + 3600_000).toISOString(),
       consumedAt: null, createdAt: new Date().toISOString()
-    },
-    credential: { passwordHash: "x" }
+    }
+  });
+  await userRepo.upsertPasswordCredential({
+    id: "cred1", tenantId: "tenant_acme", userId: "user1",
+    passwordHash: "x", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString()
   });
 
   const totpRepository = new MemoryTotpRepository();
