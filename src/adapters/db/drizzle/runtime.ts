@@ -1,4 +1,4 @@
-import { and, desc, eq, isNull, or } from "drizzle-orm";
+import { and, desc, eq, isNull, or, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 
 import type { AuditRepository } from "../../../domain/audit/repository";
@@ -22,6 +22,11 @@ import type { KeyRepository } from "../../../domain/keys/repository";
 import { createSigningKeySigner } from "../../../domain/keys/signer";
 import type { SigningKey, SigningKeyMaterial } from "../../../domain/keys/types";
 import type { RuntimeConfig } from "../../../config/env";
+import type { TotpCredential, TotpRepository } from "../../../domain/mfa/totp-repository";
+import type {
+  MfaPasskeyChallenge,
+  MfaPasskeyChallengeRepository
+} from "../../../domain/mfa/mfa-passkey-challenge-repository";
 import type { TenantRepository, TenantUpdateInput } from "../../../domain/tenants/repository";
 import type { Tenant, TenantIssuer } from "../../../domain/tenants/types";
 import type {
@@ -52,7 +57,9 @@ import {
   userInvitations,
   userPasswordCredentials,
   users,
-  webauthnCredentials
+  webauthnCredentials,
+  totpCredentials,
+  mfaPasskeyChallenges
 } from "./schema";
 
 const adminSessionPrefix = "admin_session:";
@@ -1051,6 +1058,7 @@ class D1ClientAuthMethodPolicyRepository implements ClientAuthMethodPolicyReposi
       appleEnabled: policy.apple.enabled,
       facebookEnabled: policy.facebook.enabled,
       wechatEnabled: policy.wechat.enabled,
+      mfaRequired: policy.mfaRequired,
       createdAt: now,
       updatedAt: now
     });
@@ -1080,9 +1088,108 @@ class D1ClientAuthMethodPolicyRepository implements ClientAuthMethodPolicyReposi
         appleEnabled: policy.apple.enabled,
         facebookEnabled: policy.facebook.enabled,
         wechatEnabled: policy.wechat.enabled,
+        mfaRequired: policy.mfaRequired,
         updatedAt: now
       })
       .where(eq(clientAuthMethodPolicies.clientId, policy.clientId));
+  }
+}
+
+export class D1TotpRepository implements TotpRepository {
+  constructor(private readonly db: ReturnType<typeof drizzle>) {}
+
+  async create(credential: TotpCredential): Promise<void> {
+    await this.db.insert(totpCredentials).values({
+      id: credential.id,
+      tenantId: credential.tenantId,
+      userId: credential.userId,
+      secretEncrypted: credential.secretEncrypted,
+      algorithm: credential.algorithm,
+      digits: credential.digits,
+      period: credential.period,
+      lastUsedWindow: credential.lastUsedWindow,
+      enrolledAt: credential.enrolledAt,
+      createdAt: credential.createdAt
+    });
+  }
+
+  async findByTenantAndUser(tenantId: string, userId: string): Promise<TotpCredential | null> {
+    const [row] = await this.db
+      .select()
+      .from(totpCredentials)
+      .where(
+        and(
+          eq(totpCredentials.tenantId, tenantId),
+          eq(totpCredentials.userId, userId)
+        )
+      )
+      .limit(1);
+    if (row === undefined) return null;
+    return {
+      id: row.id,
+      tenantId: row.tenantId,
+      userId: row.userId,
+      secretEncrypted: row.secretEncrypted,
+      algorithm: row.algorithm,
+      digits: row.digits,
+      period: row.period,
+      lastUsedWindow: row.lastUsedWindow,
+      enrolledAt: row.enrolledAt,
+      createdAt: row.createdAt
+    };
+  }
+
+  async updateLastUsedWindow(id: string, lastUsedWindow: number): Promise<void> {
+    await this.db
+      .update(totpCredentials)
+      .set({ lastUsedWindow })
+      .where(eq(totpCredentials.id, id));
+  }
+}
+
+export class D1MfaPasskeyChallengeRepository implements MfaPasskeyChallengeRepository {
+  constructor(private readonly db: ReturnType<typeof drizzle>) {}
+
+  async create(challenge: MfaPasskeyChallenge): Promise<void> {
+    await this.db.insert(mfaPasskeyChallenges).values({
+      id: challenge.id,
+      tenantId: challenge.tenantId,
+      loginChallengeId: challenge.loginChallengeId,
+      challengeHash: challenge.challengeHash,
+      expiresAt: challenge.expiresAt,
+      consumedAt: challenge.consumedAt,
+      createdAt: challenge.createdAt
+    });
+  }
+
+  async consumeByChallengeHash(
+    challengeHash: string,
+    consumedAt: string,
+    now: string
+  ): Promise<MfaPasskeyChallenge | null> {
+    const result = await this.db
+      .update(mfaPasskeyChallenges)
+      .set({ consumedAt })
+      .where(
+        and(
+          eq(mfaPasskeyChallenges.challengeHash, challengeHash),
+          isNull(mfaPasskeyChallenges.consumedAt),
+          sql`${mfaPasskeyChallenges.expiresAt} > ${now}`
+        )
+      )
+      .returning();
+
+    return result[0] === undefined
+      ? null
+      : {
+          id: result[0].id,
+          tenantId: result[0].tenantId,
+          loginChallengeId: result[0].loginChallengeId,
+          challengeHash: result[0].challengeHash,
+          expiresAt: result[0].expiresAt,
+          consumedAt: result[0].consumedAt,
+          createdAt: result[0].createdAt
+        };
   }
 }
 
