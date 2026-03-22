@@ -520,6 +520,7 @@ describe("MFA — passkey step-up brute-force lockout", () => {
           body: JSON.stringify({
             login_challenge: token,
             challenge_hash: ch.challengeHash,
+            challenge: "fakenonce" + i,
             credential_id: "webauthn-credential-id-fixture",
             response: {
               authenticator_data: toB64(fakeAuthData),

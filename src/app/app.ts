@@ -3,7 +3,7 @@ import { ZodError } from "zod";
 
 import { authenticateWithPassword } from "../adapters/auth/local-auth/password-auth-service";
 import { consumeMagicLink, requestMagicLink } from "../adapters/auth/local-auth/magic-link-service";
-import { decryptTotpSecret } from "../adapters/auth/totp/totp-crypto";
+import { decryptTotpSecret, encryptTotpSecret } from "../adapters/auth/totp/totp-crypto";
 import {
   finishPasskeyEnrollment,
   finishPasskeyLogin,
@@ -1722,6 +1722,7 @@ export const createApp = (options: AppOptions) => {
     let payload: {
       login_challenge?: string;
       challenge_hash?: string;
+      challenge?: string;
       credential_id?: string;
       response?: {
         authenticator_data?: string;
@@ -1735,8 +1736,9 @@ export const createApp = (options: AppOptions) => {
 
     const token = (payload.login_challenge ?? "").trim();
     const challengeHash = (payload.challenge_hash ?? "").trim();
+    const challengeNonce = (payload.challenge ?? "").trim();
     const credentialId = (payload.credential_id ?? "").trim();
-    if (!token || !challengeHash || !credentialId) {
+    if (!token || !challengeHash || !challengeNonce || !credentialId) {
       return context.json({ error: "invalid_request" }, 400);
     }
 
@@ -1792,7 +1794,7 @@ export const createApp = (options: AppOptions) => {
             signature: authResponse.signature ?? ""
           }
         } as Parameters<typeof verifyAuthenticationResponse>[0]["response"],
-        expectedChallenge: challengeHash,
+        expectedChallenge: challengeNonce,
         expectedOrigin: new URL(issuerContext.issuer).origin,
         expectedRPID: new URL(issuerContext.issuer).hostname,
         credential: {
@@ -1863,9 +1865,7 @@ export const createApp = (options: AppOptions) => {
     }
 
     const rawSecret = generateTotpSecret();
-    const secretEncrypted = await (await import("../adapters/auth/totp/totp-crypto")).encryptTotpSecret(
-      rawSecret, totpEncryptionKey
-    );
+    const secretEncrypted = await encryptTotpSecret(rawSecret, totpEncryptionKey);
 
     await loginChallengeLookupRepository.setTotpEnrollmentSecret(challenge.id, secretEncrypted);
 
