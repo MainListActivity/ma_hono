@@ -246,6 +246,7 @@ export const clientAuthMethodPolicies = sqliteTable(
     appleEnabled: integer("apple_enabled", { mode: "boolean" }).notNull().default(false),
     facebookEnabled: integer("facebook_enabled", { mode: "boolean" }).notNull().default(false),
     wechatEnabled: integer("wechat_enabled", { mode: "boolean" }).notNull().default(false),
+    mfaRequired: integer("mfa_required", { mode: "boolean" }).notNull().default(false),
     createdAt: text("created_at").notNull(),
     updatedAt: text("updated_at").notNull()
   },
@@ -299,6 +300,11 @@ export const loginChallenges = sqliteTable(
     codeChallengeMethod: text("code_challenge_method").notNull(),
     nonce: text("nonce"),
     tokenHash: text("token_hash").notNull(),
+    authenticatedUserId: text("authenticated_user_id"),
+    mfaState: text("mfa_state").notNull().default("none"),
+    mfaAttemptCount: integer("mfa_attempt_count").notNull().default(0),
+    enrollmentAttemptCount: integer("enrollment_attempt_count").notNull().default(0),
+    totpEnrollmentSecretEncrypted: text("totp_enrollment_secret_encrypted"),
     expiresAt: text("expires_at").notNull(),
     consumedAt: text("consumed_at"),
     createdAt: text("created_at").notNull()
@@ -389,3 +395,55 @@ export const platformConfig = sqliteTable("platform_config", {
   value: text("value").notNull(),
   updatedAt: text("updated_at").notNull()
 });
+
+export const totpCredentials = sqliteTable(
+  "totp_credentials",
+  {
+    id: text("id").primaryKey(),
+    tenantId: text("tenant_id")
+      .notNull()
+      .references(() => tenants.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    secretEncrypted: text("secret_encrypted").notNull(),
+    algorithm: text("algorithm").notNull(),
+    digits: integer("digits").notNull(),
+    period: integer("period").notNull(),
+    lastUsedWindow: integer("last_used_window").notNull().default(0),
+    enrolledAt: text("enrolled_at").notNull(),
+    createdAt: text("created_at").notNull()
+  },
+  (table) => ({
+    tenantUserFk: foreignKey({
+      columns: [table.tenantId, table.userId],
+      foreignColumns: [users.tenantId, users.id]
+    }).onDelete("cascade"),
+    tenantIdIdx: index("totp_credentials_tenant_id_idx").on(table.tenantId),
+    tenantUserUnique: uniqueIndex("totp_credentials_tenant_user_unique").on(
+      table.tenantId,
+      table.userId
+    )
+  })
+);
+
+export const mfaPasskeyChallenges = sqliteTable(
+  "mfa_passkey_challenges",
+  {
+    id: text("id").primaryKey(),
+    tenantId: text("tenant_id")
+      .notNull()
+      .references(() => tenants.id, { onDelete: "cascade" }),
+    loginChallengeId: text("login_challenge_id").notNull(),
+    challengeHash: text("challenge_hash").notNull(),
+    expiresAt: text("expires_at").notNull(),
+    consumedAt: text("consumed_at"),
+    createdAt: text("created_at").notNull()
+  },
+  (table) => ({
+    tenantIdIdx: index("mfa_passkey_challenges_tenant_id_idx").on(table.tenantId),
+    challengeHashActiveUnique: uniqueIndex("mfa_passkey_challenges_challenge_hash_active_unique")
+      .on(table.challengeHash)
+      .where(sql`${table.consumedAt} IS NULL`)
+  })
+);

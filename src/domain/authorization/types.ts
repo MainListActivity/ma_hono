@@ -45,6 +45,11 @@ export interface LoginChallenge {
   tokenHash: string;
   expiresAt: string;
   consumedAt: string | null;
+  authenticatedUserId: string | null;
+  mfaState: "none" | "pending_totp" | "pending_passkey_step_up" | "pending_enrollment" | "satisfied";
+  mfaAttemptCount: number;
+  enrollmentAttemptCount: number;
+  totpEnrollmentSecretEncrypted: string | null;
   createdAt: string;
 }
 

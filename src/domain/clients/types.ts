@@ -19,6 +19,7 @@ export interface ClientAuthMethodPolicy {
   apple: { enabled: boolean };
   facebook: { enabled: boolean };
   wechat: { enabled: boolean };
+  mfaRequired: boolean;
 }
 
 export interface Client {
