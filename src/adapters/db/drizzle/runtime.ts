@@ -524,7 +524,7 @@ class D1LoginChallengeRepository
     };
   }
 
-  async setMfaState(challengeId: string, authenticatedUserId: string, mfaState: string): Promise<void> {
+  async setMfaState(challengeId: string, authenticatedUserId: string, mfaState: LoginChallenge["mfaState"]): Promise<void> {
     await this.db.update(loginChallenges)
       .set({ authenticatedUserId, mfaState })
       .where(eq(loginChallenges.id, challengeId));
