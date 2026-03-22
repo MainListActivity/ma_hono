@@ -66,6 +66,30 @@ export const getTenant = async (token: string, tenantId: string) => {
   return res.json() as Promise<TenantSummary>;
 };
 
+export const updateTenant = async (
+  token: string,
+  tenantId: string,
+  payload: { display_name?: string; status?: string; primary_issuer_url?: string }
+) => {
+  const res = await checkOk(
+    await fetch(`${BASE_URL}/admin/tenants/${tenantId}`, {
+      method: "PATCH",
+      headers: authHeaders(token),
+      body: JSON.stringify(payload)
+    })
+  );
+  return res.json() as Promise<TenantSummary>;
+};
+
+export const deleteTenant = async (token: string, tenantId: string) => {
+  await checkOk(
+    await fetch(`${BASE_URL}/admin/tenants/${tenantId}`, {
+      method: "DELETE",
+      headers: authHeaders(token)
+    })
+  );
+};
+
 export const createTenant = async (token: string, slug: string, displayName: string) => {
   const res = await checkOk(
     await fetch(`${BASE_URL}/admin/tenants`, {

@@ -22,7 +22,7 @@ import type { KeyRepository } from "../../../domain/keys/repository";
 import { createSigningKeySigner } from "../../../domain/keys/signer";
 import type { SigningKey, SigningKeyMaterial } from "../../../domain/keys/types";
 import type { RuntimeConfig } from "../../../config/env";
-import type { TenantRepository } from "../../../domain/tenants/repository";
+import type { TenantRepository, TenantUpdateInput } from "../../../domain/tenants/repository";
 import type { Tenant, TenantIssuer } from "../../../domain/tenants/types";
 import type {
   ActivateUserByInvitationTokenInput,
@@ -291,6 +291,41 @@ class D1TenantRepository implements TenantRepository {
         issuerRows.filter((r) => r.tenantId === tenantRow.id)
       )
     );
+  }
+
+  async update(id: string, input: TenantUpdateInput): Promise<void> {
+    const now = new Date().toISOString();
+    const ops: ReturnType<typeof this.db.update>[] = [];
+
+    if (input.displayName !== undefined || input.status !== undefined) {
+      ops.push(
+        this.db
+          .update(tenants)
+          .set({
+            ...(input.displayName !== undefined ? { displayName: input.displayName } : {}),
+            ...(input.status !== undefined ? { status: input.status } : {}),
+            updatedAt: now
+          })
+          .where(eq(tenants.id, id))
+      );
+    }
+
+    if (input.primaryIssuerUrl !== undefined) {
+      ops.push(
+        this.db
+          .update(tenantIssuers)
+          .set({ issuerUrl: input.primaryIssuerUrl, updatedAt: now })
+          .where(and(eq(tenantIssuers.tenantId, id), eq(tenantIssuers.isPrimary, true)))
+      );
+    }
+
+    if (ops.length > 0) {
+      await this.db.batch(ops as [typeof ops[0], ...typeof ops]);
+    }
+  }
+
+  async delete(id: string): Promise<void> {
+    await this.db.delete(tenants).where(eq(tenants.id, id));
   }
 }
 

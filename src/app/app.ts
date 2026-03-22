@@ -47,6 +47,14 @@ class EmptyTenantRepository implements TenantRepository {
     return;
   }
 
+  async update(): Promise<void> {
+    return;
+  }
+
+  async delete(): Promise<void> {
+    return;
+  }
+
   async findById(): Promise<null> {
     return null;
   }
@@ -1792,6 +1800,72 @@ export const createApp = (options: AppOptions) => {
       return context.notFound();
     }
     return context.json(tenantToWire(tenant));
+  });
+
+  app.patch("/admin/tenants/:tenantId", async (context) => {
+    const session = await authenticateAdminSession({
+      adminRepository,
+      authorizationHeader: context.req.header("authorization")
+    });
+    if (session === null) {
+      return context.json({ error: "unauthorized" }, 401);
+    }
+    const tenantId = context.req.param("tenantId");
+    const tenant = await tenantRepository.findById(tenantId);
+    if (tenant === null) {
+      return context.notFound();
+    }
+    const payload = await context.req.json<{
+      display_name?: string;
+      status?: string;
+      primary_issuer_url?: string;
+    }>();
+    const input: import("../domain/tenants/repository").TenantUpdateInput = {};
+    if (payload.display_name !== undefined) {
+      const v = payload.display_name.trim();
+      if (v.length === 0) return context.json({ error: "invalid_request" }, 400);
+      input.displayName = v;
+    }
+    if (payload.status !== undefined) {
+      if (payload.status !== "active" && payload.status !== "disabled") {
+        return context.json({ error: "invalid_request" }, 400);
+      }
+      input.status = payload.status;
+    }
+    if (payload.primary_issuer_url !== undefined) {
+      const v = payload.primary_issuer_url.trim();
+      if (v.length === 0) return context.json({ error: "invalid_request" }, 400);
+      input.primaryIssuerUrl = v;
+    }
+    await tenantRepository.update(tenantId, input);
+    const updated = await tenantRepository.findById(tenantId);
+    return context.json(tenantToWire(updated!));
+  });
+
+  app.delete("/admin/tenants/:tenantId", async (context) => {
+    const session = await authenticateAdminSession({
+      adminRepository,
+      authorizationHeader: context.req.header("authorization")
+    });
+    if (session === null) {
+      return context.json({ error: "unauthorized" }, 401);
+    }
+    const tenantId = context.req.param("tenantId");
+    const tenant = await tenantRepository.findById(tenantId);
+    if (tenant === null) {
+      return context.notFound();
+    }
+    await tenantRepository.delete(tenantId);
+    await recordAuditEventBestEffort({
+      actorType: "admin_user",
+      actorId: session.adminUserId,
+      tenantId: null,
+      eventType: "tenant.deleted",
+      targetType: "tenant",
+      targetId: tenantId,
+      payload: { slug: tenant.slug }
+    });
+    return context.json({ deleted: true });
   });
 
   app.get("/admin/tenants/:tenantId/users", async (context) => {
