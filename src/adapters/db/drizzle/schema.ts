@@ -227,6 +227,33 @@ export const tenantAuthMethodPolicies = sqliteTable(
   })
 );
 
+export const clientAuthMethodPolicies = sqliteTable(
+  "client_auth_method_policies",
+  {
+    clientId: text("client_id")
+      .primaryKey()
+      .references(() => oidcClients.id, { onDelete: "cascade" }),
+    tenantId: text("tenant_id")
+      .notNull()
+      .references(() => tenants.id, { onDelete: "cascade" }),
+    passwordEnabled: integer("password_enabled", { mode: "boolean" }).notNull().default(false),
+    passwordAllowRegistration: integer("password_allow_registration", { mode: "boolean" }).notNull().default(false),
+    magicLinkEnabled: integer("magic_link_enabled", { mode: "boolean" }).notNull().default(false),
+    magicLinkAllowRegistration: integer("magic_link_allow_registration", { mode: "boolean" }).notNull().default(false),
+    passkeyEnabled: integer("passkey_enabled", { mode: "boolean" }).notNull().default(false),
+    passkeyAllowRegistration: integer("passkey_allow_registration", { mode: "boolean" }).notNull().default(false),
+    googleEnabled: integer("google_enabled", { mode: "boolean" }).notNull().default(false),
+    appleEnabled: integer("apple_enabled", { mode: "boolean" }).notNull().default(false),
+    facebookEnabled: integer("facebook_enabled", { mode: "boolean" }).notNull().default(false),
+    wechatEnabled: integer("wechat_enabled", { mode: "boolean" }).notNull().default(false),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull()
+  },
+  (table) => ({
+    tenantIdIdx: index("client_auth_method_policies_tenant_id_idx").on(table.tenantId)
+  })
+);
+
 export const userInvitations = sqliteTable(
   "user_invitations",
   {
