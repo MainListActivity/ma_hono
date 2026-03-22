@@ -5,6 +5,7 @@ import {
   consumeMagicLink,
   getChallengeInfo,
   loginWithPassword,
+  registerUser,
   requestMagicLink
 } from "../api/client";
 
@@ -72,13 +73,119 @@ const METHOD_LABELS: Record<string, string> = {
 
 // ─── Sub-forms ─────────────────────────────────────────────────────────────────
 
-function PasswordForm({
+function RegisterForm({
   tenantSlug,
-  loginChallenge
+  loginChallenge,
+  onBackToSignIn
 }: {
   tenantSlug: string;
   loginChallenge: string;
+  onBackToSignIn: () => void;
 }) {
+  const [email, setEmail] = useState("");
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    if (password !== confirmPassword) {
+      setError("Passwords do not match");
+      return;
+    }
+    if (password.length < 8) {
+      setError("Password must be at least 8 characters");
+      return;
+    }
+    setLoading(true);
+    try {
+      const res = await registerUser(tenantSlug, {
+        login_challenge: loginChallenge,
+        email,
+        ...(username.trim() ? { username: username.trim() } : {}),
+        password
+      });
+      if (res.status === 302 || res.type === "opaqueredirect") {
+        const location = res.headers.get("location");
+        if (location) { window.location.href = location; return; }
+      }
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({})) as { error?: string };
+        if (body.error === "email_already_exists") {
+          setError("An account with this email already exists. Please sign in.");
+        } else {
+          setError(body.error ?? "Registration failed");
+        }
+        return;
+      }
+    } catch {
+      setError("Network error — please try again");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <form onSubmit={handleSubmit}>
+      {error && (
+        <div style={{ marginBottom: "16px", padding: "10px 12px", border: "1px solid rgba(239,68,68,0.3)", background: "rgba(239,68,68,0.05)" }}>
+          <span className="font-display" style={{ fontSize: "10px", color: "#ef4444", letterSpacing: "0.08em" }}>✕ {error}</span>
+        </div>
+      )}
+      <div style={{ marginBottom: "14px" }}>
+        <label className="font-display" style={labelStyle}>Email</label>
+        <input type="email" value={email} onChange={e => setEmail(e.target.value)} required autoComplete="email"
+          style={inputStyle}
+          onFocus={e => (e.target.style.borderColor = "var(--accent-cyan)")}
+          onBlur={e => (e.target.style.borderColor = "var(--border)")} />
+      </div>
+      <div style={{ marginBottom: "14px" }}>
+        <label className="font-display" style={labelStyle}>Username (optional)</label>
+        <input type="text" value={username} onChange={e => setUsername(e.target.value)} autoComplete="username"
+          style={inputStyle}
+          onFocus={e => (e.target.style.borderColor = "var(--accent-cyan)")}
+          onBlur={e => (e.target.style.borderColor = "var(--border)")} />
+      </div>
+      <div style={{ marginBottom: "14px" }}>
+        <label className="font-display" style={labelStyle}>Password</label>
+        <input type="password" value={password} onChange={e => setPassword(e.target.value)} required autoComplete="new-password"
+          style={inputStyle}
+          onFocus={e => (e.target.style.borderColor = "var(--accent-cyan)")}
+          onBlur={e => (e.target.style.borderColor = "var(--border)")} />
+      </div>
+      <div style={{ marginBottom: "20px" }}>
+        <label className="font-display" style={labelStyle}>Confirm Password</label>
+        <input type="password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} required autoComplete="new-password"
+          style={inputStyle}
+          onFocus={e => (e.target.style.borderColor = "var(--accent-cyan)")}
+          onBlur={e => (e.target.style.borderColor = "var(--border)")} />
+      </div>
+      <button type="submit" disabled={loading} style={primaryButtonStyle(loading)}>
+        {loading ? "Creating account..." : "Create Account"}
+      </button>
+      <div style={{ textAlign: "center", marginTop: "16px" }}>
+        <button type="button" onClick={onBackToSignIn}
+          style={{ background: "none", border: "none", color: "var(--text-muted)", fontSize: "12px", cursor: "pointer", textDecoration: "underline" }}>
+          Back to sign in
+        </button>
+      </div>
+    </form>
+  );
+}
+
+function PasswordForm({
+  tenantSlug,
+  loginChallenge,
+  allowRegistration
+}: {
+  tenantSlug: string;
+  loginChallenge: string;
+  allowRegistration: boolean;
+}) {
+  const [showRegister, setShowRegister] = useState(false);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -110,6 +217,16 @@ function PasswordForm({
       setLoading(false);
     }
   };
+
+  if (showRegister) {
+    return (
+      <RegisterForm
+        tenantSlug={tenantSlug}
+        loginChallenge={loginChallenge}
+        onBackToSignIn={() => setShowRegister(false)}
+      />
+    );
+  }
 
   return (
     <form onSubmit={handleSubmit}>
@@ -154,6 +271,17 @@ function PasswordForm({
       <button type="submit" disabled={loading} style={primaryButtonStyle(loading)}>
         {loading ? "Signing in..." : "Sign In"}
       </button>
+      {allowRegistration && (
+        <div style={{ textAlign: "center", marginTop: "16px" }}>
+          <span style={{ fontSize: "12px", color: "var(--text-muted)" }}>
+            Don't have an account?{" "}
+            <button type="button" onClick={() => setShowRegister(true)}
+              style={{ background: "none", border: "none", color: "var(--accent-cyan)", fontSize: "12px", cursor: "pointer", textDecoration: "underline" }}>
+              Register
+            </button>
+          </span>
+        </div>
+      )}
     </form>
   );
 }
@@ -380,7 +508,7 @@ export default function TenantLoginPage() {
     }
     getChallengeInfo(tenantSlug, loginChallenge).then(data => {
       setInfo(data);
-      if (data.methods.length > 0) setActiveMethod(data.methods[0]);
+      if (data.methods.length > 0) setActiveMethod(data.methods[0].method);
     }).catch(() => {
       setLoadError("This login session has expired or is invalid. Please return to the application and try again.");
     });
@@ -446,7 +574,7 @@ export default function TenantLoginPage() {
               {/* Method tabs — only shown when multiple methods available */}
               {info.methods.length > 1 && (
                 <div style={{ display: "flex", borderBottom: "1px solid var(--border)" }}>
-                  {info.methods.map(method => (
+                  {info.methods.map(({ method }) => (
                     <button
                       key={method}
                       type="button"
@@ -465,7 +593,13 @@ export default function TenantLoginPage() {
                     No login methods are currently available. Please contact your administrator.
                   </p>
                 ) : activeMethod === "password" ? (
-                  <PasswordForm tenantSlug={tenantSlug!} loginChallenge={loginChallenge} />
+                  <PasswordForm
+                    tenantSlug={tenantSlug!}
+                    loginChallenge={loginChallenge}
+                    allowRegistration={
+                      info.methods.find((m) => m.method === "password")?.allow_registration ?? false
+                    }
+                  />
                 ) : activeMethod === "magic_link" ? (
                   <MagicLinkForm tenantSlug={tenantSlug!} loginChallenge={loginChallenge} />
                 ) : activeMethod === "passkey" ? (
