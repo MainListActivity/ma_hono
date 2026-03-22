@@ -41,6 +41,40 @@ class TestLoginChallengeRepository
       this.challenges.find((c) => c.tokenHash === tokenHash && c.consumedAt === null) ?? null
     );
   }
+
+  async setMfaState(challengeId: string, authenticatedUserId: string, mfaState: LoginChallenge["mfaState"]): Promise<void> {
+    const c = this.challenges.find(c => c.id === challengeId);
+    if (c) { c.authenticatedUserId = authenticatedUserId; c.mfaState = mfaState; }
+  }
+
+  async incrementMfaAttemptCount(challengeId: string): Promise<number> {
+    const c = this.challenges.find(c => c.id === challengeId);
+    if (!c) return 0;
+    c.mfaAttemptCount = (c.mfaAttemptCount ?? 0) + 1;
+    return c.mfaAttemptCount;
+  }
+
+  async incrementEnrollmentAttemptCount(challengeId: string): Promise<number> {
+    const c = this.challenges.find(c => c.id === challengeId);
+    if (!c) return 0;
+    c.enrollmentAttemptCount = (c.enrollmentAttemptCount ?? 0) + 1;
+    return c.enrollmentAttemptCount;
+  }
+
+  async satisfyMfa(challengeId: string): Promise<void> {
+    const c = this.challenges.find(c => c.id === challengeId);
+    if (c) c.mfaState = "satisfied";
+  }
+
+  async setTotpEnrollmentSecret(challengeId: string, secretEncrypted: string): Promise<void> {
+    const c = this.challenges.find(c => c.id === challengeId);
+    if (c) c.totpEnrollmentSecretEncrypted = secretEncrypted;
+  }
+
+  async completeEnrollment(challengeId: string): Promise<void> {
+    const c = this.challenges.find(c => c.id === challengeId);
+    if (c) { c.mfaState = "satisfied"; c.totpEnrollmentSecretEncrypted = null; }
+  }
 }
 
 const tenantRepository = new MemoryTenantRepository([

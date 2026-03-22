@@ -523,6 +523,48 @@ class D1LoginChallengeRepository
       createdAt: row.createdAt
     };
   }
+
+  async setMfaState(challengeId: string, authenticatedUserId: string, mfaState: string): Promise<void> {
+    await this.db.update(loginChallenges)
+      .set({ authenticatedUserId, mfaState })
+      .where(eq(loginChallenges.id, challengeId));
+  }
+
+  async incrementMfaAttemptCount(challengeId: string): Promise<number> {
+    // Atomic SQL increment — avoids read-then-write race condition under concurrent requests
+    await this.db.update(loginChallenges)
+      .set({ mfaAttemptCount: sql`${loginChallenges.mfaAttemptCount} + 1` })
+      .where(eq(loginChallenges.id, challengeId));
+    const [row] = await this.db.select({ count: loginChallenges.mfaAttemptCount })
+      .from(loginChallenges).where(eq(loginChallenges.id, challengeId)).limit(1);
+    return row?.count ?? 0;
+  }
+
+  async incrementEnrollmentAttemptCount(challengeId: string): Promise<number> {
+    // Atomic SQL increment — avoids read-then-write race condition under concurrent requests
+    await this.db.update(loginChallenges)
+      .set({ enrollmentAttemptCount: sql`${loginChallenges.enrollmentAttemptCount} + 1` })
+      .where(eq(loginChallenges.id, challengeId));
+    const [row] = await this.db.select({ count: loginChallenges.enrollmentAttemptCount })
+      .from(loginChallenges).where(eq(loginChallenges.id, challengeId)).limit(1);
+    return row?.count ?? 0;
+  }
+
+  async satisfyMfa(challengeId: string): Promise<void> {
+    await this.db.update(loginChallenges).set({ mfaState: "satisfied" })
+      .where(eq(loginChallenges.id, challengeId));
+  }
+
+  async setTotpEnrollmentSecret(challengeId: string, secretEncrypted: string): Promise<void> {
+    await this.db.update(loginChallenges).set({ totpEnrollmentSecretEncrypted: secretEncrypted })
+      .where(eq(loginChallenges.id, challengeId));
+  }
+
+  async completeEnrollment(challengeId: string): Promise<void> {
+    await this.db.update(loginChallenges)
+      .set({ mfaState: "satisfied", totpEnrollmentSecretEncrypted: null })
+      .where(eq(loginChallenges.id, challengeId));
+  }
 }
 
 class D1AuthorizationCodeRepository implements AuthorizationCodeRepository {

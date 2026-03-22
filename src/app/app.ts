@@ -130,6 +130,13 @@ class EmptyAuthenticationLoginChallengeRepository
   async findByTokenHash(): Promise<null> {
     return null;
   }
+
+  async setMfaState(): Promise<void> { return; }
+  async incrementMfaAttemptCount(): Promise<number> { return 0; }
+  async incrementEnrollmentAttemptCount(): Promise<number> { return 0; }
+  async satisfyMfa(): Promise<void> { return; }
+  async setTotpEnrollmentSecret(): Promise<void> { return; }
+  async completeEnrollment(): Promise<void> { return; }
 }
 
 class EmptyBrowserSessionRepository implements BrowserSessionRepository {
