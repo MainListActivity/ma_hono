@@ -1683,6 +1683,12 @@ export const createApp = (options: AppOptions) => {
       updatedAt: now
     };
 
+    // Consume the login challenge before creating the user to prevent replay attacks
+    const challengeConsumed = await loginChallengeLookupRepository.consume(challenge.id, now);
+    if (!challengeConsumed) {
+      return context.json({ error: "invalid_login_challenge" }, 400);
+    }
+
     // Create user with immediately-consumed invitation (for D1 batch atomicity)
     await userRepository.createProvisionedUserWithInvitation({
       user: newUser,
