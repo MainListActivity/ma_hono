@@ -8,6 +8,13 @@
       "when": 1760000000000,
       "tag": "0000_oidc_foundation",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1742630400000,
+      "tag": "0003_client_auth_method_policies",
+      "breakpoints": true
     }
   ]
 }
