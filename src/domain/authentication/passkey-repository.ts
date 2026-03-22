@@ -36,6 +36,7 @@ export interface PasskeyRepository {
   createCredential(credential: PasskeyCredential): Promise<void>;
   findCredentialByCredentialId(tenantId: string, credentialId: string): Promise<PasskeyCredential | null>;
   updateCredentialSignCount(id: string, signCount: number): Promise<void>;
+  listCredentialsByUserId(tenantId: string, userId: string): Promise<PasskeyCredential[]>;
   createAssertionSession(session: PasskeyAssertionSession): Promise<void>;
   findAssertionSessionById(id: string): Promise<PasskeyAssertionSession | null>;
   consumeAssertionSession(id: string, consumedAt: string): Promise<boolean>;

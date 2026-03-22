@@ -14,6 +14,8 @@ import { MemoryClientRepository } from "../../src/adapters/db/memory/memory-clie
 import { MemoryMagicLinkRepository } from "../../src/adapters/db/memory/memory-magic-link-repository";
 import { MemoryPasskeyRepository } from "../../src/adapters/db/memory/memory-passkey-repository";
 import { MemoryTenantRepository } from "../../src/adapters/db/memory/memory-tenant-repository";
+import { MemoryTotpRepository } from "../../src/adapters/db/memory/memory-totp-repository";
+import { MemoryMfaPasskeyChallengeRepository } from "../../src/adapters/db/memory/memory-mfa-passkey-challenge-repository";
 import { MemoryUserRepository } from "../../src/adapters/db/memory/memory-user-repository";
 import { MemoryUserSessionRepository } from "../../src/adapters/db/memory/memory-user-session-repository";
 import { createApp } from "../../src/app/app";
@@ -267,7 +269,10 @@ const buildApp = async (
     oidcHost: "idp.example.test", authDomain: "auth.example.test",
     signer,
     tenantRepository: buildTenantRepository(),
-    userRepository: resolvedUserRepository
+    userRepository: resolvedUserRepository,
+    totpRepository: new MemoryTotpRepository(),
+    mfaPasskeyChallengeRepository: new MemoryMfaPasskeyChallengeRepository(),
+    totpEncryptionKey: new Uint8Array(32).fill(0)
   });
 
   return {

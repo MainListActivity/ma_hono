@@ -49,6 +49,10 @@ export class MemoryPasskeyRepository implements PasskeyRepository {
     }
   }
 
+  async listCredentialsByUserId(tenantId: string, userId: string): Promise<PasskeyCredential[]> {
+    return this.credentials.filter(c => c.tenantId === tenantId && c.userId === userId);
+  }
+
   async createAssertionSession(session: PasskeyAssertionSession): Promise<void> {
     this.assertionSessions.push(session);
   }

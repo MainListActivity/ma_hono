@@ -5,6 +5,8 @@ import { MemoryAuthorizationCodeRepository } from "../../src/adapters/db/memory/
 import { MemoryClientRepository } from "../../src/adapters/db/memory/memory-client-repository";
 import { MemoryLoginChallengeRepository } from "../../src/adapters/db/memory/memory-login-challenge-repository";
 import { MemoryTenantRepository } from "../../src/adapters/db/memory/memory-tenant-repository";
+import { MemoryTotpRepository } from "../../src/adapters/db/memory/memory-totp-repository";
+import { MemoryMfaPasskeyChallengeRepository } from "../../src/adapters/db/memory/memory-mfa-passkey-challenge-repository";
 import { createApp } from "../../src/app/app";
 import { dynamicClientRegistrationSchema } from "../../src/domain/clients/registration-schema";
 import type { Client } from "../../src/domain/clients/types";
@@ -158,7 +160,10 @@ describe("/authorize", () => {
       managementApiToken: "",
       oidcHost: "idp.example.test",
       authDomain: "auth.example.test",
-      tenantRepository
+      tenantRepository,
+      totpRepository: new MemoryTotpRepository(),
+      mfaPasskeyChallengeRepository: new MemoryMfaPasskeyChallengeRepository(),
+      totpEncryptionKey: new Uint8Array(32).fill(0)
     });
 
     const response = await app.request(
@@ -211,7 +216,10 @@ describe("/authorize", () => {
       managementApiToken: "",
       oidcHost: "idp.example.test",
       authDomain: "auth.example.test",
-      tenantRepository
+      tenantRepository,
+      totpRepository: new MemoryTotpRepository(),
+      mfaPasskeyChallengeRepository: new MemoryMfaPasskeyChallengeRepository(),
+      totpEncryptionKey: new Uint8Array(32).fill(0)
     });
 
     const response = await app.request(
@@ -245,7 +253,10 @@ describe("/authorize", () => {
       managementApiToken: "",
       oidcHost: "idp.example.test",
       authDomain: "auth.example.test",
-      tenantRepository
+      tenantRepository,
+      totpRepository: new MemoryTotpRepository(),
+      mfaPasskeyChallengeRepository: new MemoryMfaPasskeyChallengeRepository(),
+      totpEncryptionKey: new Uint8Array(32).fill(0)
     });
 
     const response = await app.request(
@@ -266,7 +277,10 @@ describe("/authorize", () => {
       managementApiToken: "",
       oidcHost: "idp.example.test",
       authDomain: "auth.example.test",
-      tenantRepository
+      tenantRepository,
+      totpRepository: new MemoryTotpRepository(),
+      mfaPasskeyChallengeRepository: new MemoryMfaPasskeyChallengeRepository(),
+      totpEncryptionKey: new Uint8Array(32).fill(0)
     });
 
     const response = await app.request(
@@ -296,7 +310,10 @@ describe("/authorize", () => {
       managementApiToken: "",
       oidcHost: "idp.example.test",
       authDomain: "auth.example.test",
-      tenantRepository
+      tenantRepository,
+      totpRepository: new MemoryTotpRepository(),
+      mfaPasskeyChallengeRepository: new MemoryMfaPasskeyChallengeRepository(),
+      totpEncryptionKey: new Uint8Array(32).fill(0)
     });
 
     const response = await app.request(
@@ -317,7 +334,10 @@ describe("/authorize", () => {
       managementApiToken: "",
       oidcHost: "idp.example.test",
       authDomain: "auth.example.test",
-      tenantRepository
+      tenantRepository,
+      totpRepository: new MemoryTotpRepository(),
+      mfaPasskeyChallengeRepository: new MemoryMfaPasskeyChallengeRepository(),
+      totpEncryptionKey: new Uint8Array(32).fill(0)
     });
 
     const unsupportedResponseType = await app.request(
@@ -410,7 +430,10 @@ describe("/authorize", () => {
       managementApiToken: "",
       oidcHost: "idp.example.test",
       authDomain: "auth.example.test",
-      tenantRepository
+      tenantRepository,
+      totpRepository: new MemoryTotpRepository(),
+      mfaPasskeyChallengeRepository: new MemoryMfaPasskeyChallengeRepository(),
+      totpEncryptionKey: new Uint8Array(32).fill(0)
     });
 
     const response = await app.request(
@@ -472,7 +495,10 @@ describe("/authorize", () => {
       managementApiToken: "",
       oidcHost: "idp.example.test",
       authDomain: "auth.example.test",
-      tenantRepository
+      tenantRepository,
+      totpRepository: new MemoryTotpRepository(),
+      mfaPasskeyChallengeRepository: new MemoryMfaPasskeyChallengeRepository(),
+      totpEncryptionKey: new Uint8Array(32).fill(0)
     });
 
     const response = await app.request(
@@ -509,7 +535,10 @@ describe("/authorize", () => {
       managementApiToken: "",
       oidcHost: "idp.example.test",
       authDomain: "auth.example.test",
-      tenantRepository
+      tenantRepository,
+      totpRepository: new MemoryTotpRepository(),
+      mfaPasskeyChallengeRepository: new MemoryMfaPasskeyChallengeRepository(),
+      totpEncryptionKey: new Uint8Array(32).fill(0)
     });
 
     const response = await app.request(

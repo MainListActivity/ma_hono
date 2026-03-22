@@ -11,6 +11,8 @@ import {
 } from "../adapters/auth/webauthn/webauthn-service";
 import type { MagicLinkRepository } from "../domain/authentication/magic-link-repository";
 import type { PasskeyRepository } from "../domain/authentication/passkey-repository";
+import type { TotpRepository } from "../domain/mfa/totp-repository";
+import type { MfaPasskeyChallengeRepository } from "../domain/mfa/mfa-passkey-challenge-repository";
 import type { AuditRepository } from "../domain/audit/repository";
 import { authenticateAdminSession, loginAdmin } from "../domain/admin-auth/service";
 import type { AdminRepository } from "../domain/admin-auth/repository";
@@ -204,9 +206,21 @@ class EmptyPasskeyRepository implements PasskeyRepository {
   async createCredential(): Promise<void> { return; }
   async findCredentialByCredentialId(): Promise<null> { return null; }
   async updateCredentialSignCount(): Promise<void> { return; }
+  async listCredentialsByUserId(): Promise<[]> { return []; }
   async createAssertionSession(): Promise<void> { return; }
   async findAssertionSessionById(): Promise<null> { return null; }
   async consumeAssertionSession(): Promise<false> { return false; }
+}
+
+class EmptyTotpRepository implements TotpRepository {
+  async create(): Promise<void> { return; }
+  async findByTenantAndUser(): Promise<null> { return null; }
+  async updateLastUsedWindow(): Promise<void> { return; }
+}
+
+class EmptyMfaPasskeyChallengeRepository implements MfaPasskeyChallengeRepository {
+  async create(): Promise<void> { return; }
+  async consumeByChallengeHash(): Promise<null> { return null; }
 }
 
 class EmptyUserRepository implements UserRepository {
@@ -270,7 +284,10 @@ export interface AppOptions {
   loginChallengeRepository?: LoginChallengeRepository;
   magicLinkRepository?: MagicLinkRepository;
   managementApiToken: string;
+  mfaPasskeyChallengeRepository: MfaPasskeyChallengeRepository;
   passkeyRepository?: PasskeyRepository;
+  totpRepository: TotpRepository;
+  totpEncryptionKey: Uint8Array;
   /** OIDC protocol hostname, e.g. "o.maplayer.top". Used to resolve issuer context and build issuer URLs. */
   oidcHost: string;
   registrationAccessTokenRepository?: RegistrationAccessTokenRepository;
@@ -301,7 +318,10 @@ export const createApp = (options: AppOptions) => {
     options.loginChallengeRepository ?? new EmptyLoginChallengeRepository();
   const magicLinkRepository = options.magicLinkRepository ?? new EmptyMagicLinkRepository();
   const managementApiToken = options.managementApiToken;
+  const mfaPasskeyChallengeRepository = options.mfaPasskeyChallengeRepository;
   const passkeyRepository = options.passkeyRepository ?? new EmptyPasskeyRepository();
+  const totpRepository = options.totpRepository;
+  const totpEncryptionKey = options.totpEncryptionKey;
   const tenantRepository = options.tenantRepository ?? new EmptyTenantRepository();
   const userRepository = options.userRepository ?? new EmptyUserRepository();
   const signer = options.signer;
@@ -626,6 +646,57 @@ export const createApp = (options: AppOptions) => {
     });
   };
 
+  const mfaCheckAfterFirstFactor = async ({
+    challenge,
+    user,
+  }: {
+    challenge: import("../domain/authorization/types").LoginChallenge;
+    user: { id: string; tenantId: string };
+  }): Promise<{
+    mfaRequired: false;
+  } | {
+    mfaRequired: true;
+    mfaState: "pending_totp" | "pending_passkey_step_up" | "pending_enrollment";
+    hasTotpFallback: boolean;
+  }> => {
+    const client = await clientRepository.findByClientId(challenge.clientId);
+    const policy = client !== null
+      ? await clientAuthMethodPolicyRepository.findByClientId(client.id)
+      : null;
+
+    if (policy === null || !policy.mfaRequired) {
+      return { mfaRequired: false };
+    }
+
+    const hasTotpCred = (await totpRepository.findByTenantAndUser(
+      challenge.tenantId,
+      user.id
+    )) !== null;
+    const passkeyCreds = await passkeyRepository.listCredentialsByUserId(
+      challenge.tenantId,
+      user.id
+    );
+    const hasPasskeyCred = passkeyCreds.length > 0;
+
+    let mfaState: "pending_totp" | "pending_passkey_step_up" | "pending_enrollment";
+    let hasTotpFallback = false;
+
+    if (hasPasskeyCred && hasTotpCred) {
+      mfaState = "pending_passkey_step_up";
+      hasTotpFallback = true;
+    } else if (hasPasskeyCred) {
+      mfaState = "pending_passkey_step_up";
+    } else if (hasTotpCred) {
+      mfaState = "pending_totp";
+    } else {
+      mfaState = "pending_enrollment";
+    }
+
+    await loginChallengeLookupRepository.setMfaState(challenge.id, user.id, mfaState);
+
+    return { mfaRequired: true, mfaState, hasTotpFallback };
+  };
+
   const handlePasswordLogin = async (context: Context) => {
     const issuerContext = await resolveLoginIssuerContext(context);
 
@@ -645,9 +716,11 @@ export const createApp = (options: AppOptions) => {
       );
     }
 
+    const loginChallengeToken = String(formData.get("login_challenge") ?? "");
+
     const result = await authenticateWithPassword({
       loginChallengeRepository: loginChallengeLookupRepository,
-      loginChallengeToken: String(formData.get("login_challenge") ?? ""),
+      loginChallengeToken,
       issuer: issuerContext.issuer,
       password: String(formData.get("password") ?? ""),
       tenantId: issuerContext.tenant.id,
@@ -687,6 +760,40 @@ export const createApp = (options: AppOptions) => {
         },
         status
       );
+    }
+
+    const mfaCheck = await mfaCheckAfterFirstFactor({
+      challenge: result.challenge,
+      user: result.user
+    });
+
+    if (mfaCheck.mfaRequired) {
+      return context.json(
+        {
+          mfa_state: mfaCheck.mfaState,
+          login_challenge: loginChallengeToken,
+          ...(mfaCheck.hasTotpFallback ? { has_totp_fallback: true } : {})
+        },
+        200
+      );
+    }
+
+    const consumeSucceeded = await loginChallengeLookupRepository.consume(
+      result.challenge.id,
+      new Date().toISOString()
+    );
+
+    if (!consumeSucceeded) {
+      await recordAuditEventBestEffort({
+        actorType: "anonymous",
+        actorId: null,
+        tenantId: issuerContext.tenant.id,
+        eventType: "user.password_login.failed",
+        targetType: "user",
+        targetId: null,
+        payload: { reason: "invalid_login_challenge" }
+      });
+      return context.json({ error: "invalid_request" }, 400);
     }
 
     const { session, sessionToken } = await createBrowserSession({
@@ -898,6 +1005,22 @@ export const createApp = (options: AppOptions) => {
 
     if (result.kind === "rejected") {
       return context.json({ error: result.reason }, 400);
+    }
+
+    const mfaCheckMl = await mfaCheckAfterFirstFactor({
+      challenge: result.challenge,
+      user: result.user
+    });
+
+    if (mfaCheckMl.mfaRequired) {
+      return context.json(
+        {
+          mfa_state: mfaCheckMl.mfaState,
+          login_challenge: result.challenge.tokenHash,
+          ...(mfaCheckMl.hasTotpFallback ? { has_totp_fallback: true } : {})
+        },
+        200
+      );
     }
 
     const { session, sessionToken } = await createBrowserSession({
@@ -1181,6 +1304,22 @@ export const createApp = (options: AppOptions) => {
 
       const status = result.reason === "invalid_credentials" ? 401 : 400;
       return context.json({ error: result.reason }, status);
+    }
+
+    const mfaCheckPk = await mfaCheckAfterFirstFactor({
+      challenge: result.challenge,
+      user: result.user
+    });
+
+    if (mfaCheckPk.mfaRequired) {
+      return context.json(
+        {
+          mfa_state: mfaCheckPk.mfaState,
+          login_challenge: result.challenge.tokenHash,
+          ...(mfaCheckPk.hasTotpFallback ? { has_totp_fallback: true } : {})
+        },
+        200
+      );
     }
 
     const { session, sessionToken } = await createBrowserSession({

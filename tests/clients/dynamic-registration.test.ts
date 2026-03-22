@@ -4,6 +4,8 @@ import { MemoryAuditRepository } from "../../src/adapters/db/memory/memory-audit
 import { MemoryClientRepository } from "../../src/adapters/db/memory/memory-client-repository";
 import { MemoryRegistrationAccessTokenRepository } from "../../src/adapters/db/memory/memory-registration-access-token-repository";
 import { MemoryTenantRepository } from "../../src/adapters/db/memory/memory-tenant-repository";
+import { MemoryTotpRepository } from "../../src/adapters/db/memory/memory-totp-repository";
+import { MemoryMfaPasskeyChallengeRepository } from "../../src/adapters/db/memory/memory-mfa-passkey-challenge-repository";
 import { createApp } from "../../src/app/app";
 import type { AuditRepository } from "../../src/domain/audit/repository";
 import type { RegistrationAccessTokenRecord, RegistrationAccessTokenRepository } from "../../src/domain/clients/registration-access-token-repository";
@@ -67,7 +69,10 @@ describe("Dynamic Client Registration", () => {
       managementApiToken: "manage-acme",
       oidcHost: "idp.example.test", authDomain: "auth.example.test",
       registrationAccessTokenRepository,
-      tenantRepository
+      tenantRepository,
+      totpRepository: new MemoryTotpRepository(),
+      mfaPasskeyChallengeRepository: new MemoryMfaPasskeyChallengeRepository(),
+      totpEncryptionKey: new Uint8Array(32).fill(0)
     });
 
     const response = await app.request("https://idp.example.test/t/acme/connect/register", {
@@ -117,7 +122,10 @@ describe("Dynamic Client Registration", () => {
       adminWhitelist: [],
       managementApiToken: "manage-acme",
       oidcHost: "idp.example.test", authDomain: "auth.example.test",
-      tenantRepository
+      tenantRepository,
+      totpRepository: new MemoryTotpRepository(),
+      mfaPasskeyChallengeRepository: new MemoryMfaPasskeyChallengeRepository(),
+      totpEncryptionKey: new Uint8Array(32).fill(0)
     });
 
     const response = await app.request("https://idp.example.test/t/acme/connect/register", {
@@ -145,7 +153,10 @@ describe("Dynamic Client Registration", () => {
       adminWhitelist: [],
       managementApiToken: "manage-acme",
       oidcHost: "idp.example.test", authDomain: "auth.example.test",
-      tenantRepository
+      tenantRepository,
+      totpRepository: new MemoryTotpRepository(),
+      mfaPasskeyChallengeRepository: new MemoryMfaPasskeyChallengeRepository(),
+      totpEncryptionKey: new Uint8Array(32).fill(0)
     });
 
     const response = await app.request("https://idp.example.test/t/acme/connect/register", {
@@ -174,7 +185,10 @@ describe("Dynamic Client Registration", () => {
       adminWhitelist: [],
       managementApiToken: "manage-acme",
       oidcHost: "idp.example.test", authDomain: "auth.example.test",
-      tenantRepository
+      tenantRepository,
+      totpRepository: new MemoryTotpRepository(),
+      mfaPasskeyChallengeRepository: new MemoryMfaPasskeyChallengeRepository(),
+      totpEncryptionKey: new Uint8Array(32).fill(0)
     });
 
     const response = await app.request("https://login.acme.test/connect/register", {
@@ -208,7 +222,10 @@ describe("Dynamic Client Registration", () => {
       adminWhitelist: [],
       managementApiToken: "manage-acme",
       oidcHost: "idp.example.test", authDomain: "auth.example.test",
-      tenantRepository
+      tenantRepository,
+      totpRepository: new MemoryTotpRepository(),
+      mfaPasskeyChallengeRepository: new MemoryMfaPasskeyChallengeRepository(),
+      totpEncryptionKey: new Uint8Array(32).fill(0)
     });
 
     const response = await app.request("https://idp.example.test/t/acme/connect/register", {
@@ -237,7 +254,10 @@ describe("Dynamic Client Registration", () => {
       adminWhitelist: [],
       managementApiToken: "manage-acme",
       oidcHost: "idp.example.test", authDomain: "auth.example.test",
-      tenantRepository
+      tenantRepository,
+      totpRepository: new MemoryTotpRepository(),
+      mfaPasskeyChallengeRepository: new MemoryMfaPasskeyChallengeRepository(),
+      totpEncryptionKey: new Uint8Array(32).fill(0)
     });
 
     const response = await app.request("https://idp.example.test/t/acme/connect/register", {
@@ -268,7 +288,10 @@ describe("Dynamic Client Registration", () => {
       managementApiToken: "manage-acme",
       oidcHost: "idp.example.test", authDomain: "auth.example.test",
       registrationAccessTokenRepository: new FailingRegistrationAccessTokenRepository(),
-      tenantRepository
+      tenantRepository,
+      totpRepository: new MemoryTotpRepository(),
+      mfaPasskeyChallengeRepository: new MemoryMfaPasskeyChallengeRepository(),
+      totpEncryptionKey: new Uint8Array(32).fill(0)
     });
 
     const response = await app.request("https://idp.example.test/t/acme/connect/register", {
@@ -328,7 +351,10 @@ describe("Dynamic Client Registration", () => {
       managementApiToken: "manage-acme",
       oidcHost: "idp.example.test", authDomain: "auth.example.test",
       registrationAccessTokenRepository,
-      tenantRepository
+      tenantRepository,
+      totpRepository: new MemoryTotpRepository(),
+      mfaPasskeyChallengeRepository: new MemoryMfaPasskeyChallengeRepository(),
+      totpEncryptionKey: new Uint8Array(32).fill(0)
     });
 
     const response = await app.request("https://idp.example.test/t/acme/connect/register", {

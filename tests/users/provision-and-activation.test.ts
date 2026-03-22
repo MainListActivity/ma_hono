@@ -5,6 +5,8 @@ import { MemoryAdminRepository } from "../../src/adapters/db/memory/memory-admin
 import { MemoryTenantRepository } from "../../src/adapters/db/memory/memory-tenant-repository";
 import { MemoryUserRepository } from "../../src/adapters/db/memory/memory-user-repository";
 import { MemoryUserSessionRepository } from "../../src/adapters/db/memory/memory-user-session-repository";
+import { MemoryTotpRepository } from "../../src/adapters/db/memory/memory-totp-repository";
+import { MemoryMfaPasskeyChallengeRepository } from "../../src/adapters/db/memory/memory-mfa-passkey-challenge-repository";
 import { createApp } from "../../src/app/app";
 import { activateUser } from "../../src/domain/users/activate-user";
 import { hashPassword, verifyPassword } from "../../src/domain/users/passwords";
@@ -480,7 +482,10 @@ describe("user provisioning and activation routes", () => {
       managementApiToken: "",
       oidcHost: "idp.example.test", authDomain: "auth.example.test",
       tenantRepository: createTenantRepositoryWithAcmeTenant(),
-      userRepository
+      userRepository,
+      totpRepository: new MemoryTotpRepository(),
+      mfaPasskeyChallengeRepository: new MemoryMfaPasskeyChallengeRepository(),
+      totpEncryptionKey: new Uint8Array(32).fill(0)
     });
 
     const loginResponse = await app.request("https://idp.example.test/admin/login", {
@@ -542,7 +547,10 @@ describe("user provisioning and activation routes", () => {
       managementApiToken: "",
       oidcHost: "idp.example.test", authDomain: "auth.example.test",
       tenantRepository: createTenantRepositoryWithAcmeTenant(),
-      userRepository
+      userRepository,
+      totpRepository: new MemoryTotpRepository(),
+      mfaPasskeyChallengeRepository: new MemoryMfaPasskeyChallengeRepository(),
+      totpEncryptionKey: new Uint8Array(32).fill(0)
     });
 
     const loginResponse = await app.request("https://idp.example.test/admin/login", {
@@ -617,7 +625,10 @@ describe("user provisioning and activation routes", () => {
       managementApiToken: "",
       oidcHost: "idp.example.test", authDomain: "auth.example.test",
       tenantRepository: createTenantRepositoryWithAcmeTenant(),
-      userRepository
+      userRepository,
+      totpRepository: new MemoryTotpRepository(),
+      mfaPasskeyChallengeRepository: new MemoryMfaPasskeyChallengeRepository(),
+      totpEncryptionKey: new Uint8Array(32).fill(0)
     });
 
     const loginResponse = await app.request("https://idp.example.test/admin/login", {
@@ -683,7 +694,10 @@ describe("user provisioning and activation routes", () => {
       managementApiToken: "",
       oidcHost: "idp.example.test", authDomain: "auth.example.test",
       tenantRepository: createTenantRepositoryWithAcmeTenant(),
-      userRepository
+      userRepository,
+      totpRepository: new MemoryTotpRepository(),
+      mfaPasskeyChallengeRepository: new MemoryMfaPasskeyChallengeRepository(),
+      totpEncryptionKey: new Uint8Array(32).fill(0)
     });
 
     const loginResponse = await app.request("https://idp.example.test/admin/login", {
@@ -729,7 +743,10 @@ describe("user provisioning and activation routes", () => {
       managementApiToken: "",
       oidcHost: "idp.example.test", authDomain: "auth.example.test",
       tenantRepository: createTenantRepositoryWithAcmeTenant(),
-      userRepository
+      userRepository,
+      totpRepository: new MemoryTotpRepository(),
+      mfaPasskeyChallengeRepository: new MemoryMfaPasskeyChallengeRepository(),
+      totpEncryptionKey: new Uint8Array(32).fill(0)
     });
 
     const loginResponse = await app.request("https://idp.example.test/admin/login", {
@@ -789,7 +806,10 @@ describe("user provisioning and activation routes", () => {
       managementApiToken: "",
       oidcHost: "idp.example.test", authDomain: "auth.example.test",
       tenantRepository: new MemoryTenantRepository(),
-      userRepository
+      userRepository,
+      totpRepository: new MemoryTotpRepository(),
+      mfaPasskeyChallengeRepository: new MemoryMfaPasskeyChallengeRepository(),
+      totpEncryptionKey: new Uint8Array(32).fill(0)
     });
 
     const loginResponse = await app.request("https://idp.example.test/admin/login", {
@@ -833,7 +853,10 @@ describe("user provisioning and activation routes", () => {
       oidcHost: "idp.example.test", authDomain: "auth.example.test",
       userRepository: new MemoryUserRepository({
         policies: [tenantPolicy]
-      })
+      }),
+      totpRepository: new MemoryTotpRepository(),
+      mfaPasskeyChallengeRepository: new MemoryMfaPasskeyChallengeRepository(),
+      totpEncryptionKey: new Uint8Array(32).fill(0)
     });
 
     const response = await app.request("https://idp.example.test/activate-account", {

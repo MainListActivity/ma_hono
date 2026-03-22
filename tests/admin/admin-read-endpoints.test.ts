@@ -4,6 +4,8 @@ import { MemoryAdminRepository } from "../../src/adapters/db/memory/memory-admin
 import { MemoryAuditRepository } from "../../src/adapters/db/memory/memory-audit-repository";
 import { MemoryTenantRepository } from "../../src/adapters/db/memory/memory-tenant-repository";
 import { MemoryUserRepository } from "../../src/adapters/db/memory/memory-user-repository";
+import { MemoryTotpRepository } from "../../src/adapters/db/memory/memory-totp-repository";
+import { MemoryMfaPasskeyChallengeRepository } from "../../src/adapters/db/memory/memory-mfa-passkey-challenge-repository";
 import { createApp } from "../../src/app/app";
 import type { Tenant } from "../../src/domain/tenants/types";
 
@@ -50,7 +52,10 @@ const makeApp = (tenantList: Tenant[] = [], userList: Array<{
     oidcHost: "idp.example.test",
     authDomain: "auth.example.test",
     tenantRepository,
-    userRepository
+    userRepository,
+    totpRepository: new MemoryTotpRepository(),
+    mfaPasskeyChallengeRepository: new MemoryMfaPasskeyChallengeRepository(),
+    totpEncryptionKey: new Uint8Array(32).fill(0)
   });
 };
 

@@ -5,6 +5,8 @@ import { MemoryAuditRepository } from "../../src/adapters/db/memory/memory-audit
 import { MemoryAuthorizationCodeRepository } from "../../src/adapters/db/memory/memory-authorization-code-repository";
 import { MemoryClientRepository } from "../../src/adapters/db/memory/memory-client-repository";
 import { MemoryTenantRepository } from "../../src/adapters/db/memory/memory-tenant-repository";
+import { MemoryTotpRepository } from "../../src/adapters/db/memory/memory-totp-repository";
+import { MemoryMfaPasskeyChallengeRepository } from "../../src/adapters/db/memory/memory-mfa-passkey-challenge-repository";
 import { createApp } from "../../src/app/app";
 import type { AuthorizationCode } from "../../src/domain/authorization/types";
 import type { Client } from "../../src/domain/clients/types";
@@ -229,7 +231,10 @@ describe("/token", () => {
       managementApiToken: "",
       oidcHost: "idp.example.test", authDomain: "auth.example.test",
       signer,
-      tenantRepository
+      tenantRepository,
+      totpRepository: new MemoryTotpRepository(),
+      mfaPasskeyChallengeRepository: new MemoryMfaPasskeyChallengeRepository(),
+      totpEncryptionKey: new Uint8Array(32).fill(0)
     });
     const response = await exchangeCode({
       app,
@@ -307,7 +312,10 @@ describe("/token", () => {
       managementApiToken: "",
       oidcHost: "idp.example.test", authDomain: "auth.example.test",
       signer,
-      tenantRepository
+      tenantRepository,
+      totpRepository: new MemoryTotpRepository(),
+      mfaPasskeyChallengeRepository: new MemoryMfaPasskeyChallengeRepository(),
+      totpEncryptionKey: new Uint8Array(32).fill(0)
     });
 
     const firstExchange = await exchangeCode({
@@ -406,7 +414,10 @@ describe("/token", () => {
       managementApiToken: "",
       oidcHost: "idp.example.test", authDomain: "auth.example.test",
       signer,
-      tenantRepository
+      tenantRepository,
+      totpRepository: new MemoryTotpRepository(),
+      mfaPasskeyChallengeRepository: new MemoryMfaPasskeyChallengeRepository(),
+      totpEncryptionKey: new Uint8Array(32).fill(0)
     });
 
     const basicSuccess = await exchangeCode({
@@ -510,7 +521,10 @@ describe("/token", () => {
       managementApiToken: "",
       oidcHost: "idp.example.test", authDomain: "auth.example.test",
       signer,
-      tenantRepository
+      tenantRepository,
+      totpRepository: new MemoryTotpRepository(),
+      mfaPasskeyChallengeRepository: new MemoryMfaPasskeyChallengeRepository(),
+      totpEncryptionKey: new Uint8Array(32).fill(0)
     });
 
     const basicSentInBody = await exchangeCode({
@@ -598,7 +612,10 @@ describe("/token", () => {
       managementApiToken: "",
       oidcHost: "idp.example.test", authDomain: "auth.example.test",
       signer,
-      tenantRepository
+      tenantRepository,
+      totpRepository: new MemoryTotpRepository(),
+      mfaPasskeyChallengeRepository: new MemoryMfaPasskeyChallengeRepository(),
+      totpEncryptionKey: new Uint8Array(32).fill(0)
     });
 
     const wrongRedirect = await exchangeCode({
@@ -660,7 +677,10 @@ describe("/token", () => {
       managementApiToken: "",
       oidcHost: "idp.example.test", authDomain: "auth.example.test",
       signer,
-      tenantRepository
+      tenantRepository,
+      totpRepository: new MemoryTotpRepository(),
+      mfaPasskeyChallengeRepository: new MemoryMfaPasskeyChallengeRepository(),
+      totpEncryptionKey: new Uint8Array(32).fill(0)
     });
     const verificationKey = await importJWK(material.key.publicJwk as JWK, "ES256");
 
@@ -732,7 +752,10 @@ describe("/token", () => {
       managementApiToken: "",
       oidcHost: "idp.example.test", authDomain: "auth.example.test",
       signer,
-      tenantRepository
+      tenantRepository,
+      totpRepository: new MemoryTotpRepository(),
+      mfaPasskeyChallengeRepository: new MemoryMfaPasskeyChallengeRepository(),
+      totpEncryptionKey: new Uint8Array(32).fill(0)
     });
     const response = await exchangeCode({
       app,
@@ -785,7 +808,10 @@ describe("/token", () => {
       adminWhitelist: [],
       managementApiToken: "",
       oidcHost: "idp.example.test", authDomain: "auth.example.test",
-      tenantRepository
+      tenantRepository,
+      totpRepository: new MemoryTotpRepository(),
+      mfaPasskeyChallengeRepository: new MemoryMfaPasskeyChallengeRepository(),
+      totpEncryptionKey: new Uint8Array(32).fill(0)
     });
 
     const response = await exchangeCode({
@@ -832,7 +858,10 @@ describe("/token", () => {
       managementApiToken: "",
       oidcHost: "idp.example.test", authDomain: "auth.example.test",
       signer,
-      tenantRepository
+      tenantRepository,
+      totpRepository: new MemoryTotpRepository(),
+      mfaPasskeyChallengeRepository: new MemoryMfaPasskeyChallengeRepository(),
+      totpEncryptionKey: new Uint8Array(32).fill(0)
     });
     const response = await exchangeCode({
       app,
@@ -884,7 +913,10 @@ describe("/token", () => {
       managementApiToken: "",
       oidcHost: "idp.example.test", authDomain: "auth.example.test",
       signer,
-      tenantRepository
+      tenantRepository,
+      totpRepository: new MemoryTotpRepository(),
+      mfaPasskeyChallengeRepository: new MemoryMfaPasskeyChallengeRepository(),
+      totpEncryptionKey: new Uint8Array(32).fill(0)
     });
 
     const [first, second] = await Promise.all([
@@ -948,7 +980,10 @@ describe("/token", () => {
       managementApiToken: "",
       oidcHost: "idp.example.test", authDomain: "auth.example.test",
       signer,
-      tenantRepository
+      tenantRepository,
+      totpRepository: new MemoryTotpRepository(),
+      mfaPasskeyChallengeRepository: new MemoryMfaPasskeyChallengeRepository(),
+      totpEncryptionKey: new Uint8Array(32).fill(0)
     });
 
     const lowercaseSuccess = await exchangeCode({

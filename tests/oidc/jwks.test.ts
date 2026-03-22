@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import { MemoryKeyRepository } from "../../src/adapters/db/memory/memory-key-repository";
 import { MemoryTenantRepository } from "../../src/adapters/db/memory/memory-tenant-repository";
+import { MemoryTotpRepository } from "../../src/adapters/db/memory/memory-totp-repository";
+import { MemoryMfaPasskeyChallengeRepository } from "../../src/adapters/db/memory/memory-mfa-passkey-challenge-repository";
 import { createApp } from "../../src/app/app";
 import { D1SigningKeyBootstrapper } from "../../src/adapters/db/drizzle/runtime";
 import { createSigningKeySigner } from "../../src/domain/keys/signer";
@@ -98,7 +100,10 @@ describe("OIDC JWKS", () => {
       adminWhitelist: [],
       managementApiToken: "",
       oidcHost: "idp.example.test", authDomain: "auth.example.test",
-      tenantRepository
+      tenantRepository,
+      totpRepository: new MemoryTotpRepository(),
+      mfaPasskeyChallengeRepository: new MemoryMfaPasskeyChallengeRepository(),
+      totpEncryptionKey: new Uint8Array(32).fill(0)
     });
 
     const response = await app.request("https://idp.example.test/t/acme/jwks.json");
@@ -123,7 +128,10 @@ describe("OIDC JWKS", () => {
       adminWhitelist: [],
       managementApiToken: "",
       oidcHost: "idp.example.test", authDomain: "auth.example.test",
-      tenantRepository
+      tenantRepository,
+      totpRepository: new MemoryTotpRepository(),
+      mfaPasskeyChallengeRepository: new MemoryMfaPasskeyChallengeRepository(),
+      totpEncryptionKey: new Uint8Array(32).fill(0)
     });
 
     const response = await app.request("https://login.acme.test/jwks.json");
@@ -141,7 +149,10 @@ describe("OIDC JWKS", () => {
       adminWhitelist: [],
       managementApiToken: "",
       oidcHost: "idp.example.test", authDomain: "auth.example.test",
-      tenantRepository
+      tenantRepository,
+      totpRepository: new MemoryTotpRepository(),
+      mfaPasskeyChallengeRepository: new MemoryMfaPasskeyChallengeRepository(),
+      totpEncryptionKey: new Uint8Array(32).fill(0)
     });
 
     const response = await app.request("https://idp.example.test/t/missing/jwks.json");

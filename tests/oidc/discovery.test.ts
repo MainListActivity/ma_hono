@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import { MemoryTenantRepository } from "../../src/adapters/db/memory/memory-tenant-repository";
+import { MemoryTotpRepository } from "../../src/adapters/db/memory/memory-totp-repository";
+import { MemoryMfaPasskeyChallengeRepository } from "../../src/adapters/db/memory/memory-mfa-passkey-challenge-repository";
 import { createApp } from "../../src/app/app";
 
 const tenantRepository = new MemoryTenantRepository([
@@ -61,7 +63,10 @@ describe("OIDC discovery", () => {
       adminWhitelist: [],
       managementApiToken: "",
       oidcHost: "idp.example.test", authDomain: "auth.example.test",
-      tenantRepository
+      tenantRepository,
+      totpRepository: new MemoryTotpRepository(),
+      mfaPasskeyChallengeRepository: new MemoryMfaPasskeyChallengeRepository(),
+      totpEncryptionKey: new Uint8Array(32).fill(0)
     });
 
     const response = await app.request(
@@ -95,7 +100,10 @@ describe("OIDC discovery", () => {
       adminWhitelist: [],
       managementApiToken: "",
       oidcHost: "idp.example.test", authDomain: "auth.example.test",
-      tenantRepository
+      tenantRepository,
+      totpRepository: new MemoryTotpRepository(),
+      mfaPasskeyChallengeRepository: new MemoryMfaPasskeyChallengeRepository(),
+      totpEncryptionKey: new Uint8Array(32).fill(0)
     });
 
     const response = await app.request("https://login.acme.test/.well-known/openid-configuration");
@@ -125,7 +133,10 @@ describe("OIDC discovery", () => {
       adminWhitelist: [],
       managementApiToken: "",
       oidcHost: "idp.example.test", authDomain: "auth.example.test",
-      tenantRepository
+      tenantRepository,
+      totpRepository: new MemoryTotpRepository(),
+      mfaPasskeyChallengeRepository: new MemoryMfaPasskeyChallengeRepository(),
+      totpEncryptionKey: new Uint8Array(32).fill(0)
     });
 
     const response = await app.request(
@@ -141,7 +152,10 @@ describe("OIDC discovery", () => {
       adminWhitelist: [],
       managementApiToken: "",
       oidcHost: "idp.example.test", authDomain: "auth.example.test",
-      tenantRepository
+      tenantRepository,
+      totpRepository: new MemoryTotpRepository(),
+      mfaPasskeyChallengeRepository: new MemoryMfaPasskeyChallengeRepository(),
+      totpEncryptionKey: new Uint8Array(32).fill(0)
     });
 
     const response = await app.request(
@@ -157,7 +171,10 @@ describe("OIDC discovery", () => {
       adminWhitelist: [],
       managementApiToken: "",
       oidcHost: "idp.example.test", authDomain: "auth.example.test",
-      tenantRepository
+      tenantRepository,
+      totpRepository: new MemoryTotpRepository(),
+      mfaPasskeyChallengeRepository: new MemoryMfaPasskeyChallengeRepository(),
+      totpEncryptionKey: new Uint8Array(32).fill(0)
     });
 
     const response = await app.request(
@@ -173,7 +190,10 @@ describe("OIDC discovery", () => {
       adminWhitelist: [],
       managementApiToken: "",
       oidcHost: "idp.example.test", authDomain: "auth.example.test",
-      tenantRepository
+      tenantRepository,
+      totpRepository: new MemoryTotpRepository(),
+      mfaPasskeyChallengeRepository: new MemoryMfaPasskeyChallengeRepository(),
+      totpEncryptionKey: new Uint8Array(32).fill(0)
     });
 
     const authorizeResponse = await app.request(
