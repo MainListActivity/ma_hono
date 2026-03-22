@@ -1,7 +1,7 @@
 import { encodeBase64Url } from "../../lib/base64url";
 
 const passwordHashAlgorithm = "pbkdf2_sha256";
-const defaultIterations = 120_000;
+const defaultIterations = 100_000;
 const derivedKeyLengthBits = 256;
 const saltLengthBytes = 16;
 const textEncoder = new TextEncoder();
