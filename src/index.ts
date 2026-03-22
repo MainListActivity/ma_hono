@@ -102,6 +102,7 @@ export default {
           userId: session.userId
         };
       },
+      clientAuthMethodPolicyRepository: repositories.clientAuthMethodPolicyRepository,
       clientRepository: repositories.clientRepository,
       keyRepository: repositories.keyRepository,
       loginChallengeLookupRepository: repositories.authenticationLoginChallengeRepository,
