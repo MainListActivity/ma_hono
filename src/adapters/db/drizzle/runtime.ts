@@ -6,8 +6,8 @@ import type { AuditEvent } from "../../../domain/audit/types";
 import type { AdminRepository } from "../../../domain/admin-auth/repository";
 import type { AdminSession, AdminUser } from "../../../domain/admin-auth/types";
 import type { RegistrationAccessTokenRepository } from "../../../domain/clients/registration-access-token-repository";
-import type { ClientRepository } from "../../../domain/clients/repository";
-import type { Client } from "../../../domain/clients/types";
+import type { ClientAuthMethodPolicyRepository, ClientRepository } from "../../../domain/clients/repository";
+import type { Client, ClientAuthMethodPolicy } from "../../../domain/clients/types";
 import type {
   AuthorizationCodeRepository,
   LoginChallengeRepository
@@ -41,6 +41,7 @@ import {
   adminUsers,
   auditEvents,
   authorizationCodes,
+  clientAuthMethodPolicies,
   emailLoginTokens,
   loginChallenges,
   oidcClients,
@@ -678,6 +679,20 @@ const toPasswordCredential = (
   updatedAt: row.updatedAt
 });
 
+const toClientAuthMethodPolicy = (
+  row: typeof clientAuthMethodPolicies.$inferSelect
+): ClientAuthMethodPolicy => ({
+  clientId: row.clientId,
+  tenantId: row.tenantId,
+  password: { enabled: row.passwordEnabled, allowRegistration: row.passwordAllowRegistration },
+  emailMagicLink: { enabled: row.magicLinkEnabled, allowRegistration: row.magicLinkAllowRegistration },
+  passkey: { enabled: row.passkeyEnabled, allowRegistration: row.passkeyAllowRegistration },
+  google: { enabled: row.googleEnabled },
+  apple: { enabled: row.appleEnabled },
+  facebook: { enabled: row.facebookEnabled },
+  wechat: { enabled: row.wechatEnabled }
+});
+
 const isConstraintConflictError = (error: unknown) =>
   error instanceof Error &&
   error.message.toLowerCase().includes("constraint failed");
@@ -1012,12 +1027,66 @@ class KvRegistrationAccessTokenRepository
   }
 }
 
+class D1ClientAuthMethodPolicyRepository implements ClientAuthMethodPolicyRepository {
+  constructor(private readonly db: ReturnType<typeof drizzle>) {}
+
+  async create(policy: ClientAuthMethodPolicy): Promise<void> {
+    const now = new Date().toISOString();
+    await this.db.insert(clientAuthMethodPolicies).values({
+      clientId: policy.clientId,
+      tenantId: policy.tenantId,
+      passwordEnabled: policy.password.enabled,
+      passwordAllowRegistration: policy.password.allowRegistration,
+      magicLinkEnabled: policy.emailMagicLink.enabled,
+      magicLinkAllowRegistration: policy.emailMagicLink.allowRegistration,
+      passkeyEnabled: policy.passkey.enabled,
+      passkeyAllowRegistration: policy.passkey.allowRegistration,
+      googleEnabled: policy.google.enabled,
+      appleEnabled: policy.apple.enabled,
+      facebookEnabled: policy.facebook.enabled,
+      wechatEnabled: policy.wechat.enabled,
+      createdAt: now,
+      updatedAt: now
+    });
+  }
+
+  async findByClientId(clientId: string): Promise<ClientAuthMethodPolicy | null> {
+    const [row] = await this.db
+      .select()
+      .from(clientAuthMethodPolicies)
+      .where(eq(clientAuthMethodPolicies.clientId, clientId))
+      .limit(1);
+    return row === undefined ? null : toClientAuthMethodPolicy(row);
+  }
+
+  async update(policy: ClientAuthMethodPolicy): Promise<void> {
+    const now = new Date().toISOString();
+    await this.db
+      .update(clientAuthMethodPolicies)
+      .set({
+        passwordEnabled: policy.password.enabled,
+        passwordAllowRegistration: policy.password.allowRegistration,
+        magicLinkEnabled: policy.emailMagicLink.enabled,
+        magicLinkAllowRegistration: policy.emailMagicLink.allowRegistration,
+        passkeyEnabled: policy.passkey.enabled,
+        passkeyAllowRegistration: policy.passkey.allowRegistration,
+        googleEnabled: policy.google.enabled,
+        appleEnabled: policy.apple.enabled,
+        facebookEnabled: policy.facebook.enabled,
+        wechatEnabled: policy.wechat.enabled,
+        updatedAt: now
+      })
+      .where(eq(clientAuthMethodPolicies.clientId, policy.clientId));
+  }
+}
+
 export const createRuntimeRepositories = async (config: RuntimeConfig) => {
   const db = drizzle(config.db, {
     schema: {
       adminUsers,
       auditEvents,
       authorizationCodes,
+      clientAuthMethodPolicies,
       emailLoginTokens,
       loginChallenges,
       oidcClients,
@@ -1055,6 +1124,7 @@ export const createRuntimeRepositories = async (config: RuntimeConfig) => {
     adminRepository: new D1KvAdminRepository(db, config.adminSessionsKv),
     auditRepository: new D1AuditRepository(db),
     authorizationCodeRepository: new D1AuthorizationCodeRepository(db),
+    clientAuthMethodPolicyRepository: new D1ClientAuthMethodPolicyRepository(db),
     clientRepository: new D1ClientRepository(db),
     keyMaterialStore,
     keyRepository,
