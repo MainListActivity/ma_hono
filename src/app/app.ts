@@ -29,6 +29,7 @@ import type { AuthorizeSession } from "../domain/authorization/types";
 import type { RegistrationAccessTokenRepository } from "../domain/clients/registration-access-token-repository";
 import { sha256Base64Url } from "../lib/hash";
 import { registerClient } from "../domain/clients/register-client";
+import type { ClientAuthMethodPolicy } from "../domain/clients/types";
 import type { ClientAuthMethodPolicyRepository, ClientRepository } from "../domain/clients/repository";
 import { buildJwks } from "../domain/keys/jwks";
 import type { SigningKeySigner } from "../domain/keys/signer";
@@ -314,6 +315,17 @@ export const createApp = (options: AppOptions) => {
 
     return resolveIssuerContext({ requestUrl: context.req.url, oidcHost, tenantRepository });
   };
+
+  const policyToWire = (policy: ClientAuthMethodPolicy | null | undefined) =>
+    policy == null ? null : {
+      password: { enabled: policy.password.enabled, allow_registration: policy.password.allowRegistration },
+      magic_link: { enabled: policy.emailMagicLink.enabled, allow_registration: policy.emailMagicLink.allowRegistration },
+      passkey: { enabled: policy.passkey.enabled, allow_registration: policy.passkey.allowRegistration },
+      google: { enabled: policy.google.enabled },
+      apple: { enabled: policy.apple.enabled },
+      facebook: { enabled: policy.facebook.enabled },
+      wechat: { enabled: policy.wechat.enabled }
+    };
 
   const handleDiscovery = async (requestUrl: string) => {
     const issuerContext = await resolveIssuerContext({
@@ -1929,8 +1941,14 @@ export const createApp = (options: AppOptions) => {
       return context.notFound();
     }
     const clients = await clientRepository.listByTenantId(tenantId);
+
+    // Fetch policies for all clients in parallel
+    const policies = await Promise.all(
+      clients.map((c) => clientAuthMethodPolicyRepository.findByClientId(c.id))
+    );
+
     return context.json({
-      clients: clients.map((c) => ({
+      clients: clients.map((c, i) => ({
         id: c.id,
         client_id: c.clientId,
         client_name: c.clientName,
@@ -1940,7 +1958,8 @@ export const createApp = (options: AppOptions) => {
         response_types: c.responseTypes,
         token_endpoint_auth_method: c.tokenEndpointAuthMethod,
         trust_level: c.trustLevel,
-        consent_policy: c.consentPolicy
+        consent_policy: c.consentPolicy,
+        auth_method_policy: policyToWire(policies[i])
       }))
     });
   });
