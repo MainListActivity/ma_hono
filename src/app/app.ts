@@ -538,6 +538,39 @@ export const createApp = (options: AppOptions) => {
     );
   };
 
+  const handleChallengeInfo = async (context: Context) => {
+    const issuerContext = await resolveLoginIssuerContext(context);
+
+    if (issuerContext === null) {
+      return context.notFound();
+    }
+
+    const loginChallengeToken = context.req.query("login_challenge");
+    if (!loginChallengeToken) {
+      return context.json({ error: "missing_login_challenge" }, 400);
+    }
+
+    const { sha256Base64Url } = await import("../lib/hash");
+    const tokenHash = await sha256Base64Url(loginChallengeToken);
+    const challenge = await loginChallengeLookupRepository.findByTokenHash(tokenHash);
+
+    if (challenge === null) {
+      return context.json({ error: "invalid_login_challenge" }, 400);
+    }
+
+    const policy = await userRepository.findAuthMethodPolicyByTenantId(issuerContext.tenant.id);
+    const methods: string[] = [];
+
+    if (policy === null || policy.password.enabled) methods.push("password");
+    if (policy === null || policy.emailMagicLink.enabled) methods.push("magic_link");
+    if (policy === null || policy.passkey.enabled) methods.push("passkey");
+
+    return context.json({
+      tenant_display_name: issuerContext.tenant.displayName,
+      methods
+    });
+  };
+
   const handlePasswordLogin = async (context: Context) => {
     const issuerContext = await resolveLoginIssuerContext(context);
 
@@ -1380,6 +1413,7 @@ export const createApp = (options: AppOptions) => {
 
   // Custom-domain issuer login routes (host = tenant custom domain)
   app.get("/login", handleLoginEntry);
+  app.get("/login/challenge-info", handleChallengeInfo);
   app.post("/login/password", handlePasswordLogin);
   app.post("/login/magic-link/request", handleMagicLinkRequest);
   app.post("/login/magic-link/consume", handleMagicLinkConsume);
@@ -1390,6 +1424,7 @@ export const createApp = (options: AppOptions) => {
 
   // Platform-path login routes (host = auth.{domain}, path = /login/:tenant/*)
   app.get("/login/:tenant", handleLoginEntry);
+  app.get("/login/:tenant/challenge-info", handleChallengeInfo);
   app.post("/login/:tenant/password", handlePasswordLogin);
   app.post("/login/:tenant/magic-link/request", handleMagicLinkRequest);
   app.post("/login/:tenant/magic-link/consume", handleMagicLinkConsume);

@@ -6,6 +6,7 @@ import {
   Routes
 } from "react-router";
 import LoginPage from "./pages/LoginPage";
+import TenantLoginPage from "./pages/TenantLoginPage";
 import TenantsPage from "./pages/TenantsPage";
 import TenantUsersPage from "./pages/TenantUsersPage";
 import AuthGuard from "./components/AuthGuard";
@@ -41,6 +42,7 @@ export default function App() {
       <BrowserRouter>
         <Routes>
           <Route path="/login" element={<LoginPage />} />
+          <Route path="/login/:tenant" element={<TenantLoginPage />} />
           <Route element={<AuthGuard />}>
             <Route path="/tenants" element={<TenantsPage />} />
             <Route path="/tenants/:tenantId/users" element={<TenantUsersPage />} />

@@ -81,6 +81,7 @@ ma_hono/
 | `/tenants` | `TenantsPage` | Tenant list + create tenant |
 | `/tenants/:id/users` | `TenantUsersPage` | User list + provision user |
 | `/login/:tenant` | `TenantLoginPage` | Tenant end-user login (password, magic link, passkey) |
+| `/activate` | `AccountActivationPage` | Invitation token → initial password setup |
 | `/` | redirect | → `/tenants` if admin authenticated, else `/login` |
 
 ## Authentication
@@ -118,6 +119,68 @@ No token refresh or expiry display in this MVP — token is used until it fails.
 - Table: user email, display name, status.
 - "Provision User" button opens a modal with email, display name, optional username fields.
 - `POST /admin/tenants/:id/users` on submit; reload list on success.
+
+### Tenant Login Page (`/login/:tenant`)
+
+The universal login page for end-users of a given tenant. This page is reached when `/authorize` redirects unauthenticated users.
+
+**URL shape:** `/login/:tenant?login_challenge=<token>`
+
+**Page load:**
+1. Extract `login_challenge` from query string. If absent, render an error state ("No active login session").
+2. Call `GET /api/login/:tenant/challenge-info?login_challenge=<token>` to fetch tenant display info and available login methods. Response:
+   ```json
+   {
+     "tenant_display_name": "Acme Corp",
+     "methods": ["password", "magic_link", "passkey"]
+   }
+   ```
+3. Render login method tabs/options based on `methods`. Default to the first available method.
+
+**Password tab:**
+- Username field + password field.
+- On submit: `POST /api/login/:tenant/password` with form body `{ login_challenge, username, password }`.
+- On 302 redirect in response: follow to callback (authorization code flow resumes).
+- On error: display inline message.
+
+**Magic link tab:**
+- Email field.
+- On submit: `POST /api/login/:tenant/magic-link/request` with `{ email, login_challenge }`.
+- On 200: show "Check your email" confirmation. No polling — user clicks the link in the email.
+- The magic link itself calls `POST /api/login/:tenant/magic-link/consume` with `{ token }` via a separate page load (same SPA, same route handles the `token` query parameter).
+
+**Passkey tab:**
+- Single "Sign in with passkey" button.
+- On click: `POST /api/login/:tenant/passkey/start` with `{ login_challenge }` → receive WebAuthn assertion options.
+- Use `navigator.credentials.get()` with those options.
+- `POST /api/login/:tenant/passkey/finish` with assertion result → follow redirect.
+
+**Magic link consume flow (same page, token in URL):**
+- If `?token=<magic_link_token>` is present in the URL (alongside `login_challenge`), immediately `POST /api/login/:tenant/magic-link/consume`.
+- On 302: follow redirect. On error: show error with option to restart.
+
+**Worker API addition — `GET /login/:tenant/challenge-info`:**
+
+New endpoint returning tenant info and available methods for a login challenge:
+
+```
+GET /login/:tenant/challenge-info?login_challenge=<token>
+→ 200 { tenant_display_name: string, methods: ("password" | "magic_link" | "passkey")[] }
+→ 404 if tenant not found
+→ 400 if login_challenge is absent or expired
+```
+
+Implementation reads from `loginChallengeLookupRepository` to verify the challenge exists, and from `userRepository.findAuthMethodPolicyByTenantId` to determine available methods. No session or admin auth required — this is a public endpoint called by the login SPA.
+
+### Account Activation Page (`/activate?token=<invitation_token>`)
+
+Reached when the admin provisions a user and the invitation link is sent to the user.
+
+- On load: validate token by calling `GET /api/activate-account?token=<token>` (or inline in the POST — either works).
+- Form: password + confirm password.
+- On submit: `POST /api/activate-account` with `{ token, password }`.
+- On success: redirect to `/login/:tenant` with a success banner, or to the original `redirect_uri` if the invitation carried one.
+- On error (`token_expired`, `already_initialized`, etc.): display error with link to contact admin.
 
 ## UI Stack
 
@@ -223,3 +286,37 @@ Browser → Worker redirects to o.{domain}/t/:tenant/authorize → OIDC flow res
 - Dark mode.
 - `POST /admin/logout` server-side session revocation (client-side sessionStorage clear on sign-out is accepted for MVP).
 - CSRF protection (not needed while using `Authorization: Bearer` header; required if/when switching to `httpOnly` cookie auth).
+
+## Future Roadmap
+
+The following capabilities are intentionally deferred but should be kept in mind when evolving the data model and API.
+
+### Admin-configurable login methods per tenant
+
+Currently the `tenant_auth_method_policies` table exists and controls which methods are active per tenant. The admin panel does not yet expose UI to edit this policy.
+
+Future work:
+- Add `PUT /api/admin/tenants/:id/auth-methods` endpoint accepting `{ password, magic_link, passkey }` boolean flags.
+- Add a "Login Methods" tab to the tenant detail page in the admin panel.
+- The `GET /login/:tenant/challenge-info` endpoint already returns only enabled methods, so the login SPA requires no changes.
+
+### Login page branding customization
+
+Tenants should be able to supply branding: logo URL, primary color, and custom copy. This requires:
+- A new `tenant_branding` table: `{ tenant_id, logo_url, primary_color, display_name_override, updated_at }`.
+- Admin UI to upload/set branding assets.
+- `GET /login/:tenant/challenge-info` extended to return `branding: { logo_url, primary_color }`.
+- `TenantLoginPage` applies the branding at render time via CSS custom properties.
+
+No server-side rendering is required — the SPA applies branding dynamically from the API response.
+
+### Custom domain login pages
+
+Custom-domain tenants (e.g. `login.acme.com`) already route login traffic through the same Worker (`/login` without a `:tenant` param). The SPA is served from `auth.{domain}`, so it is not currently embedded on custom domains.
+
+For full custom-domain login UI:
+- The tenant's custom domain must serve the login SPA directly (via a separate Cloudflare Pages deployment or a Worker-rendered HTML shell).
+- CORS must be added to the `GET /login/challenge-info` and `POST /login/*` endpoints for that custom origin.
+- This is a significant operational change and is deferred to a later phase.
+
+In the interim, custom-domain tenants can redirect to `auth.{domain}/login/:tenant` for the login UI while keeping the OIDC issuer URL at the custom domain — this is already the behavior when `issuerType=custom_domain` and no custom-domain login SPA exists.
