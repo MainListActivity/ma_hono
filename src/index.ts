@@ -72,9 +72,13 @@ export default {
     const oidcHost = `o.${platformConfig.rootDomain}`;
     const authDomain = `auth.${platformConfig.rootDomain}`;
 
-    const totpKeyObject = await runtimeConfig.keyMaterialBucket.get("totp-encryption-key");
-    if (totpKeyObject === null) throw new Error("TOTP encryption key not found in key store (totp-encryption-key)");
-    const totpEncryptionKey = new Uint8Array(await totpKeyObject.arrayBuffer());
+    let totpKeyObject = await runtimeConfig.keyMaterialBucket.get("totp-encryption-key");
+    if (totpKeyObject === null) {
+      const newKey = crypto.getRandomValues(new Uint8Array(32));
+      await runtimeConfig.keyMaterialBucket.put("totp-encryption-key", newKey.buffer);
+      totpKeyObject = await runtimeConfig.keyMaterialBucket.get("totp-encryption-key");
+    }
+    const totpEncryptionKey = new Uint8Array(await totpKeyObject!.arrayBuffer());
 
     const app = createApp({
       adminBootstrapPasswordHash: platformConfig.adminBootstrapPasswordHash,
