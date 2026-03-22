@@ -9,7 +9,7 @@ export const encryptTotpSecret = async (
 ): Promise<string> => {
   const key = await crypto.subtle.importKey(
     "raw",
-    keyBytes,
+    keyBytes as BufferSource,
     { name: "AES-GCM" },
     false,
     ["encrypt"]
@@ -36,7 +36,7 @@ export const decryptTotpSecret = async (
   const data = bytes.slice(IV_LENGTH);
   const key = await crypto.subtle.importKey(
     "raw",
-    keyBytes,
+    keyBytes as BufferSource,
     { name: "AES-GCM" },
     false,
     ["decrypt"]

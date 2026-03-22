@@ -38,12 +38,12 @@ export const generateTotpCode = async (
   const counter = windowToCounter(windowIndex);
   const key = await crypto.subtle.importKey(
     "raw",
-    keyBytes,
+    keyBytes as BufferSource,
     { name: "HMAC", hash: "SHA-1" },
     false,
     ["sign"]
   );
-  const mac = await crypto.subtle.sign("HMAC", key, counter);
+  const mac = await crypto.subtle.sign("HMAC", key, counter as BufferSource);
   const hmac = new Uint8Array(mac);
   const offset = hmac[hmac.length - 1] & 0x0f;
   const code =
