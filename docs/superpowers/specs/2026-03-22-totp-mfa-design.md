@@ -236,9 +236,84 @@ The existing auth method policy card on the client detail page in `admin/` gets 
 - **Require MFA** — boolean toggle, default off
 - When enabled, display an informational note: users without MFA enrolled will be prompted to enroll on their next login to this client
 
+The `AuthMethodPolicyWire` TypeScript interface in `admin/src/api/client.ts` must be extended with `mfa_required: boolean`.
+
 ### API Change
 
 The existing `PATCH /api/admin/clients/:clientId/auth-method-policy` endpoint accepts the new `mfa_required` boolean field alongside existing fields. No new endpoints are needed.
+
+## Login Page UI (TenantLoginPage.tsx)
+
+The end-user login page at `admin/src/pages/TenantLoginPage.tsx` must be updated to handle MFA step responses inline. This is a core part of the MFA feature — without it the login flow cannot complete.
+
+### Current Behavior
+
+Currently all login handlers (password, magic link, passkey) either redirect immediately (302/opaqueredirect) or return `{ redirect_uri }` on success.
+
+### New Behavior
+
+When a client requires MFA, the login endpoint responds with:
+
+```json
+{ "mfa_state": "pending_totp" | "pending_passkey_step_up" | "pending_enrollment", "login_challenge": "<token>" }
+```
+
+The page must detect this response (no redirect, body contains `mfa_state`) and switch to the appropriate MFA step view inline, without a page navigation.
+
+### Page State Machine
+
+Add a `mfaState` state variable alongside the existing `activeMethod`. When `mfaState` is non-null, the page renders the MFA step view instead of the login method tabs.
+
+```
+null (login methods) → "pending_totp" → verified → redirect
+                     → "pending_passkey_step_up" → verified → redirect
+                                                  → switch → "pending_totp"
+                     → "pending_enrollment" → start (QR) → finish → redirect
+```
+
+### MFA Step Views
+
+**`MfaTotpVerifyView`** — shown when `mfa_state = 'pending_totp'`
+- 6-digit code input
+- "Verify" button calls `POST /api/login/:tenant/mfa/totp/verify`
+- On success: redirect to `redirect_uri`
+- On failure: show remaining attempts; on lockout (challenge_invalidated) show restart message
+- If user also has passkey (indicated by `mfa_methods` in response): show "Use passkey instead" link that calls `mfa/switch-to-passkey` — out of scope for now since switch-to-totp is the only defined switch; passkey → totp switch is in scope, totp → passkey is not
+
+**`MfaPasskeyStepUpView`** — shown when `mfa_state = 'pending_passkey_step_up'`
+- "Verify with Passkey" button calls `POST /api/login/:tenant/mfa/passkey/start`, then triggers `navigator.credentials.get`, then calls `POST /api/login/:tenant/mfa/passkey/finish`
+- On success: redirect to `redirect_uri`
+- On failure: show error; on lockout show restart message
+- If user also has TOTP (indicated by `has_totp_fallback: true` in response): show "Use authenticator app instead" link that calls `POST /api/login/:tenant/mfa/switch-to-totp` and transitions page to `MfaTotpVerifyView`
+
+**`MfaEnrollTotpView`** — shown when `mfa_state = 'pending_enrollment'`
+- Two sub-steps:
+  1. **Setup step**: calls `POST /api/login/:tenant/mfa/totp/enroll/start`, displays QR code (via a QR library or `<img src="otpauth://...">` rendered server-side, or a canvas-rendered QR), and the raw secret for manual entry
+  2. **Confirm step**: 6-digit code input, calls `POST /api/login/:tenant/mfa/totp/enroll/finish`
+- On enrollment success: redirect to `redirect_uri`
+- On failure: show remaining attempts; on lockout show restart message
+
+### `api/client.ts` New Functions
+
+```ts
+// After first-factor success with MFA required
+type MfaRequiredResponse = {
+  mfa_state: "pending_totp" | "pending_passkey_step_up" | "pending_enrollment";
+  login_challenge: string;
+  has_totp_fallback?: boolean; // present when mfa_state = 'pending_passkey_step_up'
+}
+
+mfaTotpVerify(tenantSlug, loginChallenge, code): Promise<Response>
+mfaPasskeyStart(tenantSlug, loginChallenge): Promise<{ challenge: string; allowed_credentials: ...; }>
+mfaPasskeyFinish(tenantSlug, loginChallenge, credential): Promise<Response>
+mfaSwitchToTotp(tenantSlug, loginChallenge): Promise<void>
+mfaEnrollStart(tenantSlug, loginChallenge): Promise<{ provisioning_uri: string; secret: string }>
+mfaEnrollFinish(tenantSlug, loginChallenge, code): Promise<Response>
+```
+
+### QR Code Rendering
+
+Use a lightweight Workers-compatible QR library (e.g., `qrcode` npm package, browser-side rendering only). The raw `otpauth://` URI from `enroll/start` is rendered as a QR code in the browser. No server-side QR rendering required.
 
 ## Module Layout
 
@@ -283,6 +358,14 @@ src/
 - `mfa_required` toggle persists correctly via PATCH
 - Toggling on and off reflects correctly on reload
 
+### Login Page UI Tests
+
+- After password login with MFA required: page renders TOTP verify view (not redirect)
+- After passkey step-up start/finish: redirect occurs
+- "Use authenticator app instead" link visible and functional when `has_totp_fallback = true`
+- Enrollment QR code view renders, confirm step completes login
+- Lockout message shown after 5 failures
+
 ## Delivery Sequence
 
 1. Schema: add `mfa_required` to `client_auth_method_policies`; add `authenticated_user_id`, `mfa_state`, `mfa_attempt_count`, `enrollment_attempt_count`, `totp_enrollment_secret_encrypted` to `login_challenges`; add `totp_credentials` table with composite FK; add `mfa_passkey_challenges` table
@@ -292,9 +375,10 @@ src/
 5. Post-first-factor MFA check integrated into existing login handlers (steps 5 and 6 can proceed in parallel after step 4 since both depend only on schema and domain layer being in place)
 6. MFA API endpoints: TOTP verify, passkey step-up start/finish, TOTP fallback switch, enrollment start/finish
 7. Audit events for all MFA actions
-8. Admin API: extend PATCH endpoint to accept `mfa_required`
+8. Admin API: extend PATCH endpoint to accept `mfa_required`; extend `AuthMethodPolicyWire` in `admin/src/api/client.ts`
 9. Admin UI: add `mfa_required` toggle to client detail page
-10. Tests
+10. Login page UI: add MFA state detection in login handlers + `MfaTotpVerifyView`, `MfaPasskeyStepUpView`, `MfaEnrollTotpView` components + new API functions in `api/client.ts`
+11. Tests
 
 ## Acceptance Criteria
 
@@ -310,3 +394,7 @@ src/
 - A client with `mfa_required = false` is unaffected by this change
 - Admin can toggle `mfa_required` on the client detail page
 - All MFA events are recorded in `audit_events`
+- After password/magic-link/passkey login where MFA is required, the login page transitions to the correct MFA step view inline (no page navigation)
+- TOTP enrollment QR code is displayed and user can complete enrollment to finish login
+- Passkey step-up UI completes the MFA step
+- "Use authenticator app instead" is available when user has both passkey and TOTP enrolled
