@@ -95,16 +95,6 @@ sed -i.bak \
 rm -f "${WRANGLER_FILE}.bak"
 echo "[config] 完成，wrangler.jsonc 已更新"
 
-# --- 更新 wrangler.jsonc 中的 Worker 路由域名占位符 ---
-echo "[config] 更新 wrangler.jsonc 路由域名占位符 ..."
-sed -i.bak \
-  -e "s|auth\.REPLACE_WITH_ROOT_DOMAIN|${AUTH_DOMAIN}|g" \
-  -e "s|o\.REPLACE_WITH_ROOT_DOMAIN|${OIDC_DOMAIN}|g" \
-  -e "s|REPLACE_WITH_ROOT_DOMAIN|${ROOT_DOMAIN}|g" \
-  "$WRANGLER_FILE"
-rm -f "${WRANGLER_FILE}.bak"
-echo "[config] 路由域名已更新为 AUTH_DOMAIN=${AUTH_DOMAIN}, OIDC_DOMAIN=${OIDC_DOMAIN}"
-
 # --- Apply D1 migrations ---
 echo "[D1] Applying migrations ..."
 npx wrangler d1 migrations apply "$D1_NAME" --remote
