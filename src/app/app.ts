@@ -2259,10 +2259,18 @@ export const createApp = (options: AppOptions) => {
     const client = await clientRepository.findByClientId(clientId);
     if (client === null || client.tenantId !== tenantId) return context.notFound();
 
-    const existing = await clientAuthMethodPolicyRepository.findByClientId(client.id);
-    if (existing === null) {
-      return context.json({ error: "policy_not_found" }, 404);
-    }
+    const existingOrNull = await clientAuthMethodPolicyRepository.findByClientId(client.id);
+    const existing = existingOrNull ?? {
+      clientId: client.id,
+      tenantId: client.tenantId,
+      password: { enabled: false, allowRegistration: false },
+      emailMagicLink: { enabled: false, allowRegistration: false },
+      passkey: { enabled: false, allowRegistration: false },
+      google: { enabled: false },
+      apple: { enabled: false },
+      facebook: { enabled: false },
+      wechat: { enabled: false }
+    };
 
     let body: Record<string, unknown>;
     try {
@@ -2311,7 +2319,11 @@ export const createApp = (options: AppOptions) => {
       wechat: { enabled: typeof wc.enabled === "boolean" ? wc.enabled : existing.wechat.enabled }
     };
 
-    await clientAuthMethodPolicyRepository.update(merged);
+    if (existingOrNull === null) {
+      await clientAuthMethodPolicyRepository.create(merged);
+    } else {
+      await clientAuthMethodPolicyRepository.update(merged);
+    }
 
     await auditRepository.record({
       id: crypto.randomUUID(),
