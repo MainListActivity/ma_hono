@@ -354,7 +354,8 @@ export const createApp = (options: AppOptions) => {
       google: { enabled: policy.google.enabled },
       apple: { enabled: policy.apple.enabled },
       facebook: { enabled: policy.facebook.enabled },
-      wechat: { enabled: policy.wechat.enabled }
+      wechat: { enabled: policy.wechat.enabled },
+      mfa_required: policy.mfaRequired
     };
 
   const handleDiscovery = async (requestUrl: string) => {
