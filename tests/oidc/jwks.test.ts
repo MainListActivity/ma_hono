@@ -97,7 +97,7 @@ describe("OIDC JWKS", () => {
       adminBootstrapPasswordHash: "",
       adminWhitelist: [],
       managementApiToken: "",
-      platformHost: "idp.example.test",
+      oidcHost: "idp.example.test", authDomain: "auth.example.test",
       tenantRepository
     });
 
@@ -122,7 +122,7 @@ describe("OIDC JWKS", () => {
       adminBootstrapPasswordHash: "",
       adminWhitelist: [],
       managementApiToken: "",
-      platformHost: "idp.example.test",
+      oidcHost: "idp.example.test", authDomain: "auth.example.test",
       tenantRepository
     });
 
@@ -140,7 +140,7 @@ describe("OIDC JWKS", () => {
       adminBootstrapPasswordHash: "",
       adminWhitelist: [],
       managementApiToken: "",
-      platformHost: "idp.example.test",
+      oidcHost: "idp.example.test", authDomain: "auth.example.test",
       tenantRepository
     });
 

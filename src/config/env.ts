@@ -16,7 +16,6 @@ const r2BindingSchema = z.custom<R2Bucket>(
 );
 
 const runtimeConfigSchema = z.object({
-  ADMIN_ORIGIN: z.string().optional(),
   ADMIN_SESSIONS_KV: kvBindingSchema,
   DB: d1BindingSchema,
   KEY_MATERIAL_R2: r2BindingSchema,
@@ -25,7 +24,6 @@ const runtimeConfigSchema = z.object({
 });
 
 export interface RuntimeConfig {
-  adminOrigin?: string;
   adminSessionsKv: KVNamespace;
   db: D1Database;
   keyMaterialBucket: R2Bucket;
@@ -39,7 +37,6 @@ export const readRuntimeConfig = (
   const parsed = runtimeConfigSchema.parse(env);
 
   return {
-    adminOrigin: parsed.ADMIN_ORIGIN,
     adminSessionsKv: parsed.ADMIN_SESSIONS_KV,
     db: parsed.DB,
     keyMaterialBucket: parsed.KEY_MATERIAL_R2,

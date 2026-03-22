@@ -230,7 +230,7 @@ const buildApp = async (
     adminBootstrapPasswordHash: "",
     adminWhitelist: [],
     managementApiToken: "",
-    platformHost: "idp.example.test",
+    oidcHost: "idp.example.test", authDomain: "auth.example.test",
     signer,
     tenantRepository: buildTenantRepository(),
     userRepository: resolvedUserRepository
@@ -294,6 +294,7 @@ describe("end-to-end login flows", () => {
   it("platform-path issuer: password login → code → token exchange", async () => {
     const { app, material } = await buildApp();
     const baseUrl = "https://idp.example.test/t/acme";
+    const authBase = "https://auth.example.test";
     const pkce = await buildPkceChallenge("e2e-verifier-platform-password");
 
     // 1. /authorize → login challenge redirect
@@ -303,8 +304,8 @@ describe("end-to-end login flows", () => {
     const loginChallengeToken = loginRedirect.searchParams.get("login_challenge");
     expect(loginChallengeToken).toBeTruthy();
 
-    // 2. Password login → code redirect
-    const passwordResponse = await app.request(`${baseUrl}/login/password`, {
+    // 2. Password login → code redirect (login routes live on auth domain)
+    const passwordResponse = await app.request(`${authBase}/login/acme/password`, {
       body: new URLSearchParams({
         login_challenge: loginChallengeToken!,
         username: "alice",
@@ -399,10 +400,11 @@ describe("end-to-end login flows", () => {
   it("platform-path issuer: passkey enrollment → passkey login → code → token exchange", async () => {
     const { app, material } = await buildApp();
     const baseUrl = "https://idp.example.test/t/acme";
+    const authBase = "https://auth.example.test";
     const pkce = await buildPkceChallenge("e2e-verifier-platform-passkey");
 
-    // 1. Enroll passkey
-    const enrollStart = await app.request(`${baseUrl}/passkey/enroll/start`, {
+    // 1. Enroll passkey (enrollment routes live on auth domain)
+    const enrollStart = await app.request(`${authBase}/passkey/acme/enroll/start`, {
       body: JSON.stringify({ user_id: "user_alice" }),
       headers: { "content-type": "application/json" },
       method: "POST"
@@ -413,7 +415,7 @@ describe("end-to-end login flows", () => {
     };
 
     const credentialId = "e2e-passkey-credential";
-    const enrollFinish = await app.request(`${baseUrl}/passkey/enroll/finish`, {
+    const enrollFinish = await app.request(`${authBase}/passkey/acme/enroll/finish`, {
       body: JSON.stringify({
         enrollment_session_id: enrollmentSessionId,
         credential_id: credentialId,
@@ -432,8 +434,8 @@ describe("end-to-end login flows", () => {
     const loginChallengeToken = loginRedirect.searchParams.get("login_challenge");
     expect(loginChallengeToken).toBeTruthy();
 
-    // 3. Passkey login start
-    const loginStart = await app.request(`${baseUrl}/login/passkey/start`, {
+    // 3. Passkey login start (login routes live on auth domain)
+    const loginStart = await app.request(`${authBase}/login/acme/passkey/start`, {
       body: new URLSearchParams({ login_challenge: loginChallengeToken! }),
       headers: { "content-type": "application/x-www-form-urlencoded" },
       method: "POST"
@@ -444,7 +446,7 @@ describe("end-to-end login flows", () => {
     };
 
     // 4. Passkey login finish → code redirect
-    const loginFinish = await app.request(`${baseUrl}/login/passkey/finish`, {
+    const loginFinish = await app.request(`${authBase}/login/acme/passkey/finish`, {
       body: JSON.stringify({
         assertion_session_id: assertionSessionId,
         credential_id: credentialId,
@@ -528,6 +530,7 @@ describe("end-to-end login flows", () => {
       })
     );
     const baseUrl = "https://idp.example.test/t/acme";
+    const authBase = "https://auth.example.test";
     const pkce = await buildPkceChallenge("e2e-verifier-policy-enforce");
 
     // /authorize redirects to login even with all methods off (no session)
@@ -537,8 +540,8 @@ describe("end-to-end login flows", () => {
     const loginChallengeToken = loginRedirect.searchParams.get("login_challenge");
     expect(loginChallengeToken).toBeTruthy();
 
-    // All auth methods are blocked by policy
-    const passwordResponse = await app.request(`${baseUrl}/login/password`, {
+    // All auth methods are blocked by policy (login routes live on auth domain)
+    const passwordResponse = await app.request(`${authBase}/login/acme/password`, {
       body: new URLSearchParams({
         login_challenge: loginChallengeToken!,
         username: "alice",
@@ -550,7 +553,7 @@ describe("end-to-end login flows", () => {
     expect(passwordResponse.status).toBe(403);
     expect(await passwordResponse.json()).toEqual({ error: "password_login_disabled" });
 
-    const magicLinkResponse = await app.request(`${baseUrl}/login/magic-link/request`, {
+    const magicLinkResponse = await app.request(`${authBase}/login/acme/magic-link/request`, {
       body: new URLSearchParams({
         email: "alice@acme.test",
         login_challenge: loginChallengeToken!
@@ -561,7 +564,7 @@ describe("end-to-end login flows", () => {
     expect(magicLinkResponse.status).toBe(403);
     expect(await magicLinkResponse.json()).toEqual({ error: "magic_link_login_disabled" });
 
-    const passkeyResponse = await app.request(`${baseUrl}/login/passkey/start`, {
+    const passkeyResponse = await app.request(`${authBase}/login/acme/passkey/start`, {
       body: new URLSearchParams({ login_challenge: loginChallengeToken! }),
       headers: { "content-type": "application/x-www-form-urlencoded" },
       method: "POST"

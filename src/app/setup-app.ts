@@ -3,14 +3,14 @@ import { html } from "hono/html";
 import { hashPasswordPbkdf2 } from "../lib/pbkdf2";
 
 const isValidHostname = (value: string): boolean => {
-  if (value.includes("://") || value.includes("/")) {
+  if (value.includes("://") || value.includes("/") || value.includes(":")) {
     return false;
   }
-  return value.length > 0 && /^[a-zA-Z0-9._:-]+$/.test(value);
+  return value.length > 0 && /^[a-zA-Z0-9._-]+$/.test(value);
 };
 
 interface FormValues {
-  platformHost: string;
+  rootDomain: string;
   adminWhitelist: string;
   adminBootstrapPassword: string;
   adminBootstrapPasswordConfirm: string;
@@ -18,7 +18,7 @@ interface FormValues {
 }
 
 interface FormErrors {
-  platformHost?: string;
+  rootDomain?: string;
   adminWhitelist?: string;
   adminBootstrapPassword?: string;
   adminBootstrapPasswordConfirm?: string;
@@ -57,13 +57,13 @@ const renderSetupPage = (values: Partial<FormValues> = {}, errors: FormErrors = 
     ${errors.general ? html`<div class="banner">${errors.general}</div>` : ""}
     <form method="POST" action="/setup">
       <div class="field">
-        <label for="platform_host">Platform Host</label>
-        <input type="text" id="platform_host" name="platform_host"
-          value="${values.platformHost ?? ""}"
-          class="${errors.platformHost ? "error-field" : ""}"
-          placeholder="auth.example.com" />
-        ${errors.platformHost ? html`<div class="error-msg">${errors.platformHost}</div>` : ""}
-        <div class="hint">Hostname only — no https:// prefix, no trailing slash.</div>
+        <label for="root_domain">Root Domain</label>
+        <input type="text" id="root_domain" name="root_domain"
+          value="${values.rootDomain ?? ""}"
+          class="${errors.rootDomain ? "error-field" : ""}"
+          placeholder="example.com" />
+        ${errors.rootDomain ? html`<div class="error-msg">${errors.rootDomain}</div>` : ""}
+        <div class="hint">Root domain only — e.g. <code>example.com</code>. Derives <code>auth.example.com</code> (admin + login UI) and <code>o.example.com</code> (OIDC protocol).</div>
       </div>
       <div class="field">
         <label for="admin_whitelist">Admin Email(s)</label>
@@ -108,19 +108,22 @@ export const createSetupApp = (db: D1Database) => {
 
   app.get("/setup", (c) => {
     const host = c.req.header("host") ?? "";
-    return c.html(renderSetupPage({ platformHost: host }) as string);
+    // Pre-fill with the root domain guessed from the request host (strip any subdomain prefix)
+    const parts = host.split(".");
+    const guessedRoot = parts.length >= 2 ? parts.slice(-2).join(".") : host;
+    return c.html(renderSetupPage({ rootDomain: guessedRoot }) as string);
   });
 
   app.post("/setup", async (c) => {
     const body = await c.req.parseBody();
-    const platformHost = String(body["platform_host"] ?? "").trim();
+    const rootDomain = String(body["root_domain"] ?? "").trim();
     const adminWhitelist = String(body["admin_whitelist"] ?? "").trim();
     const adminBootstrapPassword = String(body["admin_bootstrap_password"] ?? "");
     const adminBootstrapPasswordConfirm = String(body["admin_bootstrap_password_confirm"] ?? "");
     const managementApiToken = String(body["management_api_token"] ?? "").trim();
 
     const values: FormValues = {
-      platformHost,
+      rootDomain,
       adminWhitelist,
       adminBootstrapPassword: "",
       adminBootstrapPasswordConfirm: "",
@@ -129,10 +132,10 @@ export const createSetupApp = (db: D1Database) => {
 
     const errors: FormErrors = {};
 
-    if (!platformHost) {
-      errors.platformHost = "Platform host is required.";
-    } else if (!isValidHostname(platformHost)) {
-      errors.platformHost = "Enter a hostname only (no https://, no path).";
+    if (!rootDomain) {
+      errors.rootDomain = "Root domain is required.";
+    } else if (!isValidHostname(rootDomain)) {
+      errors.rootDomain = "Enter a bare domain only (e.g. example.com — no https://, no subdomain, no path).";
     }
 
     if (!adminWhitelist) {
@@ -166,10 +169,10 @@ export const createSetupApp = (db: D1Database) => {
       db.prepare("INSERT OR REPLACE INTO platform_config (key, value, updated_at) VALUES (?, ?, ?)")
         .bind("management_api_token", managementApiToken, now),
       db.prepare("INSERT OR REPLACE INTO platform_config (key, value, updated_at) VALUES (?, ?, ?)")
-        .bind("platform_host", platformHost, now)
+        .bind("root_domain", rootDomain, now)
     ]);
 
-    return c.redirect("/admin");
+    return c.redirect(`https://auth.${rootDomain}/`);
   });
 
   return app;

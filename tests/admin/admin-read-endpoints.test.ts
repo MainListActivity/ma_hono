@@ -7,8 +7,6 @@ import { MemoryUserRepository } from "../../src/adapters/db/memory/memory-user-r
 import { createApp } from "../../src/app/app";
 import type { Tenant } from "../../src/domain/tenants/types";
 
-const ADMIN_ORIGIN = "https://ma-hono-admin.pages.dev";
-
 const acmeTenant: Tenant = {
   id: "tenant_acme",
   slug: "acme",
@@ -46,11 +44,11 @@ const makeApp = (tenantList: Tenant[] = [], userList: Array<{
   return createApp({
     adminBootstrapPasswordHash: "1:AQEBAQEBAQEBAQEBAQEBAQ:-niO1HggQYX5120bMdQ1NLtflreXdKdYKUoUQe1oPdI",
     adminWhitelist: ["admin@example.test"],
-    adminOrigin: ADMIN_ORIGIN,
     adminRepository,
     auditRepository: new MemoryAuditRepository(),
     managementApiToken: "",
-    platformHost: "idp.example.test",
+    oidcHost: "idp.example.test",
+    authDomain: "auth.example.test",
     tenantRepository,
     userRepository
   });
@@ -103,31 +101,6 @@ describe("GET /admin/tenants", () => {
     });
   });
 
-  it("includes CORS header for allowed origin", async () => {
-    const app = makeApp();
-    const token = await loginAs(app);
-    const res = await app.request("https://idp.example.test/admin/tenants", {
-      headers: {
-        authorization: `Bearer ${token}`,
-        origin: ADMIN_ORIGIN
-      }
-    });
-    expect(res.headers.get("access-control-allow-origin")).toBe(ADMIN_ORIGIN);
-  });
-
-  it("handles OPTIONS preflight", async () => {
-    const app = makeApp();
-    const res = await app.request("https://idp.example.test/admin/tenants", {
-      method: "OPTIONS",
-      headers: {
-        origin: ADMIN_ORIGIN,
-        "access-control-request-method": "GET",
-        "access-control-request-headers": "authorization"
-      }
-    });
-    expect(res.status).toBe(204);
-    expect(res.headers.get("access-control-allow-origin")).toBe(ADMIN_ORIGIN);
-  });
 });
 
 describe("GET /admin/tenants/:tenantId", () => {

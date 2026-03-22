@@ -4,7 +4,7 @@ import { createSetupApp } from "../../src/app/setup-app";
 const makeMockDb = () => {
   const db = {
     prepare: (_sql: string) => ({
-      bind: (...args: unknown[]) => ({
+      bind: (..._args: unknown[]) => ({
         all: async () => ({ results: [] }),
         run: async () => ({ success: true })
       }),
@@ -34,8 +34,8 @@ describe("GET /setup", () => {
     }));
     expect(res.status).toBe(200);
     const body = await res.text();
-    expect(body).toContain("auth.example.com");
-    expect(body).toContain("platform_host");
+    expect(body).toContain("example.com");
+    expect(body).toContain("root_domain");
     expect(body).toContain("admin_whitelist");
     expect(body).toContain("admin_bootstrap_password");
     expect(body).toContain("management_api_token");
@@ -44,14 +44,14 @@ describe("GET /setup", () => {
 
 describe("POST /setup", () => {
   const validBody = new URLSearchParams({
-    platform_host: "auth.example.com",
+    root_domain: "example.com",
     admin_whitelist: "admin@example.com",
     admin_bootstrap_password: "s3cur3P@ssw0rd!",
     admin_bootstrap_password_confirm: "s3cur3P@ssw0rd!",
     management_api_token: "tok_abc"
   });
 
-  it("redirects to /admin on valid submission", async () => {
+  it("redirects to auth subdomain on valid submission", async () => {
     const app = createSetupApp(makeMockDb());
     const res = await app.fetch(new Request("http://localhost/setup", {
       method: "POST",
@@ -59,7 +59,7 @@ describe("POST /setup", () => {
       body: validBody.toString()
     }));
     expect(res.status).toBe(302);
-    expect(res.headers.get("location")).toBe("/admin");
+    expect(res.headers.get("location")).toBe("https://auth.example.com/");
   });
 
   it("returns 400 when passwords do not match", async () => {
@@ -88,15 +88,59 @@ describe("POST /setup", () => {
     expect(res.status).toBe(400);
   });
 
-  it("returns 400 when platform_host contains scheme", async () => {
+  it("returns 400 when root_domain contains scheme", async () => {
     const app = createSetupApp(makeMockDb());
     const body = new URLSearchParams(validBody);
-    body.set("platform_host", "https://auth.example.com");
+    body.set("root_domain", "https://example.com");
     const res = await app.fetch(new Request("http://localhost/setup", {
       method: "POST",
       headers: { "content-type": "application/x-www-form-urlencoded" },
       body: body.toString()
     }));
     expect(res.status).toBe(400);
+  });
+
+  it("returns 400 when root_domain contains a port number", async () => {
+    const app = createSetupApp(makeMockDb());
+    const body = new URLSearchParams(validBody);
+    body.set("root_domain", "example.com:8080");
+    const res = await app.fetch(new Request("http://localhost/setup", {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: body.toString()
+    }));
+    expect(res.status).toBe(400);
+  });
+
+  it("HTML-escapes reflected root_domain value on validation failure", async () => {
+    const app = createSetupApp(makeMockDb());
+    const body = new URLSearchParams(validBody);
+    body.set("root_domain", '"><script>alert(1)</script>');
+    body.set("admin_bootstrap_password_confirm", "mismatch");
+    const res = await app.fetch(new Request("http://localhost/setup", {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: body.toString()
+    }));
+    expect(res.status).toBe(400);
+    const text = await res.text();
+    expect(text).not.toContain("<script>");
+    expect(text).toContain("&lt;script&gt;");
+  });
+
+  it("HTML-escapes reflected managementApiToken value on validation failure", async () => {
+    const app = createSetupApp(makeMockDb());
+    const body = new URLSearchParams(validBody);
+    body.set("management_api_token", '"><script>alert(2)</script>');
+    body.set("admin_bootstrap_password_confirm", "mismatch");
+    const res = await app.fetch(new Request("http://localhost/setup", {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: body.toString()
+    }));
+    expect(res.status).toBe(400);
+    const text = await res.text();
+    expect(text).not.toContain("<script>");
+    expect(text).toContain("&lt;script&gt;");
   });
 });

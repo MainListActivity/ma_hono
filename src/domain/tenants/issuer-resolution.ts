@@ -3,7 +3,8 @@ import type { IssuerType, ResolvedIssuerContext, Tenant, TenantIssuer } from "./
 
 interface ResolveIssuerContextInput {
   requestUrl: string;
-  platformHost: string;
+  /** The OIDC protocol hostname, e.g. "o.maplayer.top". Used to match platform-path issuer requests. */
+  oidcHost: string;
   tenantRepository: TenantRepository;
 }
 
@@ -48,14 +49,41 @@ const toResolvedContext = (
   requestHost
 });
 
+/**
+ * Resolves issuer context by tenant slug when the request arrives on the auth
+ * subdomain (auth.{domain}/login/:tenant). Looks up the tenant by slug and
+ * constructs a platform_path issuer context using the oidcHost.
+ */
+export const resolveIssuerContextBySlug = async ({
+  slug,
+  oidcHost,
+  tenantRepository
+}: {
+  slug: string;
+  oidcHost: string;
+  tenantRepository: TenantRepository;
+}): Promise<ResolvedIssuerContext | null> => {
+  const tenant = await tenantRepository.findBySlug(slug);
+
+  if (tenant === null || !isActiveTenant(tenant)) {
+    return null;
+  }
+
+  const platformIssuer = findIssuerByType(tenant, "platform_path");
+
+  return platformIssuer === null
+    ? null
+    : toResolvedContext(tenant, platformIssuer, oidcHost);
+};
+
 export const resolveIssuerContext = async ({
   requestUrl,
-  platformHost,
+  oidcHost,
   tenantRepository
 }: ResolveIssuerContextInput): Promise<ResolvedIssuerContext | null> => {
   const url = new URL(requestUrl);
   const requestHost = normalizeHost(url.hostname);
-  const normalizedPlatformHost = normalizeHost(platformHost);
+  const normalizedOidcHost = normalizeHost(oidcHost);
 
   const customDomainTenant = await tenantRepository.findByCustomDomain(requestHost);
 
@@ -71,7 +99,7 @@ export const resolveIssuerContext = async ({
     }
   }
 
-  if (requestHost !== normalizedPlatformHost) {
+  if (requestHost !== normalizedOidcHost) {
     return null;
   }
 

@@ -22,7 +22,7 @@ describe("admin auth and management api", () => {
       adminRepository,
       auditRepository,
       managementApiToken: "",
-      platformHost: "idp.example.test",
+      oidcHost: "idp.example.test", authDomain: "auth.example.test",
       tenantRepository
     });
 
@@ -78,7 +78,7 @@ describe("admin auth and management api", () => {
         adminUsers: [{ email: "admin@example.test", id: "admin_1", status: "active" }]
       }),
       managementApiToken: "",
-      platformHost: "idp.example.test",
+      oidcHost: "idp.example.test", authDomain: "auth.example.test",
       tenantRepository: new MemoryTenantRepository()
     });
 
@@ -104,7 +104,7 @@ describe("admin auth and management api", () => {
       adminRepository: new MemoryAdminRepository(),
       auditRepository,
       managementApiToken: "",
-      platformHost: "idp.example.test",
+      oidcHost: "idp.example.test", authDomain: "auth.example.test",
       tenantRepository: new MemoryTenantRepository()
     });
 
@@ -133,7 +133,7 @@ describe("admin auth and management api", () => {
         adminUsers: [{ email: "admin@example.test", id: "admin_1", status: "active" }]
       }),
       managementApiToken: "",
-      platformHost: "idp.example.test",
+      oidcHost: "idp.example.test", authDomain: "auth.example.test",
       tenantRepository: new MemoryTenantRepository()
     });
 
@@ -159,7 +159,7 @@ describe("admin auth and management api", () => {
         adminUsers: [{ email: "ops@example.test", id: "admin_2", status: "active" }]
       }),
       managementApiToken: "",
-      platformHost: "idp.example.test",
+      oidcHost: "idp.example.test", authDomain: "auth.example.test",
       tenantRepository: new MemoryTenantRepository()
     });
 
@@ -187,7 +187,7 @@ describe("admin auth and management api", () => {
       adminWhitelist: ["admin@example.test"],
       adminRepository,
       managementApiToken: "",
-      platformHost: "idp.example.test",
+      oidcHost: "idp.example.test", authDomain: "auth.example.test",
       tenantRepository
     });
 

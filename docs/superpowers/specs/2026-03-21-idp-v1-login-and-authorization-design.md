@@ -161,6 +161,8 @@ The system must add an authorization endpoint under the issuer surface:
 - platform issuer: `/t/:tenant/authorize`
 - custom-domain issuer: `/authorize`
 
+Note: the `/t/:tenant` prefix on `o.{domain}` is reserved exclusively for OIDC protocol endpoints (`.well-known`, `/authorize`, `/token`, `/jwks.json`, `/connect/register`). It must not be used as a user-facing login entry path. All protocol endpoints live on `o.{domain}`; all human-facing UI lives on `auth.{domain}` (served via Cloudflare Pages).
+
 Supported V1 request shape:
 
 - `response_type=code`
@@ -184,7 +186,7 @@ When the user is not authenticated:
 
 - create a resumable login challenge
 - persist the authorization request and login challenge in D1
-- redirect the browser to the tenant-aware login entry
+- redirect the browser to the tenant-aware login entry at `/login/:tenant`
 
 When the user is authenticated:
 
@@ -193,6 +195,10 @@ When the user is authenticated:
 - redirect to the client callback with `code` and `state`
 
 ### Login Flow
+
+The tenant-aware login entry is served at `/login/:tenant` (platform path) or `/login` (custom-domain path).
+
+This path is distinct from the OIDC protocol prefix `/t/:tenant`, which is reserved for machine-facing endpoints. The login page is the human-facing entry point and must be accessible at a clean path that does not conflict with admin panel routes.
 
 The tenant-aware login entry must be able to offer:
 
@@ -209,6 +215,34 @@ Required properties:
 - login challenge expires quickly
 - login challenge can only be consumed once
 - successful login creates a browser session scoped to the tenant user
+
+### Login Route Surface
+
+All login API endpoints are served by the Worker under the `/api/` prefix at `auth.{domain}/api/*`. The SPA pages at `auth.{domain}/login/:tenant` call these endpoints relative to the same origin (no CORS needed).
+
+| Method | Path on Worker | Surface | Description |
+|--------|---------------|---------|-------------|
+| `POST` | `/api/login/:tenant/password` | `auth.{domain}` | Password login (platform path) |
+| `POST` | `/api/login/password` | custom domain | Password login (custom-domain path) |
+| `POST` | `/api/login/:tenant/magic-link/request` | `auth.{domain}` | Magic link request (platform path) |
+| `POST` | `/api/login/magic-link/request` | custom domain | Magic link request (custom-domain) |
+| `POST` | `/api/login/:tenant/magic-link/consume` | `auth.{domain}` | Magic link consume (platform path) |
+| `POST` | `/api/login/magic-link/consume` | custom domain | Magic link consume (custom-domain) |
+| `POST` | `/api/login/:tenant/passkey/start` | `auth.{domain}` | Passkey login start (platform path) |
+| `POST` | `/api/login/passkey/start` | custom domain | Passkey login start (custom-domain) |
+| `POST` | `/api/login/:tenant/passkey/finish` | `auth.{domain}` | Passkey login finish (platform path) |
+| `POST` | `/api/login/passkey/finish` | custom domain | Passkey login finish (custom-domain) |
+| `POST` | `/api/passkey/:tenant/enroll/start` | `auth.{domain}` | Passkey enrollment start (platform path) |
+| `POST` | `/api/passkey/enroll/start` | custom domain | Passkey enrollment start (custom-domain) |
+| `POST` | `/api/passkey/:tenant/enroll/finish` | `auth.{domain}` | Passkey enrollment finish (platform path) |
+| `POST` | `/api/passkey/enroll/finish` | custom domain | Passkey enrollment finish (custom-domain) |
+
+The UI entry points (SPA pages, not API) are:
+
+| Path on Pages | Description |
+|--------------|-------------|
+| `auth.{domain}/login/:tenant` | Tenant end-user login page (platform path) |
+| `{custom-domain}/login` | Tenant end-user login page (custom-domain, future) |
 
 ### Token Endpoint
 
@@ -544,7 +578,7 @@ Private keys must not be embedded inline in D1. D1 stores metadata and the `priv
    - state
    - PKCE challenge
    - expiry
-5. The browser is redirected to the tenant login entry.
+5. The browser is redirected to the tenant login entry at `https://auth.{domain}/login/:tenant?login_challenge=<token>` (platform path) or `https://{custom-domain}/login?login_challenge=<token>` (custom-domain path).
 
 ### Successful Login
 

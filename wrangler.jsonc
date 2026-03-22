@@ -2,6 +2,14 @@
   "name": "ma-auth",
   "main": "src/index.ts",
   "compatibility_date": "2026-03-21",
+  // Worker 路由：
+  //   auth.{domain}/api/*  → 覆盖 Pages catch-all，处理所有 Hono API 端点
+  //   o.{domain}/*         → OIDC 协议专用子域名（.well-known、/jwks.json、/authorize、/token 等）
+  // 实际域名由 setup-cf-resources.sh 脚本通过 Cloudflare API 创建，此处为占位符供参考。
+  "routes": [
+    { "pattern": "auth.REPLACE_WITH_ROOT_DOMAIN/api/*", "zone_name": "REPLACE_WITH_ROOT_DOMAIN" },
+    { "pattern": "o.REPLACE_WITH_ROOT_DOMAIN/*", "zone_name": "REPLACE_WITH_ROOT_DOMAIN" }
+  ],
   "d1_databases": [
     {
       "binding": "DB",
@@ -29,8 +37,5 @@
       "binding": "KEY_MATERIAL_R2",
       "bucket_name": "ma-hono-key-material"
     }
-  ],
-  "vars": {
-    "ADMIN_ORIGIN": ""
-  }
+  ]
 }

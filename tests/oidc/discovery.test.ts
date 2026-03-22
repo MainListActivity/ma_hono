@@ -60,7 +60,7 @@ describe("OIDC discovery", () => {
       adminBootstrapPasswordHash: "",
       adminWhitelist: [],
       managementApiToken: "",
-      platformHost: "idp.example.test",
+      oidcHost: "idp.example.test", authDomain: "auth.example.test",
       tenantRepository
     });
 
@@ -94,7 +94,7 @@ describe("OIDC discovery", () => {
       adminBootstrapPasswordHash: "",
       adminWhitelist: [],
       managementApiToken: "",
-      platformHost: "idp.example.test",
+      oidcHost: "idp.example.test", authDomain: "auth.example.test",
       tenantRepository
     });
 
@@ -124,7 +124,7 @@ describe("OIDC discovery", () => {
       adminBootstrapPasswordHash: "",
       adminWhitelist: [],
       managementApiToken: "",
-      platformHost: "idp.example.test",
+      oidcHost: "idp.example.test", authDomain: "auth.example.test",
       tenantRepository
     });
 
@@ -140,7 +140,7 @@ describe("OIDC discovery", () => {
       adminBootstrapPasswordHash: "",
       adminWhitelist: [],
       managementApiToken: "",
-      platformHost: "idp.example.test",
+      oidcHost: "idp.example.test", authDomain: "auth.example.test",
       tenantRepository
     });
 
@@ -156,7 +156,7 @@ describe("OIDC discovery", () => {
       adminBootstrapPasswordHash: "",
       adminWhitelist: [],
       managementApiToken: "",
-      platformHost: "idp.example.test",
+      oidcHost: "idp.example.test", authDomain: "auth.example.test",
       tenantRepository
     });
 
@@ -172,7 +172,7 @@ describe("OIDC discovery", () => {
       adminBootstrapPasswordHash: "",
       adminWhitelist: [],
       managementApiToken: "",
-      platformHost: "idp.example.test",
+      oidcHost: "idp.example.test", authDomain: "auth.example.test",
       tenantRepository
     });
 

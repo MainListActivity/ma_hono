@@ -227,7 +227,7 @@ describe("/token", () => {
       adminBootstrapPasswordHash: "",
       adminWhitelist: [],
       managementApiToken: "",
-      platformHost: "idp.example.test",
+      oidcHost: "idp.example.test", authDomain: "auth.example.test",
       signer,
       tenantRepository
     });
@@ -305,7 +305,7 @@ describe("/token", () => {
       adminBootstrapPasswordHash: "",
       adminWhitelist: [],
       managementApiToken: "",
-      platformHost: "idp.example.test",
+      oidcHost: "idp.example.test", authDomain: "auth.example.test",
       signer,
       tenantRepository
     });
@@ -404,7 +404,7 @@ describe("/token", () => {
       adminBootstrapPasswordHash: "",
       adminWhitelist: [],
       managementApiToken: "",
-      platformHost: "idp.example.test",
+      oidcHost: "idp.example.test", authDomain: "auth.example.test",
       signer,
       tenantRepository
     });
@@ -508,7 +508,7 @@ describe("/token", () => {
       adminBootstrapPasswordHash: "",
       adminWhitelist: [],
       managementApiToken: "",
-      platformHost: "idp.example.test",
+      oidcHost: "idp.example.test", authDomain: "auth.example.test",
       signer,
       tenantRepository
     });
@@ -596,7 +596,7 @@ describe("/token", () => {
       adminBootstrapPasswordHash: "",
       adminWhitelist: [],
       managementApiToken: "",
-      platformHost: "idp.example.test",
+      oidcHost: "idp.example.test", authDomain: "auth.example.test",
       signer,
       tenantRepository
     });
@@ -658,7 +658,7 @@ describe("/token", () => {
       adminBootstrapPasswordHash: "",
       adminWhitelist: [],
       managementApiToken: "",
-      platformHost: "idp.example.test",
+      oidcHost: "idp.example.test", authDomain: "auth.example.test",
       signer,
       tenantRepository
     });
@@ -730,7 +730,7 @@ describe("/token", () => {
       adminBootstrapPasswordHash: "",
       adminWhitelist: [],
       managementApiToken: "",
-      platformHost: "idp.example.test",
+      oidcHost: "idp.example.test", authDomain: "auth.example.test",
       signer,
       tenantRepository
     });
@@ -784,7 +784,7 @@ describe("/token", () => {
       adminBootstrapPasswordHash: "",
       adminWhitelist: [],
       managementApiToken: "",
-      platformHost: "idp.example.test",
+      oidcHost: "idp.example.test", authDomain: "auth.example.test",
       tenantRepository
     });
 
@@ -830,7 +830,7 @@ describe("/token", () => {
       adminBootstrapPasswordHash: "",
       adminWhitelist: [],
       managementApiToken: "",
-      platformHost: "idp.example.test",
+      oidcHost: "idp.example.test", authDomain: "auth.example.test",
       signer,
       tenantRepository
     });
@@ -882,7 +882,7 @@ describe("/token", () => {
       adminBootstrapPasswordHash: "",
       adminWhitelist: [],
       managementApiToken: "",
-      platformHost: "idp.example.test",
+      oidcHost: "idp.example.test", authDomain: "auth.example.test",
       signer,
       tenantRepository
     });
@@ -946,7 +946,7 @@ describe("/token", () => {
       adminBootstrapPasswordHash: "",
       adminWhitelist: [],
       managementApiToken: "",
-      platformHost: "idp.example.test",
+      oidcHost: "idp.example.test", authDomain: "auth.example.test",
       signer,
       tenantRepository
     });

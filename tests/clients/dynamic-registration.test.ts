@@ -65,7 +65,7 @@ describe("Dynamic Client Registration", () => {
       adminBootstrapPasswordHash: "",
       adminWhitelist: [],
       managementApiToken: "manage-acme",
-      platformHost: "idp.example.test",
+      oidcHost: "idp.example.test", authDomain: "auth.example.test",
       registrationAccessTokenRepository,
       tenantRepository
     });
@@ -116,7 +116,7 @@ describe("Dynamic Client Registration", () => {
       adminBootstrapPasswordHash: "",
       adminWhitelist: [],
       managementApiToken: "manage-acme",
-      platformHost: "idp.example.test",
+      oidcHost: "idp.example.test", authDomain: "auth.example.test",
       tenantRepository
     });
 
@@ -144,7 +144,7 @@ describe("Dynamic Client Registration", () => {
       adminBootstrapPasswordHash: "",
       adminWhitelist: [],
       managementApiToken: "manage-acme",
-      platformHost: "idp.example.test",
+      oidcHost: "idp.example.test", authDomain: "auth.example.test",
       tenantRepository
     });
 
@@ -173,7 +173,7 @@ describe("Dynamic Client Registration", () => {
       adminBootstrapPasswordHash: "",
       adminWhitelist: [],
       managementApiToken: "manage-acme",
-      platformHost: "idp.example.test",
+      oidcHost: "idp.example.test", authDomain: "auth.example.test",
       tenantRepository
     });
 
@@ -207,7 +207,7 @@ describe("Dynamic Client Registration", () => {
       adminBootstrapPasswordHash: "",
       adminWhitelist: [],
       managementApiToken: "manage-acme",
-      platformHost: "idp.example.test",
+      oidcHost: "idp.example.test", authDomain: "auth.example.test",
       tenantRepository
     });
 
@@ -236,7 +236,7 @@ describe("Dynamic Client Registration", () => {
       adminBootstrapPasswordHash: "",
       adminWhitelist: [],
       managementApiToken: "manage-acme",
-      platformHost: "idp.example.test",
+      oidcHost: "idp.example.test", authDomain: "auth.example.test",
       tenantRepository
     });
 
@@ -266,7 +266,7 @@ describe("Dynamic Client Registration", () => {
       adminBootstrapPasswordHash: "",
       adminWhitelist: [],
       managementApiToken: "manage-acme",
-      platformHost: "idp.example.test",
+      oidcHost: "idp.example.test", authDomain: "auth.example.test",
       registrationAccessTokenRepository: new FailingRegistrationAccessTokenRepository(),
       tenantRepository
     });
@@ -326,7 +326,7 @@ describe("Dynamic Client Registration", () => {
       adminBootstrapPasswordHash: "",
       adminWhitelist: [],
       managementApiToken: "manage-acme",
-      platformHost: "idp.example.test",
+      oidcHost: "idp.example.test", authDomain: "auth.example.test",
       registrationAccessTokenRepository,
       tenantRepository
     });

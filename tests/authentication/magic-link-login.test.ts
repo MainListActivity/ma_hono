@@ -170,12 +170,12 @@ describe("magic link login", () => {
       adminBootstrapPasswordHash: "",
       adminWhitelist: [],
       managementApiToken: "",
-      platformHost: "idp.example.test",
+      oidcHost: "idp.example.test", authDomain: "auth.example.test",
       tenantRepository,
       userRepository: buildUserRepository()
     });
 
-    const response = await app.request("https://idp.example.test/t/acme/login/magic-link/request", {
+    const response = await app.request("https://idp.example.test/login/acme/magic-link/request", {
       body: new URLSearchParams({
         email: "alice@acme.test",
         login_challenge: loginChallengeToken
@@ -214,14 +214,14 @@ describe("magic link login", () => {
       adminBootstrapPasswordHash: "",
       adminWhitelist: [],
       managementApiToken: "",
-      platformHost: "idp.example.test",
+      oidcHost: "idp.example.test", authDomain: "auth.example.test",
       tenantRepository,
       userRepository: buildUserRepository()
     });
 
     // Request magic link
     const requestResponse = await app.request(
-      "https://idp.example.test/t/acme/login/magic-link/request",
+      "https://idp.example.test/login/acme/magic-link/request",
       {
         body: new URLSearchParams({
           email: "alice@acme.test",
@@ -236,7 +236,7 @@ describe("magic link login", () => {
 
     // Consume magic link
     const consumeResponse = await app.request(
-      "https://idp.example.test/t/acme/login/magic-link/consume",
+      "https://idp.example.test/login/acme/magic-link/consume",
       {
         body: new URLSearchParams({ token: magicLinkToken }),
         headers: { "content-type": "application/x-www-form-urlencoded" },
@@ -275,14 +275,14 @@ describe("magic link login", () => {
       adminBootstrapPasswordHash: "",
       adminWhitelist: [],
       managementApiToken: "",
-      platformHost: "idp.example.test",
+      oidcHost: "idp.example.test", authDomain: "auth.example.test",
       tenantRepository,
       userRepository: buildUserRepository()
     });
 
     // Request magic link
     const requestResponse = await app.request(
-      "https://idp.example.test/t/acme/login/magic-link/request",
+      "https://idp.example.test/login/acme/magic-link/request",
       {
         body: new URLSearchParams({
           email: "alice@acme.test",
@@ -301,7 +301,7 @@ describe("magic link login", () => {
     }
 
     const consumeResponse = await app.request(
-      "https://idp.example.test/t/acme/login/magic-link/consume",
+      "https://idp.example.test/login/acme/magic-link/consume",
       {
         body: new URLSearchParams({ token: magicLinkToken }),
         headers: { "content-type": "application/x-www-form-urlencoded" },
@@ -330,13 +330,13 @@ describe("magic link login", () => {
       adminBootstrapPasswordHash: "",
       adminWhitelist: [],
       managementApiToken: "",
-      platformHost: "idp.example.test",
+      oidcHost: "idp.example.test", authDomain: "auth.example.test",
       tenantRepository,
       userRepository: buildUserRepository()
     });
 
     const requestResponse = await app.request(
-      "https://idp.example.test/t/acme/login/magic-link/request",
+      "https://idp.example.test/login/acme/magic-link/request",
       {
         body: new URLSearchParams({
           email: "alice@acme.test",
@@ -349,7 +349,7 @@ describe("magic link login", () => {
     const { magic_link_token: magicLinkToken } = await requestResponse.json() as { magic_link_token: string };
 
     const firstConsume = await app.request(
-      "https://idp.example.test/t/acme/login/magic-link/consume",
+      "https://idp.example.test/login/acme/magic-link/consume",
       {
         body: new URLSearchParams({ token: magicLinkToken }),
         headers: { "content-type": "application/x-www-form-urlencoded" },
@@ -359,7 +359,7 @@ describe("magic link login", () => {
     expect(firstConsume.status).toBe(302);
 
     const secondConsume = await app.request(
-      "https://idp.example.test/t/acme/login/magic-link/consume",
+      "https://idp.example.test/login/acme/magic-link/consume",
       {
         body: new URLSearchParams({ token: magicLinkToken }),
         headers: { "content-type": "application/x-www-form-urlencoded" },
@@ -386,7 +386,7 @@ describe("magic link login", () => {
       adminBootstrapPasswordHash: "",
       adminWhitelist: [],
       managementApiToken: "",
-      platformHost: "idp.example.test",
+      oidcHost: "idp.example.test", authDomain: "auth.example.test",
       tenantRepository,
       userRepository: new MemoryUserRepository({
         policies: [
@@ -414,7 +414,7 @@ describe("magic link login", () => {
     });
 
     const response = await app.request(
-      "https://idp.example.test/t/acme/login/magic-link/request",
+      "https://idp.example.test/login/acme/magic-link/request",
       {
         body: new URLSearchParams({
           email: "alice@acme.test",
@@ -447,13 +447,13 @@ describe("magic link login", () => {
       adminBootstrapPasswordHash: "",
       adminWhitelist: [],
       managementApiToken: "",
-      platformHost: "idp.example.test",
+      oidcHost: "idp.example.test", authDomain: "auth.example.test",
       tenantRepository,
       userRepository: buildUserRepository()
     });
 
     const requestResponse = await app.request(
-      "https://idp.example.test/t/acme/login/magic-link/request",
+      "https://idp.example.test/login/acme/magic-link/request",
       {
         body: new URLSearchParams({
           email: "alice@acme.test",
@@ -466,7 +466,7 @@ describe("magic link login", () => {
     expect(requestResponse.status).toBe(200);
     const { magic_link_token: magicLinkToken } = await requestResponse.json() as { magic_link_token: string };
 
-    await app.request("https://idp.example.test/t/acme/login/magic-link/consume", {
+    await app.request("https://idp.example.test/login/acme/magic-link/consume", {
       body: new URLSearchParams({ token: magicLinkToken }),
       headers: { "content-type": "application/x-www-form-urlencoded" },
       method: "POST"

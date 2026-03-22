@@ -205,12 +205,12 @@ describe("password login", () => {
       adminBootstrapPasswordHash: "",
       adminWhitelist: [],
       managementApiToken: "",
-      platformHost: "idp.example.test",
+      oidcHost: "idp.example.test", authDomain: "auth.example.test",
       tenantRepository,
       userRepository
     });
 
-    const response = await app.request("https://idp.example.test/t/acme/login/password", {
+    const response = await app.request("https://idp.example.test/login/acme/password", {
       body: new URLSearchParams({
         login_challenge: loginChallengeToken,
         username: "alice",
@@ -297,12 +297,12 @@ describe("password login", () => {
       adminBootstrapPasswordHash: "",
       adminWhitelist: [],
       managementApiToken: "",
-      platformHost: "idp.example.test",
+      oidcHost: "idp.example.test", authDomain: "auth.example.test",
       tenantRepository,
       userRepository
     });
 
-    const response = await app.request("https://idp.example.test/t/acme/login/password", {
+    const response = await app.request("https://idp.example.test/login/acme/password", {
       body: new URLSearchParams({
         login_challenge: loginChallengeToken,
         username: "alice",
@@ -344,7 +344,7 @@ describe("password login", () => {
       adminBootstrapPasswordHash: "",
       adminWhitelist: [],
       managementApiToken: "",
-      platformHost: "idp.example.test",
+      oidcHost: "idp.example.test", authDomain: "auth.example.test",
       tenantRepository,
       userRepository: new MemoryUserRepository({
         policies: [
@@ -381,7 +381,7 @@ describe("password login", () => {
       })
     });
 
-    const response = await app.request("https://idp.example.test/t/acme/login/password", {
+    const response = await app.request("https://idp.example.test/login/acme/password", {
       body: new URLSearchParams({
         login_challenge: loginChallengeToken,
         username: "alice",
@@ -423,7 +423,7 @@ describe("password login", () => {
       adminBootstrapPasswordHash: "",
       adminWhitelist: [],
       managementApiToken: "",
-      platformHost: "idp.example.test",
+      oidcHost: "idp.example.test", authDomain: "auth.example.test",
       tenantRepository,
       userRepository: new MemoryUserRepository({
         policies: [
@@ -460,7 +460,7 @@ describe("password login", () => {
       })
     });
 
-    const firstResponse = await app.request("https://idp.example.test/t/acme/login/password", {
+    const firstResponse = await app.request("https://idp.example.test/login/acme/password", {
       body: new URLSearchParams({
         login_challenge: loginChallengeToken,
         username: "alice",
@@ -473,7 +473,7 @@ describe("password login", () => {
     });
     expect(firstResponse.status).toBe(302);
 
-    const secondResponse = await app.request("https://idp.example.test/t/acme/login/password", {
+    const secondResponse = await app.request("https://idp.example.test/login/acme/password", {
       body: new URLSearchParams({
         login_challenge: loginChallengeToken,
         username: "alice",
@@ -511,7 +511,7 @@ describe("password login", () => {
       adminBootstrapPasswordHash: "",
       adminWhitelist: [],
       managementApiToken: "",
-      platformHost: "idp.example.test",
+      oidcHost: "idp.example.test", authDomain: "auth.example.test",
       tenantRepository,
       userRepository: new MemoryUserRepository({
         policies: [
@@ -548,7 +548,7 @@ describe("password login", () => {
       })
     });
 
-    const response = await app.request("https://idp.example.test/t/acme/login/password", {
+    const response = await app.request("https://idp.example.test/login/acme/password", {
       body: new URLSearchParams({
         login_challenge: loginChallengeToken,
         username: "alice",
@@ -581,7 +581,7 @@ describe("password login", () => {
       adminBootstrapPasswordHash: "",
       adminWhitelist: [],
       managementApiToken: "",
-      platformHost: "idp.example.test",
+      oidcHost: "idp.example.test", authDomain: "auth.example.test",
       tenantRepository,
       userRepository: new MemoryUserRepository({
         policies: [
@@ -619,7 +619,7 @@ describe("password login", () => {
     });
 
     const disabledUserResponse = await appWithDisabledUser.request(
-      "https://idp.example.test/t/acme/login/password",
+      "https://idp.example.test/login/acme/password",
       {
         body: new URLSearchParams({
           login_challenge: disabledUserChallengeToken,
@@ -647,7 +647,7 @@ describe("password login", () => {
       adminBootstrapPasswordHash: "",
       adminWhitelist: [],
       managementApiToken: "",
-      platformHost: "idp.example.test",
+      oidcHost: "idp.example.test", authDomain: "auth.example.test",
       tenantRepository,
       userRepository: new MemoryUserRepository()
     });
@@ -685,7 +685,7 @@ describe("password login", () => {
       adminBootstrapPasswordHash: "",
       adminWhitelist: [],
       managementApiToken: "",
-      platformHost: "idp.example.test",
+      oidcHost: "idp.example.test", authDomain: "auth.example.test",
       tenantRepository,
       userRepository: new MemoryUserRepository({
         policies: [
@@ -699,7 +699,7 @@ describe("password login", () => {
       })
     });
 
-    const response = await app.request("https://idp.example.test/t/acme/login/password", {
+    const response = await app.request("https://idp.example.test/login/acme/password", {
       body: new URLSearchParams({
         login_challenge: loginChallengeToken,
         username: "alice",
@@ -735,7 +735,7 @@ describe("password login", () => {
       adminBootstrapPasswordHash: "",
       adminWhitelist: [],
       managementApiToken: "",
-      platformHost: "idp.example.test",
+      oidcHost: "idp.example.test", authDomain: "auth.example.test",
       tenantRepository,
       userRepository: new MemoryUserRepository({
         policies: [
@@ -772,7 +772,7 @@ describe("password login", () => {
       })
     });
 
-    const successResponse = await app.request("https://idp.example.test/t/acme/login/password", {
+    const successResponse = await app.request("https://idp.example.test/login/acme/password", {
       body: new URLSearchParams({
         login_challenge: successChallengeToken,
         username: "alice",
@@ -785,7 +785,7 @@ describe("password login", () => {
     });
     expect(successResponse.status).toBe(302);
 
-    const failureResponse = await app.request("https://idp.example.test/t/acme/login/password", {
+    const failureResponse = await app.request("https://idp.example.test/login/acme/password", {
       body: new URLSearchParams({
         login_challenge: failureChallengeToken,
         username: "alice",

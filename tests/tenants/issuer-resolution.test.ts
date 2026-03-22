@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { MemoryTenantRepository } from "../../src/adapters/db/memory/memory-tenant-repository";
-import { resolveIssuerContext } from "../../src/domain/tenants/issuer-resolution";
+import { resolveIssuerContext, resolveIssuerContextBySlug } from "../../src/domain/tenants/issuer-resolution";
 
 const tenantRepository = new MemoryTenantRepository([
   {
@@ -57,7 +57,7 @@ const tenantRepository = new MemoryTenantRepository([
 describe("resolveIssuerContext", () => {
   it("resolves a platform path issuer from the platform host", async () => {
     const result = await resolveIssuerContext({
-      platformHost: "idp.example.test",
+      oidcHost: "idp.example.test",
       requestUrl: "https://idp.example.test/t/acme/.well-known/openid-configuration",
       tenantRepository
     });
@@ -72,7 +72,7 @@ describe("resolveIssuerContext", () => {
 
   it("accepts platform requests on development ports when the configured platform host matches by hostname", async () => {
     const result = await resolveIssuerContext({
-      platformHost: "idp.example.test",
+      oidcHost: "idp.example.test",
       requestUrl: "https://idp.example.test:8787/t/acme/.well-known/openid-configuration",
       tenantRepository
     });
@@ -85,7 +85,7 @@ describe("resolveIssuerContext", () => {
 
   it("accepts platform requests when the configured platform host includes a port", async () => {
     const result = await resolveIssuerContext({
-      platformHost: "idp.example.test:8787",
+      oidcHost: "idp.example.test:8787",
       requestUrl: "https://idp.example.test:8787/t/acme/.well-known/openid-configuration",
       tenantRepository
     });
@@ -98,7 +98,7 @@ describe("resolveIssuerContext", () => {
 
   it("resolves a custom domain issuer by host before platform path matching", async () => {
     const result = await resolveIssuerContext({
-      platformHost: "idp.example.test",
+      oidcHost: "idp.example.test",
       requestUrl: "https://login.acme.test/.well-known/openid-configuration",
       tenantRepository
     });
@@ -113,7 +113,7 @@ describe("resolveIssuerContext", () => {
 
   it("returns the exact custom-domain issuer that matched the request host", async () => {
     const result = await resolveIssuerContext({
-      platformHost: "idp.example.test",
+      oidcHost: "idp.example.test",
       requestUrl: "https://login.acme.cn/.well-known/openid-configuration",
       tenantRepository
     });
@@ -127,7 +127,7 @@ describe("resolveIssuerContext", () => {
 
   it("rejects platform-path aliases on a custom-domain host", async () => {
     const result = await resolveIssuerContext({
-      platformHost: "idp.example.test",
+      oidcHost: "idp.example.test",
       requestUrl: "https://login.acme.test/t/acme/.well-known/openid-configuration",
       tenantRepository
     });
@@ -137,7 +137,7 @@ describe("resolveIssuerContext", () => {
 
   it("returns null when the request host and path do not resolve a known issuer", async () => {
     const result = await resolveIssuerContext({
-      platformHost: "idp.example.test",
+      oidcHost: "idp.example.test",
       requestUrl: "https://idp.example.test/t/unknown/.well-known/openid-configuration",
       tenantRepository
     });
@@ -147,11 +147,47 @@ describe("resolveIssuerContext", () => {
 
   it("returns null for disabled tenants", async () => {
     const result = await resolveIssuerContext({
-      platformHost: "idp.example.test",
+      oidcHost: "idp.example.test",
       requestUrl: "https://idp.example.test/t/disabled/.well-known/openid-configuration",
       tenantRepository
     });
 
+    expect(result).toBeNull();
+  });
+});
+
+describe("resolveIssuerContextBySlug", () => {
+  it("resolves platform-path issuer context from a tenant slug", async () => {
+    const result = await resolveIssuerContextBySlug({
+      slug: "acme",
+      oidcHost: "idp.example.test",
+      tenantRepository
+    });
+
+    expect(result).toMatchObject({
+      issuer: "https://idp.example.test/t/acme",
+      issuerPathPrefix: "/t/acme",
+      source: "platform_path",
+      requestHost: "idp.example.test"
+    });
+    expect(result?.tenant.slug).toBe("acme");
+  });
+
+  it("returns null for an unknown slug", async () => {
+    const result = await resolveIssuerContextBySlug({
+      slug: "unknown",
+      oidcHost: "idp.example.test",
+      tenantRepository
+    });
+    expect(result).toBeNull();
+  });
+
+  it("returns null for a disabled tenant slug", async () => {
+    const result = await resolveIssuerContextBySlug({
+      slug: "disabled",
+      oidcHost: "idp.example.test",
+      tenantRepository
+    });
     expect(result).toBeNull();
   });
 });

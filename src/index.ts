@@ -69,11 +69,14 @@ export default {
 
     const repositories = await createRuntimeRepositories(runtimeConfig);
     const browserSessionRepository = createKvBrowserSessionRepository(runtimeConfig.userSessionsKv);
+    const oidcHost = `o.${platformConfig.rootDomain}`;
+    const authDomain = `auth.${platformConfig.rootDomain}`;
+
     const app = createApp({
       adminBootstrapPasswordHash: platformConfig.adminBootstrapPasswordHash,
-      adminOrigin: runtimeConfig.adminOrigin,
       adminWhitelist: platformConfig.adminWhitelist,
       adminRepository: repositories.adminRepository,
+      authDomain,
       auditRepository: repositories.auditRepository,
       authorizationCodeRepository: repositories.authorizationCodeRepository,
       authorizeSessionResolver: async (context) => {
@@ -83,43 +86,28 @@ export default {
           return null;
         }
 
-        const storedSession = await runtimeConfig.userSessionsKv.get(
-          `${userSessionPrefix}${await sha256Base64Url(sessionToken)}`
-        );
+        const tokenHash = await sha256Base64Url(sessionToken);
+        const session = await browserSessionRepository.findByTokenHash(tokenHash);
 
-        if (storedSession === null) {
+        if (session === null) {
           return null;
         }
 
-        try {
-          const session = JSON.parse(storedSession) as BrowserSession;
-
-          if (typeof session.tenantId !== "string" || session.tenantId.trim().length === 0) {
-            return null;
-          }
-
-          if (typeof session.userId !== "string" || session.userId.trim().length === 0) {
-            return null;
-          }
-
-          if (new Date(session.expiresAt).getTime() <= Date.now()) {
-            return null;
-          }
-
-          return {
-            tenantId: session.tenantId,
-            userId: session.userId
-          };
-        } catch {
+        if (new Date(session.expiresAt).getTime() <= Date.now()) {
           return null;
         }
+
+        return {
+          tenantId: session.tenantId,
+          userId: session.userId
+        };
       },
       clientRepository: repositories.clientRepository,
       keyRepository: repositories.keyRepository,
       loginChallengeLookupRepository: repositories.authenticationLoginChallengeRepository,
       loginChallengeRepository: repositories.loginChallengeRepository,
       managementApiToken: platformConfig.managementApiToken,
-      platformHost: platformConfig.platformHost,
+      oidcHost,
       browserSessionRepository,
       registrationAccessTokenRepository: repositories.registrationAccessTokenRepository,
       signer: repositories.signer,
@@ -127,7 +115,14 @@ export default {
       userRepository: repositories.userRepository
     });
 
-    const root = new Hono().route("/api", app);
+    // o.{domain} receives OIDC protocol traffic without any prefix.
+    // auth.{domain}/api/* receives all API traffic; the Cloudflare route
+    // delivers the full path so we strip the /api prefix here.
+    const requestHost = new URL(request.url).hostname;
+    const root =
+      requestHost === oidcHost
+        ? app
+        : new Hono().route("/api", app);
 
     try {
       return await root.fetch(request, env, executionContext);

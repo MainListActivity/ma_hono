@@ -19,7 +19,7 @@ describe("loadPlatformConfig", () => {
 
   it("returns null when only some keys exist", async () => {
     const db = makeDb([
-      { key: "platform_host", value: "auth.example.com" },
+      { key: "root_domain", value: "example.com" },
       { key: "admin_whitelist", value: "admin@example.com" }
     ]);
     expect(await loadPlatformConfig(db)).toBeNull();
@@ -30,11 +30,11 @@ describe("loadPlatformConfig", () => {
       { key: "admin_bootstrap_password_hash", value: "100000:salt:hash" },
       { key: "admin_whitelist", value: "admin@example.com,ops@example.com" },
       { key: "management_api_token", value: "tok_abc123" },
-      { key: "platform_host", value: "auth.example.com" }
+      { key: "root_domain", value: "example.com" }
     ]);
     const config = await loadPlatformConfig(db);
     expect(config).not.toBeNull();
-    expect(config!.platformHost).toBe("auth.example.com");
+    expect(config!.rootDomain).toBe("example.com");
     expect(config!.managementApiToken).toBe("tok_abc123");
     expect(config!.adminBootstrapPasswordHash).toBe("100000:salt:hash");
     expect(config!.adminWhitelist).toEqual(["admin@example.com", "ops@example.com"]);
@@ -45,7 +45,7 @@ describe("loadPlatformConfig", () => {
       { key: "admin_bootstrap_password_hash", value: "100000:salt:hash" },
       { key: "admin_whitelist", value: " admin@example.com , , ops@example.com " },
       { key: "management_api_token", value: "tok" },
-      { key: "platform_host", value: "host.example.com" }
+      { key: "root_domain", value: "example.com" }
     ]);
     const config = await loadPlatformConfig(db);
     expect(config!.adminWhitelist).toEqual(["admin@example.com", "ops@example.com"]);

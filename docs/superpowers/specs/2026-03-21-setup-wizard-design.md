@@ -57,7 +57,7 @@ export const platformConfig = sqliteTable("platform_config", {
 | `admin_bootstrap_password_hash` | `<iterations>:<salt_base64url>:<hash_base64url>` | PBKDF2-SHA256, never stored as plaintext |
 | `admin_whitelist` | Comma-separated email addresses | e.g. `admin@example.com,ops@example.com` |
 | `management_api_token` | Plaintext token string | Operator-supplied |
-| `platform_host` | Hostname without scheme | e.g. `auth.maplayer.top` |
+| `root_domain` | Root domain without scheme or subdomain | e.g. `maplayer.top` — derives `auth.maplayer.top` (Pages/API) and `o.maplayer.top` (OIDC) |
 
 All four keys must be present for the platform to be considered initialized. If any are missing, the setup wizard is shown.
 
@@ -68,7 +68,7 @@ export interface PlatformConfig {
   adminBootstrapPasswordHash: string;
   adminWhitelist: string[];
   managementApiToken: string;
-  platformHost: string;
+  rootDomain: string;
 }
 
 // Returns null if any required key is absent — platform is uninitialized
@@ -99,13 +99,13 @@ A standalone minimal Hono application. It has no dependency on the main app and 
 |--------|------|--------|
 | `GET` | `/` | 302 redirect to `/setup` |
 | `GET` | `/setup` | Render setup form HTML |
-| `POST` | `/setup` | Process form, write to D1, redirect to `/admin` |
+| `POST` | `/setup` | Process form, write to D1, redirect to `https://auth.{platform_host}/` |
 
 ### Form Fields
 
 | Field name | Label | Notes |
 |-----------|-------|-------|
-| `platform_host` | Platform Host | Pre-filled with `request.headers.get("host")`, user may edit |
+| `root_domain` | Root Domain | e.g. `maplayer.top` — derives `auth.maplayer.top` and `o.maplayer.top`; pre-filled by guessing from `request.headers.get("host")`, user may edit |
 | `admin_whitelist` | Admin Email(s) | Placeholder: `admin@example.com` — comma-separated |
 | `admin_bootstrap_password` | Admin Password | Password input |
 | `admin_bootstrap_password_confirm` | Confirm Password | Must match |
@@ -115,10 +115,10 @@ A standalone minimal Hono application. It has no dependency on the main app and 
 
 1. Validate all fields non-empty
 2. Validate `admin_bootstrap_password === admin_bootstrap_password_confirm`
-3. Validate `platform_host` is a valid hostname (no scheme, no path)
+3. Validate `root_domain` is a valid bare domain (no scheme, no path, no subdomain prefix)
 4. Hash `admin_bootstrap_password` with `hashPasswordPbkdf2`
-5. Write all four records to `platform_config` in a single D1 batch
-6. On success: 302 redirect to `/admin`
+5. Write all four records to `platform_config` in a single D1 batch (`root_domain` replaces the former `platform_host` key)
+6. On success: 302 redirect to `https://auth.{root_domain}/`
 7. On validation failure: re-render form with inline error messages, preserving all field values except password fields
 
 ### UI

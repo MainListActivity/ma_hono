@@ -2,14 +2,15 @@ const REQUIRED_KEYS = [
   "admin_bootstrap_password_hash",
   "admin_whitelist",
   "management_api_token",
-  "platform_host"
+  "root_domain"
 ] as const;
 
 export interface PlatformConfig {
   adminBootstrapPasswordHash: string;
   adminWhitelist: string[];
   managementApiToken: string;
-  platformHost: string;
+  /** Root domain, e.g. "maplayer.top". Derives authDomain = auth.{root} and oidcHost = o.{root}. */
+  rootDomain: string;
 }
 
 export const loadPlatformConfig = async (
@@ -38,6 +39,6 @@ export const loadPlatformConfig = async (
       .map((v) => v.trim())
       .filter((v) => v.length > 0),
     managementApiToken: map.get("management_api_token")!,
-    platformHost: map.get("platform_host")!
+    rootDomain: map.get("root_domain")!
   };
 };

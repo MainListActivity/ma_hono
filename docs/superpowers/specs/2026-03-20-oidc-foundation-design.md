@@ -63,18 +63,39 @@ The repository-level constraints remain mandatory:
 
 The recommended architecture is a modular monolith with clear boundaries between protocol logic, domain logic, runtime integration, and infrastructure adapters.
 
-One Hono application exposes:
+### Deployment Topology
 
-- public OIDC routes
-- admin UI routes
-- admin API routes
+The platform is deployed across two Cloudflare surfaces that share the same Worker codebase:
+
+```
+auth.{domain}       → Cloudflare Pages (admin SPA + tenant login SPA)
+auth.{domain}/api/* → Cloudflare Worker route (all Hono API endpoints)
+o.{domain}/*        → Cloudflare Worker route (OIDC protocol endpoints only)
+```
+
+- **`auth.{domain}`** is the primary user-facing hostname. It is backed by Cloudflare Pages, which serves the admin React SPA with `/* /index.html 200` fallback. This covers both the admin panel and the tenant end-user login UI (implemented as SPA pages under `/login/:tenant`).
+- **`auth.{domain}/api/*`** is a Worker route that overrides the Pages catch-all for API calls. The Hono Worker handles all JSON API endpoints under this prefix.
+- **`o.{domain}`** is a dedicated subdomain routed entirely to the Worker. It is the issuer host for OIDC protocol endpoints. Tenant issuers take the form `https://o.{domain}/t/{slug}`. Custom-domain issuers are also routed here if the custom domain is pointed at the same Worker.
+
+This separation ensures the Pages SPA never intercepts machine-facing OIDC traffic, and the Worker never needs to render full HTML pages.
+
+### Domain Configuration
+
+The root domain is read from the `ROOT_DOMAIN` GitHub Actions variable (or equivalent deployment environment variable). If not set, the setup script queries the Cloudflare API for the first zone owned by the account and uses that domain.
+
+The two hostnames derived from the root domain are:
+- `auth.{root_domain}` — user-facing and admin surface
+- `o.{root_domain}` — OIDC protocol surface
+
+One Hono Worker application handles both hostnames. Routing is distinguished by the request host header.
 
 Core rules:
 
-- domain logic should remain separated from direct binding access
+- domain logic must remain separated from direct binding access
 - HTTP routing must not contain issuer or client validation rules inline
 - D1, KV, and R2 access must be isolated behind adapter modules
 - custom-domain issuer handling must not fork the app into alternate runtimes
+- all API endpoints are prefixed with `/api/` when accessed via `auth.{domain}`; on `o.{domain}` the prefix is omitted since the entire hostname is protocol-only
 
 ## System Boundaries
 
@@ -95,14 +116,16 @@ The delivered system must not yet pretend to implement endpoints or flows that d
 
 ### Primary Platform Pattern
 
-The default issuer form is path-based under the platform domain:
+The default issuer form is path-based under the OIDC subdomain:
 
-`https://idp.example.com/t/{tenant}`
+`https://o.{domain}/t/{tenant}`
 
 Examples:
 
-- `https://idp.example.com/t/acme`
-- `https://idp.example.com/t/example-co`
+- `https://o.example.com/t/acme`
+- `https://o.example.com/t/example-co`
+
+The OIDC subdomain (`o.{domain}`) is reserved exclusively for machine-facing protocol traffic. Human-facing login pages are served separately at `https://auth.{domain}/login/{tenant}` (via the Pages SPA).
 
 ### Custom Domain Pattern
 
@@ -347,45 +370,53 @@ Purpose: private signing key material and other object-style security artifacts.
 
 ## Protocol Surface
 
-### Platform-Path Issuer Routes
+All OIDC protocol endpoints are served under `o.{domain}`. The Worker handles these routes regardless of whether the request arrives via the platform path or a verified custom domain.
+
+### Platform-Path Issuer Routes (on `o.{domain}`)
 
 - `GET /t/:tenant/.well-known/openid-configuration`
 - `GET /t/:tenant/jwks.json`
+- `GET /t/:tenant/authorize`
+- `POST /t/:tenant/token`
+- `POST /t/:tenant/connect/register`
 
-### Custom-Domain Issuer Routes
+### Custom-Domain Issuer Routes (on `login.tenant.com` or any verified custom domain)
 
 - `GET /.well-known/openid-configuration`
 - `GET /jwks.json`
+- `GET /authorize`
+- `POST /token`
+- `POST /connect/register`
 
 ### Dynamic Client Registration Routes
 
-The exact path should be emitted from discovery metadata and remain issuer-relative. For platform-path issuers, registration should remain under the tenant path. For custom domains, it should be rooted under the custom domain.
-
-Suggested path shape:
-
-- `POST {issuer}/connect/register`
-- `GET {issuer}/connect/register/{clientId}` or issuer-relative admin-backed client read endpoint
-
-The final path naming can be adjusted during implementation, but the following rule is mandatory:
+Registration endpoints are issuer-relative and emitted from discovery metadata. The mandatory rule:
 
 - registration endpoints must be issuer-correct
+- `POST {issuer}/connect/register`
 
-### Admin Routes
+### Admin API Routes (on `auth.{domain}/api/`)
 
-Suggested routes:
+All Worker JSON API endpoints are served under the `/api/` prefix when accessed via `auth.{domain}`. This prefix ensures the Cloudflare Pages catch-all (`/* /index.html 200`) is not triggered for API calls — a Worker route on `auth.{domain}/api/*` takes priority over Pages.
 
-- `GET /admin/login`
-- `POST /admin/login`
-- `POST /admin/logout`
-- `GET /admin`
-- `GET /admin/tenants`
-- `POST /admin/tenants`
-- `GET /admin/tenants/:tenantId`
-- `POST /admin/tenants/:tenantId/issuers`
-- `GET /admin/tenants/:tenantId/clients`
-- `POST /admin/tenants/:tenantId/clients`
+- `POST /api/admin/login`
+- `GET /api/admin/tenants`
+- `POST /api/admin/tenants`
+- `GET /api/admin/tenants/:tenantId`
+- `GET /api/admin/tenants/:tenantId/users`
+- `POST /api/admin/tenants/:tenantId/users`
 
-Admin UI routes and admin JSON APIs may share handlers or be split, but auth checks must be centralized.
+### Tenant Login API Routes (on `auth.{domain}/api/`)
+
+The login SPA at `auth.{domain}/login/:tenant` calls these endpoints. The `/api/` prefix keeps them routed to the Worker:
+
+- `POST /api/login/:tenant/password`
+- `POST /api/login/:tenant/magic-link/request`
+- `POST /api/login/:tenant/magic-link/consume`
+- `POST /api/login/:tenant/passkey/start`
+- `POST /api/login/:tenant/passkey/finish`
+- `POST /api/passkey/:tenant/enroll/start`
+- `POST /api/passkey/:tenant/enroll/finish`
 
 ## Discovery Metadata
 

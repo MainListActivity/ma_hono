@@ -2,18 +2,46 @@
 
 ## Goal
 
-Provide a browser-based admin panel at `/admin` for platform operators to manage tenants and their users. The setup wizard already redirects to `/admin` after initialization; this design fulfills that destination.
+Provide a browser-based admin panel for platform operators to manage tenants and their users, and a login interface for tenant end-users. Both are React SPA pages deployed together on Cloudflare Pages at `auth.{domain}`.
 
-The admin panel is a React SPA deployed to Cloudflare Pages, communicating with the existing Worker JSON API via CORS. It covers: login, tenant creation and listing, and user provisioning per tenant.
+The setup wizard already redirects to `/admin` after initialization; this design fulfills that destination.
+
+The SPA communicates with the Hono Worker JSON API via the `auth.{domain}/api/*` route. It covers: admin login, tenant creation and listing, user provisioning per tenant, and tenant end-user login.
+
+## Deployment Topology
+
+```
+auth.{domain}         → Cloudflare Pages (this SPA, /* /index.html 200)
+auth.{domain}/api/*   → Cloudflare Worker route (all JSON API endpoints, takes priority over Pages)
+o.{domain}/*          → Cloudflare Worker route (OIDC protocol endpoints only)
+```
+
+The `auth.{domain}/api/*` Worker route takes priority over the Pages catch-all. All API calls from the SPA use the `/api/` prefix. Pages handles everything else.
+
+## Route Namespace Separation
+
+| Path prefix | Handled by | Purpose |
+|-------------|-----------|---------|
+| `auth.{domain}/api/*` | Worker | JSON API for admin + login |
+| `auth.{domain}/login/:tenant` | Pages SPA | Tenant end-user login UI |
+| `auth.{domain}/admin` | Pages SPA | Admin panel UI |
+| `o.{domain}/t/:tenant/*` | Worker | OIDC protocol endpoints |
+
+The `o.{domain}` subdomain is reserved exclusively for machine-facing OIDC traffic. Human-facing login pages live at `auth.{domain}/login/:tenant`.
 
 ## Architecture
 
 ```
-Cloudflare Pages (admin/)       Cloudflare Worker (src/)
-  React SPA                  →  /admin/login              POST (existing)
-  Vite + TypeScript          →  /admin/tenants            GET (new), POST (existing)
-  Tailwind CSS               →  /admin/tenants/:id        GET (new)
-                             →  /admin/tenants/:id/users  GET (new), POST (existing)
+Cloudflare Pages (admin/)         Cloudflare Worker (src/)
+  React SPA                    →  /api/admin/login              POST
+  Vite + TypeScript            →  /api/admin/tenants            GET, POST
+  Tailwind CSS                 →  /api/admin/tenants/:id        GET
+                               →  /api/admin/tenants/:id/users  GET, POST
+                               →  /api/login/:tenant/password   POST
+                               →  /api/login/:tenant/magic-link/request  POST
+                               →  /api/login/:tenant/magic-link/consume  POST
+                               →  /api/login/:tenant/passkey/start       POST
+                               →  /api/login/:tenant/passkey/finish      POST
 ```
 
 The SPA is entirely static — no server-side rendering. All state lives in the browser. The Worker remains the single source of truth.
@@ -49,17 +77,18 @@ ma_hono/
 
 | Path | Component | Description |
 |------|-----------|-------------|
-| `/login` | `LoginPage` | Email + password form |
+| `/login` | `AdminLoginPage` | Admin email + password form |
 | `/tenants` | `TenantsPage` | Tenant list + create tenant |
 | `/tenants/:id/users` | `TenantUsersPage` | User list + provision user |
-| `/` | redirect | → `/tenants` if authenticated, else `/login` |
+| `/login/:tenant` | `TenantLoginPage` | Tenant end-user login (password, magic link, passkey) |
+| `/` | redirect | → `/tenants` if admin authenticated, else `/login` |
 
 ## Authentication
 
-- `POST /admin/login` returns `{ email, session_token }`.
+- `POST /api/admin/login` returns `{ email, session_token }`.
 - Token stored in `sessionStorage` under key `admin_session_token`. `sessionStorage` is preferred over `localStorage` because it is not shared across tabs and is cleared when the browser tab closes, limiting the exposure window.
-- All subsequent requests send `Authorization: Bearer <token>` header.
-- `AuthGuard` component wraps all protected routes; redirects to `/login` if no token in sessionStorage.
+- All subsequent admin requests send `Authorization: Bearer <token>` header.
+- `AuthGuard` component wraps all protected admin routes; redirects to `/login` if no token in sessionStorage.
 - API client intercepts 401 responses, clears sessionStorage, and redirects to `/login`.
 
 No token refresh or expiry display in this MVP — token is used until it fails.
@@ -101,19 +130,26 @@ No token refresh or expiry display in this MVP — token is used until it fails.
 
 ## Worker Changes
 
+### API Prefix
+
+All Worker endpoints are served under the `/api/` prefix. This prefix is required so that the Cloudflare Worker route `auth.{domain}/api/*` intercepts these requests before the Pages catch-all serves the SPA.
+
+- Previous: `/admin/login`, `/admin/tenants`, etc.
+- Current: `/api/admin/login`, `/api/admin/tenants`, etc.
+
 ### New Read Endpoints
 
-All new GET endpoints use the same snake_case wire format as the existing POST endpoints. Domain type camelCase fields are mapped to snake_case before serialization.
+All GET endpoints use the same snake_case wire format as the existing POST endpoints. Domain type camelCase fields are mapped to snake_case before serialization.
 
 | Method | Path | Response |
 |--------|------|----------|
-| `GET` | `/admin/tenants` | `{ tenants: [{ id, slug, display_name, status, issuer }] }` — `issuer` is the primary issuer's `issuerUrl`, or `null` |
-| `GET` | `/admin/tenants/:tenantId` | `{ id, slug, display_name, status, issuer }` — `issuer` is the primary issuer's `issuerUrl`, or `null` |
-| `GET` | `/admin/tenants/:tenantId/users` | `{ users: [{ id, email, display_name, status }] }` |
+| `GET` | `/api/admin/tenants` | `{ tenants: [{ id, slug, display_name, status, issuer }] }` — `issuer` is the primary issuer's `issuerUrl`, or `null` |
+| `GET` | `/api/admin/tenants/:tenantId` | `{ id, slug, display_name, status, issuer }` — `issuer` is the primary issuer's `issuerUrl`, or `null` |
+| `GET` | `/api/admin/tenants/:tenantId/users` | `{ users: [{ id, email, display_name, status }] }` |
 
-All three endpoints require `Authorization: Bearer <token>` (admin session) and follow the same per-route `authenticateAdminSession` call pattern as the existing `POST /admin/tenants` and `POST /admin/tenants/:tenantId/users` routes — no new Hono middleware group is introduced.
+All three endpoints require `Authorization: Bearer <token>` (admin session) and follow the same per-route `authenticateAdminSession` call pattern.
 
-`GET /admin/tenants/:tenantId` is needed by `TenantUsersPage` to load the tenant header on direct URL navigation and page refresh (router state from `TenantsPage` is lost on refresh). `issuer` can only be `null` if all issuers have been removed, which is not currently supported via the API; this is a defensive guard.
+`GET /api/admin/tenants/:tenantId` is needed by `TenantUsersPage` to load the tenant header on direct URL navigation and page refresh (router state from `TenantsPage` is lost on refresh). `issuer` can only be `null` if all issuers have been removed, which is not currently supported via the API; this is a defensive guard.
 
 ### Repository Changes
 
@@ -131,32 +167,44 @@ All four concrete implementations must be updated:
 
 ### CORS
 
-- New environment variable: `ADMIN_ORIGIN` — the Cloudflare Pages URL (e.g. `https://ma-hono-admin.pages.dev`).
-- Declared in `wrangler.jsonc` under `"vars"` (not a binding — it is a plain string, not a D1/KV/R2 resource).
-- Added as `adminOrigin: z.string().optional()` to `runtimeConfigSchema` in `src/config/env.ts`, and exposed as `adminOrigin?: string` on the `RuntimeConfig` interface.
-- If `ADMIN_ORIGIN` is unset, the CORS middleware omits `Access-Control-Allow-Origin` entirely, blocking all cross-origin requests. This is the safe default. `ADMIN_ORIGIN` is a required deployment variable for the admin panel to function.
-- A Hono middleware on `/admin/*` routes adds:
-  - `Access-Control-Allow-Origin: <ADMIN_ORIGIN>`
-  - `Access-Control-Allow-Methods: GET, POST, OPTIONS`
-  - `Access-Control-Allow-Headers: Authorization, Content-Type`
-- `OPTIONS /admin/*` preflight handler returns 204.
+CORS is not needed between the SPA and the Worker API because both are served under the same `auth.{domain}` hostname. The Worker route `auth.{domain}/api/*` and the Pages deployment share the same origin from the browser's perspective.
+
+The `ADMIN_ORIGIN` variable and CORS middleware are no longer required and should be removed.
+
+For custom-domain tenant login (where the SPA may be embedded on a different origin in future), CORS can be added to the login API routes at that time.
 
 ## Cloudflare Pages Configuration
 
 - **Project name**: `ma-hono-admin`
+- **Custom domain**: `auth.{domain}` (same as the primary user-facing hostname)
 - **Root directory**: `admin/`
 - **Build command**: `pnpm build`
 - **Build output**: `dist/`
 - **SPA fallback**: `admin/public/_redirects` containing `/* /index.html 200`. Vite copies `public/` verbatim to `dist/`, so this becomes `admin/dist/_redirects`. This only works when the Pages "Root directory" is set to `admin/` — if the root is misconfigured as the repo root, the `_redirects` file will not be in the build output and SPA routing will break.
-- **Environment variable**: `VITE_API_BASE_URL` set to the Worker URL (e.g. `https://auth.maplayer.top`)
+- **Worker route override**: `auth.{domain}/api/*` is a Cloudflare Worker route that takes priority over the Pages deployment. The SPA only handles non-`/api/` paths.
+- **Environment variable**: `VITE_API_BASE_URL` is not needed — the SPA calls `/api/*` relative to its own origin.
 
 ## Data Flow
 
 ```
-Browser → Pages CDN → (static assets)
-Browser → Worker /admin/login → session_token → sessionStorage
-Browser → Worker /admin/tenants (Bearer token) → tenant list
-Browser → Worker /admin/tenants/:id/users (Bearer token) → user list
+Browser → auth.{domain}           → Pages CDN (static SPA assets, /* /index.html 200)
+Browser → auth.{domain}/api/*     → Worker (API requests, route takes priority over Pages)
+Browser → o.{domain}/t/:tenant/*  → Worker (OIDC protocol requests)
+```
+
+Admin flow:
+```
+Browser → Pages /login                          → AdminLoginPage SPA
+Browser → Worker /api/admin/login               → session_token → sessionStorage
+Browser → Worker /api/admin/tenants (Bearer)    → tenant list
+Browser → Worker /api/admin/tenants/:id/users   → user list
+```
+
+Tenant end-user login flow:
+```
+Browser → Pages /login/:tenant                         → TenantLoginPage SPA
+Browser → Worker /api/login/:tenant/password           → authenticate
+Browser → Worker redirects to o.{domain}/t/:tenant/authorize → OIDC flow resumes
 ```
 
 ## Security Notes

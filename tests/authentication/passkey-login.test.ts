@@ -137,13 +137,13 @@ describe("passkey enrollment and login", () => {
       adminBootstrapPasswordHash: "",
       adminWhitelist: [],
       managementApiToken: "",
-      platformHost: "idp.example.test",
+      oidcHost: "idp.example.test", authDomain: "auth.example.test",
       tenantRepository,
       userRepository
     });
 
     const response = await app.request(
-      "https://idp.example.test/t/acme/passkey/enroll/start",
+      "https://idp.example.test/passkey/acme/enroll/start",
       {
         body: JSON.stringify({ user_id: "user_123" }),
         headers: { "content-type": "application/json" },
@@ -179,7 +179,7 @@ describe("passkey enrollment and login", () => {
       adminBootstrapPasswordHash: "",
       adminWhitelist: [],
       managementApiToken: "",
-      platformHost: "idp.example.test",
+      oidcHost: "idp.example.test", authDomain: "auth.example.test",
       tenantRepository,
       userRepository: new MemoryUserRepository({
         policies: [
@@ -196,7 +196,7 @@ describe("passkey enrollment and login", () => {
 
     // Start enrollment
     const enrollStart = await app.request(
-      "https://idp.example.test/t/acme/passkey/enroll/start",
+      "https://idp.example.test/passkey/acme/enroll/start",
       {
         body: JSON.stringify({ user_id: "user_123" }),
         headers: { "content-type": "application/json" },
@@ -212,7 +212,7 @@ describe("passkey enrollment and login", () => {
     // Complete enrollment (using test mode: fake credential)
     const credentialId = "test-credential-id-alice";
     const enrollFinish = await app.request(
-      "https://idp.example.test/t/acme/passkey/enroll/finish",
+      "https://idp.example.test/passkey/acme/enroll/finish",
       {
         body: JSON.stringify({
           enrollment_session_id: enrollmentSessionId,
@@ -229,7 +229,7 @@ describe("passkey enrollment and login", () => {
 
     // Start passkey login assertion
     const loginStart = await app.request(
-      "https://idp.example.test/t/acme/login/passkey/start",
+      "https://idp.example.test/login/acme/passkey/start",
       {
         body: new URLSearchParams({ login_challenge: loginChallengeToken }),
         headers: { "content-type": "application/x-www-form-urlencoded" },
@@ -244,7 +244,7 @@ describe("passkey enrollment and login", () => {
 
     // Complete passkey login
     const loginFinish = await app.request(
-      "https://idp.example.test/t/acme/login/passkey/finish",
+      "https://idp.example.test/login/acme/passkey/finish",
       {
         body: JSON.stringify({
           assertion_session_id: assertionSessionId,
@@ -286,7 +286,7 @@ describe("passkey enrollment and login", () => {
       adminBootstrapPasswordHash: "",
       adminWhitelist: [],
       managementApiToken: "",
-      platformHost: "idp.example.test",
+      oidcHost: "idp.example.test", authDomain: "auth.example.test",
       tenantRepository,
       userRepository: new MemoryUserRepository({
         policies: [
@@ -303,7 +303,7 @@ describe("passkey enrollment and login", () => {
 
     // Start passkey login assertion (no credentials enrolled)
     const loginStart = await app.request(
-      "https://idp.example.test/t/acme/login/passkey/start",
+      "https://idp.example.test/login/acme/passkey/start",
       {
         body: new URLSearchParams({ login_challenge: loginChallengeToken }),
         headers: { "content-type": "application/x-www-form-urlencoded" },
@@ -317,7 +317,7 @@ describe("passkey enrollment and login", () => {
     };
 
     const loginFinish = await app.request(
-      "https://idp.example.test/t/acme/login/passkey/finish",
+      "https://idp.example.test/login/acme/passkey/finish",
       {
         body: JSON.stringify({
           assertion_session_id: assertionSessionId,
@@ -352,7 +352,7 @@ describe("passkey enrollment and login", () => {
       adminBootstrapPasswordHash: "",
       adminWhitelist: [],
       managementApiToken: "",
-      platformHost: "idp.example.test",
+      oidcHost: "idp.example.test", authDomain: "auth.example.test",
       tenantRepository,
       userRepository: new MemoryUserRepository({
         policies: [
@@ -368,7 +368,7 @@ describe("passkey enrollment and login", () => {
     });
 
     const enrollResponse = await app.request(
-      "https://idp.example.test/t/acme/passkey/enroll/start",
+      "https://idp.example.test/passkey/acme/enroll/start",
       {
         body: JSON.stringify({ user_id: "user_123" }),
         headers: { "content-type": "application/json" },
@@ -379,7 +379,7 @@ describe("passkey enrollment and login", () => {
     expect(await enrollResponse.json()).toEqual({ error: "passkey_disabled" });
 
     const loginResponse = await app.request(
-      "https://idp.example.test/t/acme/login/passkey/start",
+      "https://idp.example.test/login/acme/passkey/start",
       {
         body: new URLSearchParams({ login_challenge: loginChallengeToken }),
         headers: { "content-type": "application/x-www-form-urlencoded" },

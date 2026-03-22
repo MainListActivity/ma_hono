@@ -34,7 +34,7 @@ import { buildJwks } from "../domain/keys/jwks";
 import type { SigningKeySigner } from "../domain/keys/signer";
 import type { KeyRepository } from "../domain/keys/repository";
 import type { TenantRepository } from "../domain/tenants/repository";
-import { resolveIssuerContext } from "../domain/tenants/issuer-resolution";
+import { resolveIssuerContext, resolveIssuerContextBySlug } from "../domain/tenants/issuer-resolution";
 import type { Tenant } from "../domain/tenants/types";
 import { buildDiscoveryMetadata } from "../domain/oidc/discovery";
 import { exchangeAuthorizationCode } from "../domain/tokens/token-service";
@@ -228,12 +228,13 @@ class EmptyUserRepository implements UserRepository {
 
 export interface AppOptions {
   adminBootstrapPasswordHash: string;
-  adminOrigin?: string;
   adminWhitelist: string[];
   adminRepository?: AdminRepository;
   auditRepository?: AuditRepository;
   authorizationCodeRepository?: AuthorizationCodeRepository;
   authorizeSessionResolver?: (context: Context) => Promise<AuthorizeSession | null> | AuthorizeSession | null;
+  /** Root domain, e.g. "maplayer.top". Used to build login redirect URLs: https://auth.{authDomain}/login/{slug} */
+  authDomain: string;
   browserSessionRepository?: BrowserSessionRepository;
   clientRepository?: ClientRepository;
   keyRepository?: KeyRepository;
@@ -242,7 +243,8 @@ export interface AppOptions {
   magicLinkRepository?: MagicLinkRepository;
   managementApiToken: string;
   passkeyRepository?: PasskeyRepository;
-  platformHost: string;
+  /** OIDC protocol hostname, e.g. "o.maplayer.top". Used to resolve issuer context and build issuer URLs. */
+  oidcHost: string;
   registrationAccessTokenRepository?: RegistrationAccessTokenRepository;
   signer?: SigningKeySigner;
   tenantRepository?: TenantRepository;
@@ -252,8 +254,8 @@ export interface AppOptions {
 export const createApp = (options: AppOptions) => {
   const app = new Hono();
   const adminBootstrapPasswordHash = options.adminBootstrapPasswordHash;
-  const adminOrigin = options.adminOrigin;
   const adminWhitelist = options.adminWhitelist;
+  const authDomain = options.authDomain;
   const adminRepository = options.adminRepository ?? new EmptyAdminRepository();
   const auditRepository = options.auditRepository ?? new EmptyAuditRepository();
   const authorizationCodeRepository =
@@ -275,12 +277,27 @@ export const createApp = (options: AppOptions) => {
   const signer = options.signer;
   const registrationAccessTokenRepository =
     options.registrationAccessTokenRepository ?? new EmptyRegistrationAccessTokenRepository();
-  const platformHost = options.platformHost;
+  const oidcHost = options.oidcHost;
+
+  /**
+   * Resolves issuer context for login/passkey routes.
+   * Platform-path requests arrive on auth.{domain}/login/:tenant — use slug param.
+   * Custom-domain requests arrive on the tenant's own domain — use host-based resolution.
+   */
+  const resolveLoginIssuerContext = async (context: Context) => {
+    const slug = context.req.param("tenant");
+
+    if (slug) {
+      return resolveIssuerContextBySlug({ slug, oidcHost, tenantRepository });
+    }
+
+    return resolveIssuerContext({ requestUrl: context.req.url, oidcHost, tenantRepository });
+  };
 
   const handleDiscovery = async (requestUrl: string) => {
     const issuerContext = await resolveIssuerContext({
       requestUrl,
-      platformHost,
+      oidcHost,
       tenantRepository
     });
 
@@ -381,7 +398,7 @@ export const createApp = (options: AppOptions) => {
   const handleAuthorize = async (context: Context) => {
     const issuerContext = await resolveIssuerContext({
       requestUrl: context.req.url,
-      platformHost,
+      oidcHost,
       tenantRepository
     });
 
@@ -448,7 +465,10 @@ export const createApp = (options: AppOptions) => {
     }
 
     if (result.kind === "login_required") {
-      const loginUrl = new URL(`${issuerContext.issuer}/login`);
+      const loginUrl =
+        issuerContext.source === "custom_domain"
+          ? new URL(`https://${issuerContext.requestHost}/login`)
+          : new URL(`https://${authDomain}/login/${issuerContext.tenant.slug}`);
 
       loginUrl.searchParams.set("login_challenge", result.loginChallengeToken);
 
@@ -502,11 +522,7 @@ export const createApp = (options: AppOptions) => {
   };
 
   const handleLoginEntry = async (context: Context) => {
-    const issuerContext = await resolveIssuerContext({
-      requestUrl: context.req.url,
-      platformHost,
-      tenantRepository
-    });
+    const issuerContext = await resolveLoginIssuerContext(context);
 
     if (issuerContext === null) {
       return context.notFound();
@@ -523,11 +539,7 @@ export const createApp = (options: AppOptions) => {
   };
 
   const handlePasswordLogin = async (context: Context) => {
-    const issuerContext = await resolveIssuerContext({
-      requestUrl: context.req.url,
-      platformHost,
-      tenantRepository
-    });
+    const issuerContext = await resolveLoginIssuerContext(context);
 
     if (issuerContext === null) {
       return context.notFound();
@@ -730,11 +742,7 @@ export const createApp = (options: AppOptions) => {
   };
 
   const handleMagicLinkRequest = async (context: Context) => {
-    const issuerContext = await resolveIssuerContext({
-      requestUrl: context.req.url,
-      platformHost,
-      tenantRepository
-    });
+    const issuerContext = await resolveLoginIssuerContext(context);
 
     if (issuerContext === null) {
       return context.notFound();
@@ -780,11 +788,7 @@ export const createApp = (options: AppOptions) => {
   };
 
   const handleMagicLinkConsume = async (context: Context) => {
-    const issuerContext = await resolveIssuerContext({
-      requestUrl: context.req.url,
-      platformHost,
-      tenantRepository
-    });
+    const issuerContext = await resolveLoginIssuerContext(context);
 
     if (issuerContext === null) {
       return context.notFound();
@@ -933,11 +937,7 @@ export const createApp = (options: AppOptions) => {
   };
 
   const handlePasskeyEnrollStart = async (context: Context) => {
-    const issuerContext = await resolveIssuerContext({
-      requestUrl: context.req.url,
-      platformHost,
-      tenantRepository
-    });
+    const issuerContext = await resolveLoginIssuerContext(context);
 
     if (issuerContext === null) {
       return context.notFound();
@@ -971,11 +971,7 @@ export const createApp = (options: AppOptions) => {
   };
 
   const handlePasskeyEnrollFinish = async (context: Context) => {
-    const issuerContext = await resolveIssuerContext({
-      requestUrl: context.req.url,
-      platformHost,
-      tenantRepository
-    });
+    const issuerContext = await resolveLoginIssuerContext(context);
 
     if (issuerContext === null) {
       return context.notFound();
@@ -1022,11 +1018,7 @@ export const createApp = (options: AppOptions) => {
   };
 
   const handlePasskeyLoginStart = async (context: Context) => {
-    const issuerContext = await resolveIssuerContext({
-      requestUrl: context.req.url,
-      platformHost,
-      tenantRepository
-    });
+    const issuerContext = await resolveLoginIssuerContext(context);
 
     if (issuerContext === null) {
       return context.notFound();
@@ -1062,11 +1054,7 @@ export const createApp = (options: AppOptions) => {
   };
 
   const handlePasskeyLoginFinish = async (context: Context) => {
-    const issuerContext = await resolveIssuerContext({
-      requestUrl: context.req.url,
-      platformHost,
-      tenantRepository
-    });
+    const issuerContext = await resolveLoginIssuerContext(context);
 
     if (issuerContext === null) {
       return context.notFound();
@@ -1234,7 +1222,7 @@ export const createApp = (options: AppOptions) => {
   const handlePlaceholderEndpoint = async (context: Context) => {
     const issuerContext = await resolveIssuerContext({
       requestUrl: context.req.url,
-      platformHost,
+      oidcHost,
       tenantRepository
     });
 
@@ -1257,7 +1245,7 @@ export const createApp = (options: AppOptions) => {
 
     const issuerContext = await resolveIssuerContext({
       requestUrl: context.req.url,
-      platformHost,
+      oidcHost,
       tenantRepository
     });
 
@@ -1365,7 +1353,7 @@ export const createApp = (options: AppOptions) => {
   app.get("/jwks.json", async (context) => {
     const issuerContext = await resolveIssuerContext({
       requestUrl: context.req.url,
-      platformHost,
+      oidcHost,
       tenantRepository
     });
 
@@ -1379,7 +1367,7 @@ export const createApp = (options: AppOptions) => {
   app.get("/t/:tenant/jwks.json", async (context) => {
     const issuerContext = await resolveIssuerContext({
       requestUrl: context.req.url,
-      platformHost,
+      oidcHost,
       tenantRepository
     });
 
@@ -1390,22 +1378,27 @@ export const createApp = (options: AppOptions) => {
     return context.json(await buildJwks(keyRepository, issuerContext.tenant.id));
   });
 
+  // Custom-domain issuer login routes (host = tenant custom domain)
   app.get("/login", handleLoginEntry);
-  app.get("/t/:tenant/login", handleLoginEntry);
   app.post("/login/password", handlePasswordLogin);
-  app.post("/t/:tenant/login/password", handlePasswordLogin);
   app.post("/login/magic-link/request", handleMagicLinkRequest);
-  app.post("/t/:tenant/login/magic-link/request", handleMagicLinkRequest);
   app.post("/login/magic-link/consume", handleMagicLinkConsume);
-  app.post("/t/:tenant/login/magic-link/consume", handleMagicLinkConsume);
   app.post("/passkey/enroll/start", handlePasskeyEnrollStart);
-  app.post("/t/:tenant/passkey/enroll/start", handlePasskeyEnrollStart);
   app.post("/passkey/enroll/finish", handlePasskeyEnrollFinish);
-  app.post("/t/:tenant/passkey/enroll/finish", handlePasskeyEnrollFinish);
   app.post("/login/passkey/start", handlePasskeyLoginStart);
-  app.post("/t/:tenant/login/passkey/start", handlePasskeyLoginStart);
   app.post("/login/passkey/finish", handlePasskeyLoginFinish);
-  app.post("/t/:tenant/login/passkey/finish", handlePasskeyLoginFinish);
+
+  // Platform-path login routes (host = auth.{domain}, path = /login/:tenant/*)
+  app.get("/login/:tenant", handleLoginEntry);
+  app.post("/login/:tenant/password", handlePasswordLogin);
+  app.post("/login/:tenant/magic-link/request", handleMagicLinkRequest);
+  app.post("/login/:tenant/magic-link/consume", handleMagicLinkConsume);
+  app.post("/passkey/:tenant/enroll/start", handlePasskeyEnrollStart);
+  app.post("/passkey/:tenant/enroll/finish", handlePasskeyEnrollFinish);
+  app.post("/login/:tenant/passkey/start", handlePasskeyLoginStart);
+  app.post("/login/:tenant/passkey/finish", handlePasskeyLoginFinish);
+
+  // OIDC protocol routes (host = o.{domain})
   app.get("/authorize", handleAuthorize);
   app.get("/t/:tenant/authorize", handleAuthorize);
   app.post("/token", handleToken);
@@ -1418,7 +1411,7 @@ export const createApp = (options: AppOptions) => {
   ) => {
     const issuerContext = await resolveIssuerContext({
       requestUrl,
-      platformHost,
+      oidcHost,
       tenantRepository
     });
 
@@ -1527,26 +1520,6 @@ export const createApp = (options: AppOptions) => {
     return context.json(result.body ?? { error: "unauthorized" }, result.status);
   });
 
-  app.use("/admin/*", async (context, next) => {
-    await next();
-    if (adminOrigin) {
-      context.res.headers.set("Access-Control-Allow-Origin", adminOrigin);
-      context.res.headers.set("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-      context.res.headers.set("Access-Control-Allow-Headers", "Authorization, Content-Type");
-    }
-  });
-
-  app.options("/admin/*", (context) => {
-    if (adminOrigin) {
-      return context.body(null, 204, {
-        "Access-Control-Allow-Origin": adminOrigin,
-        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-        "Access-Control-Allow-Headers": "Authorization, Content-Type"
-      });
-    }
-    return context.body(null, 204);
-  });
-
   const tenantToWire = (tenant: Tenant) => ({
     id: tenant.id,
     slug: tenant.slug,
@@ -1632,7 +1605,7 @@ export const createApp = (options: AppOptions) => {
         {
           id: crypto.randomUUID(),
           issuerType: "platform_path",
-          issuerUrl: `https://${platformHost}/t/${slug}`,
+          issuerUrl: `https://${oidcHost}/t/${slug}`,
           domain: null,
           isPrimary: true,
           verificationStatus: "verified"
@@ -1659,7 +1632,7 @@ export const createApp = (options: AppOptions) => {
         id: tenantId,
         slug,
         display_name: displayName,
-        issuer: `https://${platformHost}/t/${slug}`
+        issuer: `https://${oidcHost}/t/${slug}`
       },
       201
     );

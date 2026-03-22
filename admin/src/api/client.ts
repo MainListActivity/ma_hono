@@ -1,4 +1,5 @@
-const BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? "") + "/api";
+// SPA and Worker API share the same origin (auth.{domain}), so use a relative base path.
+const BASE_URL = "/api";
 
 export interface TenantSummary {
   id: string;

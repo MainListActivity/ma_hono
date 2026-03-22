@@ -478,7 +478,7 @@ describe("user provisioning and activation routes", () => {
         adminUsers: [{ email: "admin@example.test", id: "admin_1", status: "active" }]
       }),
       managementApiToken: "",
-      platformHost: "idp.example.test",
+      oidcHost: "idp.example.test", authDomain: "auth.example.test",
       tenantRepository: createTenantRepositoryWithAcmeTenant(),
       userRepository
     });
@@ -540,7 +540,7 @@ describe("user provisioning and activation routes", () => {
       }),
       auditRepository,
       managementApiToken: "",
-      platformHost: "idp.example.test",
+      oidcHost: "idp.example.test", authDomain: "auth.example.test",
       tenantRepository: createTenantRepositoryWithAcmeTenant(),
       userRepository
     });
@@ -615,7 +615,7 @@ describe("user provisioning and activation routes", () => {
         adminUsers: [{ email: "admin@example.test", id: "admin_1", status: "active" }]
       }),
       managementApiToken: "",
-      platformHost: "idp.example.test",
+      oidcHost: "idp.example.test", authDomain: "auth.example.test",
       tenantRepository: createTenantRepositoryWithAcmeTenant(),
       userRepository
     });
@@ -681,7 +681,7 @@ describe("user provisioning and activation routes", () => {
       }),
       auditRepository: new EventFailingAuditRepository("user.provisioned"),
       managementApiToken: "",
-      platformHost: "idp.example.test",
+      oidcHost: "idp.example.test", authDomain: "auth.example.test",
       tenantRepository: createTenantRepositoryWithAcmeTenant(),
       userRepository
     });
@@ -727,7 +727,7 @@ describe("user provisioning and activation routes", () => {
       }),
       auditRepository: new EventFailingAuditRepository("user.activation.succeeded"),
       managementApiToken: "",
-      platformHost: "idp.example.test",
+      oidcHost: "idp.example.test", authDomain: "auth.example.test",
       tenantRepository: createTenantRepositoryWithAcmeTenant(),
       userRepository
     });
@@ -787,7 +787,7 @@ describe("user provisioning and activation routes", () => {
         adminUsers: [{ email: "admin@example.test", id: "admin_1", status: "active" }]
       }),
       managementApiToken: "",
-      platformHost: "idp.example.test",
+      oidcHost: "idp.example.test", authDomain: "auth.example.test",
       tenantRepository: new MemoryTenantRepository(),
       userRepository
     });
@@ -830,7 +830,7 @@ describe("user provisioning and activation routes", () => {
       adminWhitelist: [],
       auditRepository: new EventFailingAuditRepository("user.activation.failed"),
       managementApiToken: "",
-      platformHost: "idp.example.test",
+      oidcHost: "idp.example.test", authDomain: "auth.example.test",
       userRepository: new MemoryUserRepository({
         policies: [tenantPolicy]
       })

@@ -21,11 +21,32 @@ import {
   tenants
 } from "../../src/adapters/db/drizzle/schema";
 
-const fakeD1Database = {} as D1Database;
+const makeD1Stmt = () => ({
+  bind: (..._args: unknown[]) => ({
+    all: async () => ({ results: [] }),
+    run: async () => ({ meta: {}, success: true }),
+    first: async () => null,
+    raw: async () => []
+  }),
+  all: async () => ({ results: [] }),
+  run: async () => ({ meta: {}, success: true }),
+  first: async () => null,
+  raw: async () => []
+});
+
+const fakeD1Database = {
+  prepare: (_sql: string) => makeD1Stmt(),
+  batch: async (stmts: unknown[]) => stmts.map(() => ({ results: [], success: true })),
+  dump: async () => new ArrayBuffer(0),
+  exec: async () => ({ count: 0, duration: 0 })
+} as unknown as D1Database;
 const fakeAdminSessionsKv = {} as KVNamespace;
 const fakeUserSessionsKv = {} as KVNamespace;
 const fakeRegistrationTokensKv = {} as KVNamespace;
-const fakeKeyMaterialBucket = {} as R2Bucket;
+const fakeKeyMaterialBucket = {
+  put: async () => null,
+  get: async () => null
+} as unknown as R2Bucket;
 
 const getForeignKeySignatures = (table: Parameters<typeof getTableConfig>[0]) =>
   getTableConfig(table).foreignKeys.map((foreignKey) => {

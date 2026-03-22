@@ -156,7 +156,8 @@ describe("/authorize", () => {
       adminWhitelist: [],
       loginChallengeRepository,
       managementApiToken: "",
-      platformHost: "idp.example.test",
+      oidcHost: "idp.example.test",
+      authDomain: "auth.example.test",
       tenantRepository
     });
 
@@ -166,7 +167,7 @@ describe("/authorize", () => {
 
     expect(response.status).toBe(302);
     expect(response.headers.get("location")).toMatch(
-      /^https:\/\/idp\.example\.test\/t\/acme\/login\?login_challenge=/
+      /^https:\/\/auth\.example\.test\/login\/acme\?login_challenge=/
     );
 
     const location = new URL(response.headers.get("location") ?? "");
@@ -208,7 +209,8 @@ describe("/authorize", () => {
       adminWhitelist: [],
       loginChallengeRepository,
       managementApiToken: "",
-      platformHost: "idp.example.test",
+      oidcHost: "idp.example.test",
+      authDomain: "auth.example.test",
       tenantRepository
     });
 
@@ -241,7 +243,8 @@ describe("/authorize", () => {
       adminWhitelist: [],
       loginChallengeRepository: new MemoryLoginChallengeRepository(),
       managementApiToken: "",
-      platformHost: "idp.example.test",
+      oidcHost: "idp.example.test",
+      authDomain: "auth.example.test",
       tenantRepository
     });
 
@@ -261,7 +264,8 @@ describe("/authorize", () => {
       adminWhitelist: [],
       loginChallengeRepository: new MemoryLoginChallengeRepository(),
       managementApiToken: "",
-      platformHost: "idp.example.test",
+      oidcHost: "idp.example.test",
+      authDomain: "auth.example.test",
       tenantRepository
     });
 
@@ -290,7 +294,8 @@ describe("/authorize", () => {
       adminWhitelist: [],
       loginChallengeRepository: new MemoryLoginChallengeRepository(),
       managementApiToken: "",
-      platformHost: "idp.example.test",
+      oidcHost: "idp.example.test",
+      authDomain: "auth.example.test",
       tenantRepository
     });
 
@@ -310,7 +315,8 @@ describe("/authorize", () => {
       adminWhitelist: [],
       loginChallengeRepository: new MemoryLoginChallengeRepository(),
       managementApiToken: "",
-      platformHost: "idp.example.test",
+      oidcHost: "idp.example.test",
+      authDomain: "auth.example.test",
       tenantRepository
     });
 
@@ -402,7 +408,8 @@ describe("/authorize", () => {
       adminWhitelist: [],
       loginChallengeRepository: new MemoryLoginChallengeRepository(),
       managementApiToken: "",
-      platformHost: "idp.example.test",
+      oidcHost: "idp.example.test",
+      authDomain: "auth.example.test",
       tenantRepository
     });
 
@@ -463,7 +470,8 @@ describe("/authorize", () => {
       adminWhitelist: [],
       loginChallengeRepository: new MemoryLoginChallengeRepository(),
       managementApiToken: "",
-      platformHost: "idp.example.test",
+      oidcHost: "idp.example.test",
+      authDomain: "auth.example.test",
       tenantRepository
     });
 
@@ -499,7 +507,8 @@ describe("/authorize", () => {
       adminWhitelist: [],
       loginChallengeRepository: new MemoryLoginChallengeRepository(),
       managementApiToken: "",
-      platformHost: "idp.example.test",
+      oidcHost: "idp.example.test",
+      authDomain: "auth.example.test",
       tenantRepository
     });
 
@@ -596,7 +605,7 @@ describe("worker entrypoint wiring", () => {
       adminBootstrapPasswordHash: "bootstrap",
       adminWhitelist: [],
       managementApiToken: "manage-token",
-      platformHost: "idp.example.test"
+      rootDomain: "example.test"
     }));
 
     vi.doMock("../../src/app/app", () => ({
@@ -616,7 +625,7 @@ describe("worker entrypoint wiring", () => {
       const worker = (await import("../../src/index")).default;
 
       await worker.fetch(
-        new Request("https://idp.example.test/t/acme/authorize"),
+        new Request("https://o.example.test/t/acme/authorize"),
         {} as Record<string, unknown>,
         {} as ExecutionContext
       );
@@ -655,7 +664,7 @@ describe("worker entrypoint wiring", () => {
           {
             id: "issuer_platform_acme",
             issuerType: "platform_path",
-            issuerUrl: "https://idp.example.test/t/acme",
+            issuerUrl: "https://o.example.test/t/acme",
             domain: null,
             isPrimary: true,
             verificationStatus: "verified"
@@ -700,7 +709,7 @@ describe("worker entrypoint wiring", () => {
       adminBootstrapPasswordHash: "",
       adminWhitelist: [],
       managementApiToken: "manage-token",
-      platformHost: "idp.example.test"
+      rootDomain: "example.test"
     }));
 
     vi.doMock("../../src/adapters/db/drizzle/runtime", () => ({
@@ -718,19 +727,14 @@ describe("worker entrypoint wiring", () => {
 
       const response = await worker.fetch(
         new Request(
-          `https://idp.example.test/t/acme/authorize?${authorizeQuery}`,
+          `https://o.example.test/t/acme/authorize?${authorizeQuery}`,
           {
             headers: {
               cookie: `user_session=${browserSessionToken}`
             }
           }
         ),
-        {
-          ADMIN_BOOTSTRAP_PASSWORD: "",
-          ADMIN_WHITELIST: "",
-          MANAGEMENT_API_TOKEN: "manage-token",
-          PLATFORM_HOST: "idp.example.test"
-        } as Record<string, unknown>,
+        {} as Record<string, unknown>,
         {} as ExecutionContext
       );
 
@@ -769,7 +773,7 @@ describe("worker entrypoint wiring", () => {
           {
             id: "issuer_platform_acme",
             issuerType: "platform_path",
-            issuerUrl: "https://idp.example.test/t/acme",
+            issuerUrl: "https://o.example.test/t/acme",
             domain: null,
             isPrimary: true,
             verificationStatus: "verified"
@@ -785,7 +789,7 @@ describe("worker entrypoint wiring", () => {
           {
             id: "issuer_platform_beta",
             issuerType: "platform_path",
-            issuerUrl: "https://idp.example.test/t/beta",
+            issuerUrl: "https://o.example.test/t/beta",
             domain: null,
             isPrimary: true,
             verificationStatus: "verified"
@@ -831,7 +835,7 @@ describe("worker entrypoint wiring", () => {
       adminBootstrapPasswordHash: "",
       adminWhitelist: [],
       managementApiToken: "manage-token",
-      platformHost: "idp.example.test"
+      rootDomain: "example.test"
     }));
 
     vi.doMock("../../src/adapters/db/drizzle/runtime", () => ({
@@ -849,25 +853,20 @@ describe("worker entrypoint wiring", () => {
 
       const response = await worker.fetch(
         new Request(
-          `https://idp.example.test/t/acme/authorize?${authorizeQuery}`,
+          `https://o.example.test/t/acme/authorize?${authorizeQuery}`,
           {
             headers: {
               cookie: `user_session=${browserSessionToken}`
             }
           }
         ),
-        {
-          ADMIN_BOOTSTRAP_PASSWORD: "",
-          ADMIN_WHITELIST: "",
-          MANAGEMENT_API_TOKEN: "manage-token",
-          PLATFORM_HOST: "idp.example.test"
-        } as Record<string, unknown>,
+        {} as Record<string, unknown>,
         {} as ExecutionContext
       );
 
       expect(response.status).toBe(302);
       expect(response.headers.get("location")).toMatch(
-        /^https:\/\/idp\.example\.test\/t\/acme\/login\?login_challenge=/
+        /^https:\/\/auth\.example\.test\/login\/acme\?login_challenge=/
       );
       expect(authorizationCodeRepository.listAuthorizationCodes()).toHaveLength(0);
       expect(loginChallengeRepository.listChallenges()).toHaveLength(1);
