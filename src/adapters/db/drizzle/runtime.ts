@@ -17,6 +17,10 @@ import type {
   AuthorizationCode,
   LoginChallenge
 } from "../../../domain/authorization/types";
+import type {
+  PasskeyCredential,
+  PasskeyRepository
+} from "../../../domain/authentication/passkey-repository";
 import type { KeyMaterialStore } from "../../../domain/keys/key-material-store";
 import type { KeyRepository } from "../../../domain/keys/repository";
 import { createSigningKeySigner } from "../../../domain/keys/signer";
@@ -1232,6 +1236,109 @@ export class D1MfaPasskeyChallengeRepository implements MfaPasskeyChallengeRepos
           consumedAt: result[0].consumedAt,
           createdAt: result[0].createdAt
         };
+  }
+}
+
+export class D1PasskeyRepository implements PasskeyRepository {
+  constructor(private readonly db: ReturnType<typeof drizzle>) {}
+
+  async createEnrollmentSession(): Promise<void> {
+    // TODO: Implement passkey enrollment sessions
+  }
+
+  async findEnrollmentSessionById(): Promise<null> {
+    // TODO: Implement passkey enrollment sessions
+    return null;
+  }
+
+  async consumeEnrollmentSession(): Promise<false> {
+    // TODO: Implement passkey enrollment sessions
+    return false;
+  }
+
+  async createCredential(credential: PasskeyCredential): Promise<void> {
+    await this.db.insert(webauthnCredentials).values({
+      id: credential.id,
+      tenantId: credential.tenantId,
+      userId: credential.userId,
+      credentialId: credential.credentialId,
+      publicKey: credential.publicKeyCbor,
+      counter: credential.signCount,
+      transports: null,
+      deviceType: "",
+      backedUp: false,
+      createdAt: credential.createdAt,
+      updatedAt: credential.updatedAt
+    });
+  }
+
+  async findCredentialByCredentialId(tenantId: string, credentialId: string): Promise<PasskeyCredential | null> {
+    const [row] = await this.db
+      .select()
+      .from(webauthnCredentials)
+      .where(
+        and(
+          eq(webauthnCredentials.tenantId, tenantId),
+          eq(webauthnCredentials.credentialId, credentialId)
+        )
+      )
+      .limit(1);
+
+    if (row === undefined) return null;
+    return {
+      id: row.id,
+      tenantId: row.tenantId,
+      userId: row.userId,
+      credentialId: row.credentialId,
+      publicKeyCbor: row.publicKey,
+      signCount: row.counter,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt
+    };
+  }
+
+  async updateCredentialSignCount(id: string, signCount: number): Promise<void> {
+    await this.db
+      .update(webauthnCredentials)
+      .set({ counter: signCount })
+      .where(eq(webauthnCredentials.id, id));
+  }
+
+  async listCredentialsByUserId(tenantId: string, userId: string): Promise<PasskeyCredential[]> {
+    const rows = await this.db
+      .select()
+      .from(webauthnCredentials)
+      .where(
+        and(
+          eq(webauthnCredentials.tenantId, tenantId),
+          eq(webauthnCredentials.userId, userId)
+        )
+      );
+
+    return rows.map(r => ({
+      id: r.id,
+      tenantId: r.tenantId,
+      userId: r.userId,
+      credentialId: r.credentialId,
+      publicKeyCbor: r.publicKey,
+      signCount: r.counter,
+      createdAt: r.createdAt,
+      updatedAt: r.updatedAt
+    }));
+  }
+
+  async createAssertionSession(): Promise<void> {
+    // TODO: Implement passkey assertion sessions
+  }
+
+  async findAssertionSessionById(): Promise<null> {
+    // TODO: Implement passkey assertion sessions
+    return null;
+  }
+
+  async consumeAssertionSession(): Promise<false> {
+    // TODO: Implement passkey assertion sessions
+    return false;
   }
 }
 

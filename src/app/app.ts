@@ -1035,7 +1035,7 @@ export const createApp = (options: AppOptions) => {
         actorType: "anonymous",
         actorId: null,
         tenantId: issuerContext.tenant.id,
-        eventType: "user.magic_link.consumed",
+        eventType: "user.magic_link.login.failed",
         targetType: "user",
         targetId: null,
         payload: { reason: "invalid_login_challenge" }
