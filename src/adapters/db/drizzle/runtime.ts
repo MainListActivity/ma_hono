@@ -508,6 +508,11 @@ class D1LoginChallengeRepository
       tokenHash: row.tokenHash,
       expiresAt: row.expiresAt,
       consumedAt: row.consumedAt,
+      authenticatedUserId: row.authenticatedUserId,
+      mfaState: row.mfaState as LoginChallenge["mfaState"],
+      mfaAttemptCount: row.mfaAttemptCount,
+      enrollmentAttemptCount: row.enrollmentAttemptCount,
+      totpEnrollmentSecretEncrypted: row.totpEnrollmentSecretEncrypted,
       createdAt: row.createdAt
     };
   }
@@ -690,7 +695,8 @@ const toClientAuthMethodPolicy = (
   google: { enabled: row.googleEnabled },
   apple: { enabled: row.appleEnabled },
   facebook: { enabled: row.facebookEnabled },
-  wechat: { enabled: row.wechatEnabled }
+  wechat: { enabled: row.wechatEnabled },
+  mfaRequired: row.mfaRequired
 });
 
 const isConstraintConflictError = (error: unknown) =>

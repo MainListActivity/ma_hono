@@ -76,6 +76,11 @@ const buildChallenge = async (token: string, tenantId = "tenant_acme"): Promise<
   tokenHash: await sha256Base64Url(token),
   expiresAt: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
   consumedAt: null,
+  authenticatedUserId: null,
+  mfaState: "none" as const,
+  mfaAttemptCount: 0,
+  enrollmentAttemptCount: 0,
+  totpEnrollmentSecretEncrypted: null,
   createdAt: new Date().toISOString()
 });
 
@@ -129,6 +134,7 @@ const makePolicy = (
   apple: { enabled: false },
   facebook: { enabled: false },
   wechat: { enabled: false },
+  mfaRequired: false,
   ...overrides
 });
 

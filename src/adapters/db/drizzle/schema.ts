@@ -434,7 +434,9 @@ export const mfaPasskeyChallenges = sqliteTable(
     tenantId: text("tenant_id")
       .notNull()
       .references(() => tenants.id, { onDelete: "cascade" }),
-    loginChallengeId: text("login_challenge_id").notNull(),
+    loginChallengeId: text("login_challenge_id")
+      .notNull()
+      .references(() => loginChallenges.id, { onDelete: "cascade" }),
     challengeHash: text("challenge_hash").notNull(),
     expiresAt: text("expires_at").notNull(),
     consumedAt: text("consumed_at"),

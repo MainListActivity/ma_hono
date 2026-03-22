@@ -97,6 +97,11 @@ const buildChallenge = async (token: string): Promise<LoginChallenge> => ({
   tokenHash: await sha256Base64Url(token),
   expiresAt: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
   consumedAt: null,
+  authenticatedUserId: null,
+  mfaState: "none" as const,
+  mfaAttemptCount: 0,
+  enrollmentAttemptCount: 0,
+  totpEnrollmentSecretEncrypted: null,
   createdAt: new Date().toISOString()
 });
 

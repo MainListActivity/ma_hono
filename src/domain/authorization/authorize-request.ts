@@ -194,6 +194,11 @@ export const authorizeRequest = async ({
       tokenHash: await sha256Base64Url(loginChallengeToken),
       expiresAt: new Date(now.getTime() + loginChallengeLifetimeMs).toISOString(),
       consumedAt: null,
+      authenticatedUserId: null,
+      mfaState: "none" as const,
+      mfaAttemptCount: 0,
+      enrollmentAttemptCount: 0,
+      totpEnrollmentSecretEncrypted: null,
       createdAt: now.toISOString()
     };
 

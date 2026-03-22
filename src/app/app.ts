@@ -2223,7 +2223,8 @@ export const createApp = (options: AppOptions) => {
         google: { enabled: false },
         apple: { enabled: false },
         facebook: { enabled: false },
-        wechat: { enabled: false }
+        wechat: { enabled: false },
+        mfaRequired: false
       };
       await clientAuthMethodPolicyRepository.create(policy);
     }
@@ -2269,7 +2270,8 @@ export const createApp = (options: AppOptions) => {
       google: { enabled: false },
       apple: { enabled: false },
       facebook: { enabled: false },
-      wechat: { enabled: false }
+      wechat: { enabled: false },
+      mfaRequired: false
     };
 
     let body: Record<string, unknown>;
@@ -2316,7 +2318,8 @@ export const createApp = (options: AppOptions) => {
       google: { enabled: typeof go.enabled === "boolean" ? go.enabled : existing.google.enabled },
       apple: { enabled: typeof ap.enabled === "boolean" ? ap.enabled : existing.apple.enabled },
       facebook: { enabled: typeof fb.enabled === "boolean" ? fb.enabled : existing.facebook.enabled },
-      wechat: { enabled: typeof wc.enabled === "boolean" ? wc.enabled : existing.wechat.enabled }
+      wechat: { enabled: typeof wc.enabled === "boolean" ? wc.enabled : existing.wechat.enabled },
+      mfaRequired: typeof body.mfa_required === "boolean" ? body.mfa_required : existing.mfaRequired
     };
 
     if (existingOrNull === null) {
@@ -2388,7 +2391,8 @@ export const createApp = (options: AppOptions) => {
           google: { enabled: false },
           apple: { enabled: false },
           facebook: { enabled: false },
-          wechat: { enabled: false }
+          wechat: { enabled: false },
+          mfaRequired: false
         });
         await auditRepository.record({
           id: crypto.randomUUID(),
