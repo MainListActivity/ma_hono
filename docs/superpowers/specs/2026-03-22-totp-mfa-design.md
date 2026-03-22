@@ -43,16 +43,17 @@ Add one column:
 
 ### `login_challenges` Extension
 
-Add three columns:
+Add four columns:
 
+- `authenticated_user_id` — text, nullable — set to the tenant user's `id` after first-factor login succeeds; required so MFA endpoints can load the correct `totp_credentials` or `webauthn_credentials` without re-authenticating. Not set until first-factor passes, and not a FK constraint (to avoid coupling login challenge lifecycle to user deletion rules).
 - `mfa_state` — text, not null, default `'none'`
   - `none` — no MFA required
-  - `pending_totp` — awaiting TOTP code
-  - `pending_passkey_step_up` — awaiting passkey step-up assertion
+  - `pending_totp` — first factor passed, awaiting TOTP code
+  - `pending_passkey_step_up` — first factor passed, awaiting passkey step-up assertion
   - `pending_enrollment` — MFA required but user has no MFA enrolled; must enroll TOTP first
   - `satisfied` — MFA step completed
-- `mfa_attempt_count` — integer, not null, default `0` — incremented on each failed MFA attempt; challenge is invalidated after 5 failures
-- `totp_enrollment_secret` — text, nullable — temporary TOTP secret held during `pending_enrollment` state; cleared to null once enrollment succeeds
+- `mfa_attempt_count` — integer, not null, default `0` — incremented on each failed MFA attempt; challenge is invalidated after 5 failures. Enrollment failures and MFA verification failures use separate counters (see Security section).
+- `totp_enrollment_secret_encrypted` — text, nullable — AES-256-GCM encrypted temporary TOTP secret held during `pending_enrollment` state; encrypted with the same key used for `totp_credentials.secret_encrypted`; cleared to null once enrollment succeeds.
 
 The challenge is consumable only when `mfa_state IN ('none', 'satisfied')`.
 
@@ -69,12 +70,13 @@ Purpose: stores enrolled TOTP secrets per tenant user.
 | `algorithm` | text | `SHA1` |
 | `digits` | integer | `6` |
 | `period` | integer | `30` |
-| `last_used_at` | text | ISO timestamp of last successful verification; used for replay prevention |
+| `last_used_window` | integer | Window index (`floor(unix_epoch_seconds / period)`) of last successfully accepted code; used for replay prevention. A code whose window index is ≤ `last_used_window` is rejected even if the HMAC matches. |
 | `enrolled_at` | text | ISO timestamp |
 | `created_at` | text | ISO timestamp |
 
 Constraints:
 - unique `(tenant_id, user_id)` — one active TOTP credential per user
+- composite FK `(tenant_id, user_id)` → `(users.tenant_id, users.id)` with `onDelete: cascade` — consistent with the `userPasswordCredentials` and `webauthnCredentials` pattern in the existing schema
 
 ## Flow Design
 
@@ -85,10 +87,11 @@ After any first-factor login succeeds (password, magic link, passkey login), bef
 1. Load `client_auth_method_policies.mfa_required` for the client on the login challenge.
 2. If `mfa_required = false` — proceed as today: consume challenge, create browser session, redirect with authorization code.
 3. If `mfa_required = true`:
+   - Set `login_challenges.authenticated_user_id` to the verified user's `id`.
    - Check whether the user has a `totp_credentials` row or a `webauthn_credentials` row for this tenant.
-   - If the user has passkey credential(s) → set `mfa_state = 'pending_passkey_step_up'`.
+   - If the user has passkey credential(s) → set `mfa_state = 'pending_passkey_step_up'`. If the user also has TOTP enrolled, the MFA UI must offer a "use authenticator app instead" option; selecting it calls a new `POST /api/login/:tenant/mfa/switch-to-totp` endpoint (see below) which transitions the challenge to `pending_totp`.
    - If the user has TOTP credential only → set `mfa_state = 'pending_totp'`.
-   - If both → prefer passkey step-up (set `pending_passkey_step_up`); the MFA UI may also allow TOTP as fallback.
+   - If both passkey and TOTP are enrolled → default to `pending_passkey_step_up` with TOTP fallback available.
    - If neither → set `mfa_state = 'pending_enrollment'`.
    - Do NOT consume the login challenge. Return the current `mfa_state` and the `login_challenge` token to the browser.
 
@@ -100,28 +103,27 @@ Request: `{ login_challenge: string, code: string }`
 
 1. Load login challenge by token hash; verify it is unconsumed and not expired.
 2. Verify `mfa_state = 'pending_totp'`.
-3. Load `totp_credentials` for the challenge's user.
+3. Load `totp_credentials` for `login_challenges.authenticated_user_id` in this tenant.
 4. Decrypt the TOTP secret.
-5. Verify the provided code with ±1 window tolerance (90-second window).
-6. Check that the current window timestamp is strictly after `last_used_at` (replay prevention).
-7. On success:
-   - Update `last_used_at` on the credential.
+5. Compute the accepted window indices: `[floor(now/period) - 1, floor(now/period), floor(now/period) + 1]`.
+6. Verify the provided code matches one of the accepted windows.
+7. Check that the matched window index is strictly greater than `totp_credentials.last_used_window` (replay prevention).
+8. On success:
+   - Update `last_used_window` on the credential to the matched window index.
    - Update `mfa_state = 'satisfied'` on the challenge.
    - Consume the challenge, create browser session, issue authorization code, redirect.
-8. On failure:
-   - Increment `mfa_attempt_count`.
+9. On failure:
+   - Increment `mfa_attempt_count` (verification counter, separate from enrollment counter — see Security section).
    - If `mfa_attempt_count >= 5` — mark challenge consumed (invalidated); return error telling user to restart.
    - Otherwise return error with remaining attempts.
 
 ### Passkey Step-Up
 
-`POST /api/login/:tenant/mfa/passkey/start` — generates a WebAuthn assertion challenge scoped to the user's registered credentials.
+`POST /api/login/:tenant/mfa/passkey/start` — generates a WebAuthn assertion challenge scoped to the user's registered credentials (loaded via `login_challenges.authenticated_user_id`). The WebAuthn challenge nonce is stored in KV keyed by `sha256(login_challenge_token)` with the same TTL as the login challenge. Returns the assertion options to the browser.
 
-`POST /api/login/:tenant/mfa/passkey/finish` — verifies the assertion.
+`POST /api/login/:tenant/mfa/passkey/finish` — verifies the assertion. Reads the stored WebAuthn challenge nonce from KV using the same key, then verifies the assertion. On success, deletes the KV entry, updates `mfa_state = 'satisfied'`, consumes the login challenge, creates the browser session, and issues the authorization code.
 
-On success: update `mfa_state = 'satisfied'`, consume challenge, create session, issue code.
-
-Brute-force tracking applies the same `mfa_attempt_count` logic.
+Brute-force tracking applies the same `mfa_attempt_count` logic (verification counter).
 
 ### Forced TOTP Enrollment Flow
 
@@ -133,23 +135,24 @@ Request: `{ login_challenge: string }`
 
 1. Verify challenge is unconsumed, not expired, and `mfa_state = 'pending_enrollment'`.
 2. Generate a new TOTP secret (cryptographically random, base32-encoded).
-3. Store the raw secret temporarily in `login_challenges.totp_enrollment_secret` (not yet encrypted into `totp_credentials`).
-4. Return a `otpauth://` provisioning URI for display as a QR code, plus the raw secret for manual entry.
+3. If `totp_enrollment_secret_encrypted` is already set on the challenge (user called `enroll/start` again), overwrite it with the new secret. This is explicitly allowed — the old QR code is silently invalidated and a fresh one is issued. This is the correct behavior for "back / retry" navigation.
+4. Encrypt the secret with AES-256-GCM and store it in `login_challenges.totp_enrollment_secret_encrypted`.
+5. Return an `otpauth://` provisioning URI for display as a QR code, plus the raw secret for manual entry. The raw secret is returned only in this response and is never stored unencrypted.
 
 **Finish:** `POST /api/login/:tenant/mfa/totp/enroll/finish`
 
 Request: `{ login_challenge: string, code: string }`
 
 1. Verify challenge is unconsumed, not expired, and `mfa_state = 'pending_enrollment'`.
-2. Read `totp_enrollment_secret` from the challenge.
-3. Verify the provided TOTP code against the enrollment secret.
-4. On success:
-   - Encrypt the secret with AES-256-GCM.
-   - Insert a `totp_credentials` row.
-   - Clear `totp_enrollment_secret` to null on the challenge.
+2. Verify `totp_enrollment_secret_encrypted` is set; return error if not (user skipped `enroll/start`).
+3. Decrypt `totp_enrollment_secret_encrypted` to obtain the enrollment secret.
+4. Verify the provided TOTP code against the enrollment secret (same ±1 window logic as TOTP verification).
+5. On success:
+   - Insert a `totp_credentials` row with `secret_encrypted` set to the encrypted form of the secret (already encrypted — reuse the value from `totp_enrollment_secret_encrypted`), `last_used_window` set to the matched window index.
+   - Clear `totp_enrollment_secret_encrypted` to null on the challenge.
    - Update `mfa_state = 'satisfied'`.
    - Consume the challenge, create browser session, issue authorization code, redirect.
-5. On failure: increment `mfa_attempt_count`; same brute-force rules as verification.
+6. On failure: increment `enrollment_attempt_count` (separate counter — see Security section); same brute-force lockout at 5 failures.
 
 ## API Endpoints
 
@@ -158,8 +161,9 @@ All paths follow the existing pattern: platform path includes `:tenant`, custom-
 | Method | Path | Description |
 |---|---|---|
 | `POST` | `/api/login/:tenant/mfa/totp/verify` | Verify TOTP code |
-| `POST` | `/api/login/:tenant/mfa/passkey/start` | Start passkey step-up |
-| `POST` | `/api/login/:tenant/mfa/passkey/finish` | Finish passkey step-up |
+| `POST` | `/api/login/:tenant/mfa/passkey/start` | Start passkey step-up (stores WebAuthn nonce in KV) |
+| `POST` | `/api/login/:tenant/mfa/passkey/finish` | Finish passkey step-up (reads and deletes nonce from KV) |
+| `POST` | `/api/login/:tenant/mfa/switch-to-totp` | Transition challenge from `pending_passkey_step_up` to `pending_totp` (only valid when user has TOTP enrolled) |
 | `POST` | `/api/login/:tenant/mfa/totp/enroll/start` | Get TOTP provisioning URI |
 | `POST` | `/api/login/:tenant/mfa/totp/enroll/finish` | Confirm enrollment and complete login |
 
@@ -171,15 +175,26 @@ TOTP secrets are encrypted with AES-256-GCM before writing to D1. The encryption
 
 ### Replay Prevention
 
-`totp_credentials.last_used_at` records the timestamp of the last successfully accepted window. A code is rejected if the window it covers is not strictly after `last_used_at`.
+`totp_credentials.last_used_window` stores the window index (`floor(unix_epoch_seconds / period)`) of the last successfully accepted code. A code whose window index is ≤ `last_used_window` is rejected even if the HMAC is correct. This is a precise per-bucket primitive: within a given 30-second bucket, only one acceptance is possible regardless of sub-second timing.
 
 ### Brute-Force Lockout
 
-`login_challenges.mfa_attempt_count` is incremented on each MFA failure. At 5 failures the challenge is marked consumed and the user must restart the authorization flow from the client. This prevents code enumeration without requiring a separate rate-limit layer.
+Two separate counters exist on `login_challenges`:
+
+- `mfa_attempt_count` — incremented on each failure at the TOTP verify or passkey step-up endpoints. Represents failures by a user who claims to have MFA enrolled.
+- `enrollment_attempt_count` — incremented on each failure at the `enroll/finish` endpoint. Separate because the enrollment path is structurally different: the user has no prior MFA commitment, and bundling these counters would let an attacker who knows a target has no MFA burn the single combined counter by driving them to enrollment.
+
+Both counters trigger challenge invalidation at 5 failures.
+
+Add `enrollment_attempt_count` integer column (not null, default `0`) to `login_challenges`.
 
 ### Enrollment Secret Lifecycle
 
-The `totp_enrollment_secret` column on `login_challenges` is ephemeral. It is only populated during `pending_enrollment` state and cleared to null after successful enrollment. If the challenge expires before enrollment completes, the secret is abandoned with the challenge — no orphaned TOTP secrets can persist.
+The `totp_enrollment_secret_encrypted` column on `login_challenges` is ephemeral. It is stored AES-256-GCM encrypted (same key as `totp_credentials.secret_encrypted`). It is only populated during `pending_enrollment` state and cleared to null after successful enrollment. Multiple calls to `enroll/start` overwrite it with a new encrypted secret (idempotent replacement). If the challenge expires before enrollment completes, the encrypted secret is abandoned with the challenge — no orphaned TOTP secrets persist.
+
+### Passkey Step-Up WebAuthn Nonce Storage
+
+The WebAuthn assertion challenge nonce generated by `mfa/passkey/start` is stored in `USER_SESSIONS_KV` under the key `mfa_passkey_nonce:{sha256(login_challenge_token)}` with a TTL equal to the login challenge's remaining lifetime. The `finish` endpoint reads and deletes this entry atomically before verifying the assertion. If the KV entry is missing or expired, the assertion is rejected.
 
 ## Audit Events
 
@@ -249,12 +264,12 @@ src/
 
 ## Delivery Sequence
 
-1. Schema: add `mfa_required` to `client_auth_method_policies`, add `mfa_state`/`mfa_attempt_count`/`totp_enrollment_secret` to `login_challenges`, add `totp_credentials` table
-2. `domain/mfa/totp-service.ts`: TOTP code generation, verification, window logic, replay check
-3. `adapters/auth/totp/totp-crypto.ts`: AES-256-GCM secret encryption/decryption
+1. Schema: add `mfa_required` to `client_auth_method_policies`; add `authenticated_user_id`, `mfa_state`, `mfa_attempt_count`, `enrollment_attempt_count`, `totp_enrollment_secret_encrypted` to `login_challenges`; add `totp_credentials` table with composite FK
+2. `domain/mfa/totp-service.ts`: TOTP code generation, window-index verification, replay check
+3. `adapters/auth/totp/totp-crypto.ts`: AES-256-GCM encrypt/decrypt for TOTP secrets
 4. `domain/mfa/totp-repository.ts` + memory implementation
-5. Post-first-factor MFA check integrated into existing login handlers
-6. MFA API endpoints: TOTP verify, passkey step-up start/finish, enrollment start/finish
+5. Post-first-factor MFA check integrated into existing login handlers (steps 5 and 6 can proceed in parallel after step 4 since both depend only on schema and domain layer being in place)
+6. MFA API endpoints: TOTP verify, passkey step-up start/finish, TOTP fallback switch, enrollment start/finish
 7. Audit events for all MFA actions
 8. Admin API: extend PATCH endpoint to accept `mfa_required`
 9. Admin UI: add `mfa_required` toggle to client detail page
@@ -265,9 +280,11 @@ src/
 - A client with `mfa_required = true` causes password/magic-link/passkey login to pause pending MFA
 - A user with TOTP enrolled can complete login by providing a valid TOTP code
 - A user with passkey enrolled can complete login via passkey step-up
+- A user with both passkey and TOTP enrolled is defaulted to `pending_passkey_step_up` and can switch to TOTP via `mfa/switch-to-totp`
 - A user with no MFA enrolled is forced through TOTP enrollment before login completes
-- TOTP codes cannot be reused within the same 30-second window
-- 5 consecutive MFA failures invalidate the login challenge
+- TOTP codes cannot be reused within the same 30-second window (window-index replay prevention)
+- 5 consecutive MFA verification failures invalidate the login challenge
+- 5 consecutive enrollment confirmation failures invalidate the login challenge
 - A client with `mfa_required = false` is unaffected by this change
 - Admin can toggle `mfa_required` on the client detail page
 - All MFA events are recorded in `audit_events`
