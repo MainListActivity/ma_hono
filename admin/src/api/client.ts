@@ -142,6 +142,17 @@ export interface ClientSummary {
   token_endpoint_auth_method: string;
   trust_level: string;
   consent_policy: string;
+  auth_method_policy: AuthMethodPolicyWire | null;
+}
+
+export interface AuthMethodPolicyWire {
+  password: { enabled: boolean; allow_registration: boolean };
+  magic_link: { enabled: boolean; allow_registration: boolean };
+  passkey: { enabled: boolean; allow_registration: boolean };
+  google: { enabled: boolean };
+  apple: { enabled: boolean };
+  facebook: { enabled: boolean };
+  wechat: { enabled: boolean };
 }
 
 export const listClients = async (token: string, tenantId: string) => {
@@ -149,6 +160,48 @@ export const listClients = async (token: string, tenantId: string) => {
     await fetch(`${BASE_URL}/admin/tenants/${tenantId}/clients`, { headers: authHeaders(token) })
   );
   return res.json() as Promise<{ clients: ClientSummary[] }>;
+};
+
+export const getClient = async (token: string, tenantId: string, clientId: string) => {
+  const res = await checkOk(
+    await fetch(`${BASE_URL}/admin/tenants/${tenantId}/clients/${clientId}`, {
+      headers: authHeaders(token)
+    })
+  );
+  return res.json() as Promise<ClientSummary>;
+};
+
+export const updateClientAuthMethodPolicy = async (
+  token: string,
+  tenantId: string,
+  clientId: string,
+  policy: Partial<AuthMethodPolicyWire>
+) => {
+  const res = await checkOk(
+    await fetch(`${BASE_URL}/admin/tenants/${tenantId}/clients/${clientId}/auth-method-policy`, {
+      method: "PATCH",
+      headers: authHeaders(token),
+      body: JSON.stringify(policy)
+    })
+  );
+  return res.json() as Promise<{ auth_method_policy: AuthMethodPolicyWire }>;
+};
+
+export const registerUser = async (
+  tenantSlug: string,
+  payload: {
+    login_challenge: string;
+    email: string;
+    username?: string;
+    password: string;
+  }
+): Promise<Response> => {
+  return fetch(`${BASE_URL}/t/${tenantSlug}/register`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+    redirect: "manual"
+  });
 };
 
 export const createClient = async (
@@ -177,7 +230,7 @@ export const createClient = async (
 
 export interface ChallengeInfo {
   tenant_display_name: string;
-  methods: ("password" | "magic_link" | "passkey")[];
+  methods: { method: string; allow_registration: boolean }[];
 }
 
 export const getChallengeInfo = async (
