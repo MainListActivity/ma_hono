@@ -99,6 +99,7 @@ function AuthMethodPolicyModal({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  const [mfaRequired, setMfaRequired] = useState(false);
 
   const defaultPolicy = (): AuthMethodPolicyWire => ({
     password: { enabled: false, allow_registration: false },
@@ -107,12 +108,15 @@ function AuthMethodPolicyModal({
     google: { enabled: false },
     apple: { enabled: false },
     facebook: { enabled: false },
-    wechat: { enabled: false }
+    wechat: { enabled: false },
+    mfa_required: false
   });
 
   useEffect(() => {
     getClient(token, tenantId, client.client_id).then((c) => {
-      setPolicy(c.auth_method_policy ?? defaultPolicy());
+      const loadedPolicy = c.auth_method_policy ?? defaultPolicy();
+      setPolicy(loadedPolicy);
+      setMfaRequired(loadedPolicy.mfa_required ?? false);
     }).catch(() => setError("FAILED TO LOAD POLICY")).finally(() => setLoading(false));
   }, []);
 
@@ -122,7 +126,10 @@ function AuthMethodPolicyModal({
     setError(null);
     setSaved(false);
     try {
-      await updateClientAuthMethodPolicy(token, tenantId, client.client_id, policy);
+      await updateClientAuthMethodPolicy(token, tenantId, client.client_id, {
+        ...policy,
+        mfa_required: mfaRequired
+      });
       setSaved(true);
     } catch {
       setError("FAILED TO SAVE");
@@ -223,6 +230,29 @@ function AuthMethodPolicyModal({
             </div>
           );
         })}
+      </div>
+      <div style={{ marginBottom: '20px', paddingTop: '12px', borderTop: '1px solid var(--border)' }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "12px" }}>
+          <div>
+            <label className="font-display" style={labelStyle}>Require MFA</label>
+            <p style={{ fontSize: "11px", color: "var(--text-muted)", margin: 0 }}>
+              Users without MFA enrolled will be prompted to enroll on next login
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setMfaRequired(v => !v)}
+            style={{
+              background: mfaRequired ? "var(--accent-cyan)" : "var(--bg-elevated)",
+              border: `1px solid ${mfaRequired ? "var(--accent-cyan)" : "var(--border)"}`,
+              color: mfaRequired ? "var(--bg-base)" : "var(--text-muted)",
+              padding: "4px 12px", fontSize: "10px", fontFamily: "'Space Mono', monospace",
+              cursor: "pointer", letterSpacing: "0.1em"
+            }}
+          >
+            {mfaRequired ? "ON" : "OFF"}
+          </button>
+        </div>
       </div>
       <button
         type="button"

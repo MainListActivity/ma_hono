@@ -153,6 +153,7 @@ export interface AuthMethodPolicyWire {
   apple: { enabled: boolean };
   facebook: { enabled: boolean };
   wechat: { enabled: boolean };
+  mfa_required: boolean;
 }
 
 export const listClients = async (token: string, tenantId: string) => {
