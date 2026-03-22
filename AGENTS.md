@@ -1,5 +1,12 @@
 # AGENTS.md
 
+## Project Structure
+- src: hono code, domain is `auth.{domain}/api*` and `o.{domain}*`
+- admin: admin ui code, domain is `auth.{domain}/*`
+- test: test code
+- docs: docs code
+
+
 ## Purpose
 
 This repository will become a multi-tenant identity provider (IdP) and authentication backend.
