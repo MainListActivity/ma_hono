@@ -1,3 +1,4 @@
+import { Hono } from "hono";
 import { createApp } from "./app/app";
 import { createSetupApp } from "./app/setup-app";
 import { createRuntimeRepositories } from "./adapters/db/drizzle/runtime";
@@ -126,8 +127,10 @@ export default {
       userRepository: repositories.userRepository
     });
 
+    const root = new Hono().route("/api", app);
+
     try {
-      return await app.fetch(request, env, executionContext);
+      return await root.fetch(request, env, executionContext);
     } finally {
       await repositories.close();
     }
