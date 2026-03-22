@@ -72,6 +72,10 @@ export default {
     const oidcHost = `o.${platformConfig.rootDomain}`;
     const authDomain = `auth.${platformConfig.rootDomain}`;
 
+    const totpKeyObject = await runtimeConfig.keyMaterialBucket.get("totp-encryption-key");
+    if (totpKeyObject === null) throw new Error("TOTP encryption key not found in key store (totp-encryption-key)");
+    const totpEncryptionKey = new Uint8Array(await totpKeyObject.arrayBuffer());
+
     const app = createApp({
       adminBootstrapPasswordHash: platformConfig.adminBootstrapPasswordHash,
       adminWhitelist: platformConfig.adminWhitelist,
@@ -113,6 +117,9 @@ export default {
       registrationAccessTokenRepository: repositories.registrationAccessTokenRepository,
       signer: repositories.signer,
       tenantRepository: repositories.tenantRepository,
+      totpRepository: repositories.totpRepository,
+      mfaPasskeyChallengeRepository: repositories.mfaPasskeyChallengeRepository,
+      totpEncryptionKey,
       userRepository: repositories.userRepository
     });
 

@@ -1398,6 +1398,8 @@ export const createRuntimeRepositories = async (config: RuntimeConfig) => {
       config.registrationTokensKv
     ),
     tenantRepository: new D1TenantRepository(db),
+    totpRepository: new D1TotpRepository(db),
+    mfaPasskeyChallengeRepository: new D1MfaPasskeyChallengeRepository(db),
     close: async () => undefined
   };
 };

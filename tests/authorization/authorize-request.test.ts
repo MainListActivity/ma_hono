@@ -621,12 +621,21 @@ describe("worker entrypoint wiring", () => {
       keyRepository: {},
       loginChallengeRepository,
       registrationAccessTokenRepository: {},
-      tenantRepository: {}
+      tenantRepository: {},
+      totpRepository: new MemoryTotpRepository(),
+      mfaPasskeyChallengeRepository: new MemoryMfaPasskeyChallengeRepository()
     }));
+    const totpKeyBytes = new Uint8Array(32).fill(0);
     const readRuntimeConfig = vi.fn(() => ({
       adminSessionsKv: {} as KVNamespace,
       db: {} as D1Database,
-      keyMaterialBucket: {} as R2Bucket,
+      keyMaterialBucket: {
+        get: vi.fn(async (key: string) =>
+          key === "totp-encryption-key"
+            ? { arrayBuffer: async () => totpKeyBytes.buffer }
+            : null
+        )
+      } as unknown as R2Bucket,
       registrationTokensKv: {} as KVNamespace,
       userSessionsKv: {} as KVNamespace
     }));
@@ -725,12 +734,21 @@ describe("worker entrypoint wiring", () => {
       keyRepository: {},
       loginChallengeRepository,
       registrationAccessTokenRepository: {},
-      tenantRepository: tenantRepositoryForRuntime
+      tenantRepository: tenantRepositoryForRuntime,
+      totpRepository: new MemoryTotpRepository(),
+      mfaPasskeyChallengeRepository: new MemoryMfaPasskeyChallengeRepository()
     }));
+    const totpKeyBytes2 = new Uint8Array(32).fill(0);
     const readRuntimeConfig = vi.fn(() => ({
       adminSessionsKv: {} as KVNamespace,
       db: {} as D1Database,
-      keyMaterialBucket: {} as R2Bucket,
+      keyMaterialBucket: {
+        get: vi.fn(async (key: string) =>
+          key === "totp-encryption-key"
+            ? { arrayBuffer: async () => totpKeyBytes2.buffer }
+            : null
+        )
+      } as unknown as R2Bucket,
       registrationTokensKv: {} as KVNamespace,
       userSessionsKv
     }));
@@ -851,12 +869,21 @@ describe("worker entrypoint wiring", () => {
       keyRepository: {},
       loginChallengeRepository,
       registrationAccessTokenRepository: {},
-      tenantRepository: tenantRepositoryForRuntime
+      tenantRepository: tenantRepositoryForRuntime,
+      totpRepository: new MemoryTotpRepository(),
+      mfaPasskeyChallengeRepository: new MemoryMfaPasskeyChallengeRepository()
     }));
+    const totpKeyBytes3 = new Uint8Array(32).fill(0);
     const readRuntimeConfig = vi.fn(() => ({
       adminSessionsKv: {} as KVNamespace,
       db: {} as D1Database,
-      keyMaterialBucket: {} as R2Bucket,
+      keyMaterialBucket: {
+        get: vi.fn(async (key: string) =>
+          key === "totp-encryption-key"
+            ? { arrayBuffer: async () => totpKeyBytes3.buffer }
+            : null
+        )
+      } as unknown as R2Bucket,
       registrationTokensKv: {} as KVNamespace,
       userSessionsKv
     }));
