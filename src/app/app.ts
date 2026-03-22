@@ -2012,6 +2012,91 @@ export const createApp = (options: AppOptions) => {
     });
   });
 
+  app.patch("/admin/tenants/:tenantId/clients/:clientId/auth-method-policy", async (context) => {
+    const session = await authenticateAdminSession({
+      adminRepository,
+      authorizationHeader: context.req.header("authorization")
+    });
+    if (session === null) {
+      return context.json({ error: "unauthorized" }, 401);
+    }
+    const tenantId = context.req.param("tenantId");
+    const clientId = context.req.param("clientId");
+    const tenant = await tenantRepository.findById(tenantId);
+    if (tenant === null) return context.notFound();
+
+    const client = await clientRepository.findByClientId(clientId);
+    if (client === null || client.tenantId !== tenantId) return context.notFound();
+
+    const existing = await clientAuthMethodPolicyRepository.findByClientId(client.id);
+    if (existing === null) {
+      return context.json({ error: "policy_not_found" }, 404);
+    }
+
+    let body: Record<string, unknown>;
+    try {
+      body = await context.req.json();
+    } catch {
+      return context.json({ error: "invalid_request" }, 400);
+    }
+
+    // Partial merge — only override fields that are present in the body
+    const pw = typeof body.password === "object" && body.password !== null
+      ? body.password as Record<string, unknown> : {};
+    const ml = typeof body.magic_link === "object" && body.magic_link !== null
+      ? body.magic_link as Record<string, unknown> : {};
+    const pk = typeof body.passkey === "object" && body.passkey !== null
+      ? body.passkey as Record<string, unknown> : {};
+    const go = typeof body.google === "object" && body.google !== null
+      ? body.google as Record<string, unknown> : {};
+    const ap = typeof body.apple === "object" && body.apple !== null
+      ? body.apple as Record<string, unknown> : {};
+    const fb = typeof body.facebook === "object" && body.facebook !== null
+      ? body.facebook as Record<string, unknown> : {};
+    const wc = typeof body.wechat === "object" && body.wechat !== null
+      ? body.wechat as Record<string, unknown> : {};
+
+    const merged: ClientAuthMethodPolicy = {
+      clientId: existing.clientId,
+      tenantId: existing.tenantId,
+      password: {
+        enabled: typeof pw.enabled === "boolean" ? pw.enabled : existing.password.enabled,
+        allowRegistration: typeof pw.allow_registration === "boolean"
+          ? pw.allow_registration : existing.password.allowRegistration
+      },
+      emailMagicLink: {
+        enabled: typeof ml.enabled === "boolean" ? ml.enabled : existing.emailMagicLink.enabled,
+        allowRegistration: typeof ml.allow_registration === "boolean"
+          ? ml.allow_registration : existing.emailMagicLink.allowRegistration
+      },
+      passkey: {
+        enabled: typeof pk.enabled === "boolean" ? pk.enabled : existing.passkey.enabled,
+        allowRegistration: typeof pk.allow_registration === "boolean"
+          ? pk.allow_registration : existing.passkey.allowRegistration
+      },
+      google: { enabled: typeof go.enabled === "boolean" ? go.enabled : existing.google.enabled },
+      apple: { enabled: typeof ap.enabled === "boolean" ? ap.enabled : existing.apple.enabled },
+      facebook: { enabled: typeof fb.enabled === "boolean" ? fb.enabled : existing.facebook.enabled },
+      wechat: { enabled: typeof wc.enabled === "boolean" ? wc.enabled : existing.wechat.enabled }
+    };
+
+    await clientAuthMethodPolicyRepository.update(merged);
+
+    await auditRepository.record({
+      id: crypto.randomUUID(),
+      actorType: "admin_user",
+      actorId: session.adminUserId,
+      tenantId,
+      eventType: "oidc.client.auth_method_policy.updated",
+      targetType: "oidc_client",
+      targetId: client.clientId,
+      payload: policyToWire(merged),
+      occurredAt: new Date().toISOString()
+    });
+
+    return context.json({ auth_method_policy: policyToWire(merged) });
+  });
+
   app.post("/admin/tenants/:tenantId/clients", async (context) => {
     const session = await authenticateAdminSession({
       adminRepository,
