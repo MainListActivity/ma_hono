@@ -4,7 +4,7 @@
 - src: hono code, domain is `auth.{domain}/api*` and `o.{domain}*`
 - admin: ui code, domain is `auth.{domain}/*`. Tenant Login Page, Admin Login, User Information Page, MFA Page
 - test: test code
-- drizzle/migrations: db migration code, use `db:migrate:remote` to apply
+- drizzle/migrations: db migration code,update DDL to this dir, use `db:migrate:remote` to apply
 - docs: docs code
 
 
