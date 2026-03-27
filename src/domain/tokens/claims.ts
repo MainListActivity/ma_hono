@@ -42,16 +42,22 @@ export const buildIdTokenClaims = ({
 
 export const buildAccessTokenClaims = ({
   audience,
+  clientId,
+  extraClaims,
   issuer,
   nowSeconds,
   scope,
   userId
-}: BaseTokenClaimsInput): AccessTokenClaims => ({
+}: BaseTokenClaimsInput & {
+  clientId: string;
+  extraClaims?: Record<string, unknown>;
+}): AccessTokenClaims => ({
   iss: issuer,
   sub: userId,
   aud: audience,
-  client_id: audience,
+  client_id: clientId,
   iat: nowSeconds,
   exp: nowSeconds + 60 * 60,
-  scope
+  scope,
+  ...extraClaims
 });

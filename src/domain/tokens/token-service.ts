@@ -2,9 +2,13 @@ import { importJWK, SignJWT } from "jose";
 
 import type { AuthorizationCodeRepository } from "../authorization/repository";
 import { verifyPkce } from "../authorization/pkce";
+import type { AccessTokenClaimsRepository } from "../clients/access-token-claims-repository";
+import { resolveCustomClaims } from "../clients/resolve-custom-claims";
 import type { ClientRepository } from "../clients/repository";
+import type { Client } from "../clients/types";
 import type { SigningKeySigner } from "../keys/signer";
 import type { ResolvedIssuerContext } from "../tenants/types";
+import type { UserRepository } from "../users/repository";
 import { sha256Base64Url } from "../../lib/hash";
 import { buildAccessTokenClaims, buildIdTokenClaims } from "./claims";
 import type { OidcTokenErrorResponse, OidcTokenSuccessResponse } from "../oidc/token-response";
@@ -95,7 +99,7 @@ const authenticateClient = async ({
   requestedClientId: string | null;
   requestedClientSecret: string | null;
 }): Promise<
-  | { ok: true; clientId: string; tenantId: string }
+  | { ok: true; client: Client }
   | { ok: false; clientId: string | null; error: TokenErrorCode; status: 401 }
 > => {
   const basicCredentials = parseBasicAuthorization(authorizationHeader);
@@ -162,8 +166,7 @@ const authenticateClient = async ({
 
     return {
       ok: true,
-      clientId: client.clientId,
-      tenantId: client.tenantId
+      client
     };
   }
 
@@ -205,8 +208,7 @@ const authenticateClient = async ({
 
   return {
     ok: true,
-    clientId: client.clientId,
-    tenantId: client.tenantId
+    client
   };
 };
 
@@ -233,16 +235,20 @@ const createSignedJwt = async ({
 
 export const exchangeAuthorizationCode = async ({
   authorizationCodeRepository,
+  accessTokenClaimsRepository,
   clientRepository,
   issuerContext,
   request,
-  signer
+  signer,
+  userRepository
 }: {
   authorizationCodeRepository: AuthorizationCodeRepository;
+  accessTokenClaimsRepository: AccessTokenClaimsRepository;
   clientRepository: ClientRepository;
   issuerContext: ResolvedIssuerContext;
   request: TokenExchangeRequest;
   signer: SigningKeySigner | undefined;
+  userRepository: UserRepository;
 }): Promise<TokenExchangeResult> => {
   if (request.grantType !== "authorization_code") {
     return {
@@ -273,7 +279,7 @@ export const exchangeAuthorizationCode = async ({
   if (request.code.length === 0 || request.codeVerifier.length === 0 || request.redirectUri.length === 0) {
     return {
       kind: "error",
-      clientId: authenticatedClient.clientId,
+      clientId: authenticatedClient.client.clientId,
       error: "invalid_request",
       status: 400
     };
@@ -287,22 +293,22 @@ export const exchangeAuthorizationCode = async ({
   if (codeRecord === null) {
     return {
       kind: "error",
-      clientId: authenticatedClient.clientId,
+      clientId: authenticatedClient.client.clientId,
       error: "invalid_grant",
       status: 400
     };
   }
 
   if (
-    codeRecord.clientId !== authenticatedClient.clientId ||
-    codeRecord.tenantId !== authenticatedClient.tenantId ||
+    codeRecord.clientId !== authenticatedClient.client.clientId ||
+    codeRecord.tenantId !== authenticatedClient.client.tenantId ||
     codeRecord.issuer !== issuerContext.issuer ||
     codeRecord.redirectUri !== request.redirectUri ||
     new Date(codeRecord.expiresAt).getTime() <= now.getTime()
   ) {
     return {
       kind: "error",
-      clientId: authenticatedClient.clientId,
+      clientId: authenticatedClient.client.clientId,
       error: "invalid_grant",
       status: 400
     };
@@ -317,7 +323,7 @@ export const exchangeAuthorizationCode = async ({
   if (!pkceMatches) {
     return {
       kind: "error",
-      clientId: authenticatedClient.clientId,
+      clientId: authenticatedClient.client.clientId,
       error: "invalid_grant",
       status: 400
     };
@@ -328,7 +334,7 @@ export const exchangeAuthorizationCode = async ({
   if (!consumed) {
     return {
       kind: "error",
-      clientId: authenticatedClient.clientId,
+      clientId: authenticatedClient.client.clientId,
       error: "invalid_grant",
       status: 400
     };
@@ -337,16 +343,41 @@ export const exchangeAuthorizationCode = async ({
   if (signer === undefined) {
     return {
       kind: "error",
-      clientId: authenticatedClient.clientId,
+      clientId: authenticatedClient.client.clientId,
       error: "server_error",
       status: 400
     };
   }
 
   try {
+    const client = authenticatedClient.client;
+    const customClaimConfigs = await accessTokenClaimsRepository.listByClientId(
+      client.id
+    );
+    let extraClaims: Record<string, unknown> = {};
+
+    if (customClaimConfigs.length > 0) {
+      const user = await userRepository.findUserById(
+        codeRecord.tenantId,
+        codeRecord.userId
+      );
+
+      if (user === null) {
+        return {
+          kind: "error",
+          clientId: client.clientId,
+          error: "server_error",
+          status: 400
+        };
+      }
+
+      extraClaims = resolveCustomClaims(customClaimConfigs, user);
+    }
+
+    const resolvedAudience = client.accessTokenAudience ?? client.clientId;
     const nowSeconds = Math.floor(now.getTime() / 1000);
     const idTokenClaims = buildIdTokenClaims({
-      audience: authenticatedClient.clientId,
+      audience: client.clientId,
       issuer: issuerContext.issuer,
       nonce: codeRecord.nonce,
       nowSeconds,
@@ -354,7 +385,9 @@ export const exchangeAuthorizationCode = async ({
       userId: codeRecord.userId
     });
     const accessTokenClaims = buildAccessTokenClaims({
-      audience: authenticatedClient.clientId,
+      audience: resolvedAudience,
+      clientId: client.clientId,
+      extraClaims,
       issuer: issuerContext.issuer,
       nowSeconds,
       scope: codeRecord.scope,
@@ -375,7 +408,7 @@ export const exchangeAuthorizationCode = async ({
 
     return {
       kind: "success",
-      clientId: authenticatedClient.clientId,
+      clientId: client.clientId,
       tenantId: codeRecord.tenantId,
       userId: codeRecord.userId,
       response: {
@@ -389,7 +422,7 @@ export const exchangeAuthorizationCode = async ({
   } catch {
     return {
       kind: "error",
-      clientId: authenticatedClient.clientId,
+      clientId: authenticatedClient.client.clientId,
       error: "server_error",
       status: 400
     };
