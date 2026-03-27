@@ -60,6 +60,8 @@ export const oidcClients = sqliteTable(
     applicationType: text("application_type").notNull(),
     trustLevel: text("trust_level").notNull().default("first_party_trusted"),
     consentPolicy: text("consent_policy").notNull().default("skip"),
+    clientProfile: text("client_profile").notNull().default("web"),
+    accessTokenAudience: text("access_token_audience"),
     tokenEndpointAuthMethod: text("token_endpoint_auth_method").notNull(),
     redirectUris: text("redirect_uris", { mode: "json" }).$type<string[]>().notNull(),
     grantTypes: text("grant_types", { mode: "json" }).$type<string[]>().notNull(),
@@ -75,6 +77,32 @@ export const oidcClients = sqliteTable(
       table.tenantId,
       table.clientId
     )
+  })
+);
+
+export const clientAccessTokenClaims = sqliteTable(
+  "client_access_token_claims",
+  {
+    id: text("id").primaryKey(),
+    clientId: text("client_id")
+      .notNull()
+      .references(() => oidcClients.id, { onDelete: "cascade" }),
+    tenantId: text("tenant_id")
+      .notNull()
+      .references(() => tenants.id, { onDelete: "cascade" }),
+    claimName: text("claim_name").notNull(),
+    sourceType: text("source_type").notNull(),
+    fixedValue: text("fixed_value"),
+    userField: text("user_field"),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull()
+  },
+  (table) => ({
+    tenantIdIdx: index("client_access_token_claims_tenant_id_idx").on(table.tenantId),
+    clientIdIdx: index("client_access_token_claims_client_id_idx").on(table.clientId),
+    clientClaimUnique: uniqueIndex(
+      "client_access_token_claims_client_claim_unique"
+    ).on(table.clientId, table.claimName)
   })
 );
 
