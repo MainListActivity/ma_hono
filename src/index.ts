@@ -87,6 +87,7 @@ export default {
       authDomain,
       auditRepository: repositories.auditRepository,
       authorizationCodeRepository: repositories.authorizationCodeRepository,
+      accessTokenClaimsRepository: repositories.accessTokenClaimsRepository,
       authorizeSessionResolver: async (context) => {
         const sessionToken = getCookieValue(context.req.header("cookie"), browserSessionCookieName);
 

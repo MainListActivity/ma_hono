@@ -6,7 +6,12 @@ import type { AuditEvent } from "../../../domain/audit/types";
 import type { AdminRepository } from "../../../domain/admin-auth/repository";
 import type { AdminSession, AdminUser } from "../../../domain/admin-auth/types";
 import type { RegistrationAccessTokenRepository } from "../../../domain/clients/registration-access-token-repository";
-import type { ClientAuthMethodPolicyRepository, ClientRepository } from "../../../domain/clients/repository";
+import type { AccessTokenClaimsRepository } from "../../../domain/clients/access-token-claims-repository";
+import type { AccessTokenCustomClaim } from "../../../domain/clients/access-token-claims-types";
+import type {
+  ClientAuthMethodPolicyRepository,
+  ClientRepository
+} from "../../../domain/clients/repository";
 import type { Client, ClientAuthMethodPolicy } from "../../../domain/clients/types";
 import type {
   AuthorizationCodeRepository,
@@ -50,6 +55,7 @@ import {
   adminUsers,
   auditEvents,
   authorizationCodes,
+  clientAccessTokenClaims,
   clientAuthMethodPolicies,
   emailLoginTokens,
   loginChallenges,
@@ -384,6 +390,8 @@ class D1ClientRepository implements ClientRepository {
       applicationType: client.applicationType,
       trustLevel: client.trustLevel,
       consentPolicy: client.consentPolicy,
+      clientProfile: client.clientProfile,
+      accessTokenAudience: client.accessTokenAudience,
       tokenEndpointAuthMethod: client.tokenEndpointAuthMethod,
       redirectUris: client.redirectUris,
       grantTypes: client.grantTypes,
@@ -419,7 +427,9 @@ class D1ClientRepository implements ClientRepository {
           responseTypes: row.responseTypes as Client["responseTypes"],
           tokenEndpointAuthMethod: row.tokenEndpointAuthMethod as Client["tokenEndpointAuthMethod"],
           trustLevel: row.trustLevel as Client["trustLevel"],
-          consentPolicy: row.consentPolicy as Client["consentPolicy"]
+          consentPolicy: row.consentPolicy as Client["consentPolicy"],
+          clientProfile: row.clientProfile as Client["clientProfile"],
+          accessTokenAudience: row.accessTokenAudience
         };
   }
 
@@ -441,7 +451,63 @@ class D1ClientRepository implements ClientRepository {
       responseTypes: row.responseTypes as Client["responseTypes"],
       tokenEndpointAuthMethod: row.tokenEndpointAuthMethod as Client["tokenEndpointAuthMethod"],
       trustLevel: row.trustLevel as Client["trustLevel"],
-      consentPolicy: row.consentPolicy as Client["consentPolicy"]
+      consentPolicy: row.consentPolicy as Client["consentPolicy"],
+      clientProfile: row.clientProfile as Client["clientProfile"],
+      accessTokenAudience: row.accessTokenAudience
+    }));
+  }
+}
+
+class D1AccessTokenClaimsRepository implements AccessTokenClaimsRepository {
+  constructor(private readonly db: ReturnType<typeof drizzle>) {}
+
+  async createMany(claims: AccessTokenCustomClaim[]): Promise<void> {
+    if (claims.length === 0) {
+      return;
+    }
+
+    await this.db.insert(clientAccessTokenClaims).values(
+      claims.map((claim) => ({
+        id: claim.id,
+        clientId: claim.clientId,
+        tenantId: claim.tenantId,
+        claimName: claim.claimName,
+        sourceType: claim.sourceType,
+        fixedValue: claim.fixedValue,
+        userField: claim.userField,
+        createdAt: claim.createdAt,
+        updatedAt: claim.updatedAt
+      }))
+    );
+  }
+
+  async replaceAllForClient(
+    clientId: string,
+    claims: AccessTokenCustomClaim[]
+  ): Promise<void> {
+    await this.db
+      .delete(clientAccessTokenClaims)
+      .where(eq(clientAccessTokenClaims.clientId, clientId));
+
+    await this.createMany(claims);
+  }
+
+  async listByClientId(clientId: string): Promise<AccessTokenCustomClaim[]> {
+    const rows = await this.db
+      .select()
+      .from(clientAccessTokenClaims)
+      .where(eq(clientAccessTokenClaims.clientId, clientId));
+
+    return rows.map((row) => ({
+      id: row.id,
+      clientId: row.clientId,
+      tenantId: row.tenantId,
+      claimName: row.claimName,
+      sourceType: row.sourceType as AccessTokenCustomClaim["sourceType"],
+      fixedValue: row.fixedValue,
+      userField: row.userField as AccessTokenCustomClaim["userField"],
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt
     }));
   }
 }
@@ -1348,6 +1414,7 @@ export const createRuntimeRepositories = async (config: RuntimeConfig) => {
       adminUsers,
       auditEvents,
       authorizationCodes,
+      clientAccessTokenClaims,
       clientAuthMethodPolicies,
       emailLoginTokens,
       loginChallenges,
@@ -1386,6 +1453,7 @@ export const createRuntimeRepositories = async (config: RuntimeConfig) => {
     adminRepository: new D1KvAdminRepository(db, config.adminSessionsKv),
     auditRepository: new D1AuditRepository(db),
     authorizationCodeRepository: new D1AuthorizationCodeRepository(db),
+    accessTokenClaimsRepository: new D1AccessTokenClaimsRepository(db),
     clientAuthMethodPolicyRepository: new D1ClientAuthMethodPolicyRepository(db),
     clientRepository: new D1ClientRepository(db),
     keyMaterialStore,
