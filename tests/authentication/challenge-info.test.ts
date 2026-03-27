@@ -135,7 +135,9 @@ const clientRepository = new MemoryClientRepository([
     tokenEndpointAuthMethod: "client_secret_basic",
     clientSecretHash: null,
     trustLevel: "first_party_trusted",
-    consentPolicy: "skip"
+    consentPolicy: "skip",
+    clientProfile: "web",
+    accessTokenAudience: null
   }
 ]);
 

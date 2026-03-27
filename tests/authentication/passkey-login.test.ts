@@ -115,7 +115,9 @@ const clients: Client[] = [
     tokenEndpointAuthMethod: "client_secret_basic",
     clientSecretHash: "hashed-secret",
     trustLevel: "first_party_trusted",
-    consentPolicy: "skip"
+    consentPolicy: "skip",
+    clientProfile: "web",
+    accessTokenAudience: null
   }
 ];
 

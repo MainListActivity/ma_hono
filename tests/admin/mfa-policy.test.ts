@@ -86,7 +86,9 @@ describe("PATCH /admin/tenants/:tenantId/clients/:clientId/auth-method-policy", 
       tokenEndpointAuthMethod: "none",
       clientSecretHash: null,
       trustLevel: "first_party_trusted",
-      consentPolicy: "skip"
+      consentPolicy: "skip",
+      clientProfile: "web",
+      accessTokenAudience: null
     });
 
     // PATCH the auth-method-policy with mfa_required: true
@@ -124,7 +126,9 @@ describe("PATCH /admin/tenants/:tenantId/clients/:clientId/auth-method-policy", 
       tokenEndpointAuthMethod: "none",
       clientSecretHash: null,
       trustLevel: "first_party_trusted",
-      consentPolicy: "skip"
+      consentPolicy: "skip",
+      clientProfile: "web",
+      accessTokenAudience: null
     });
 
     // First PATCH: set mfa_required to true

@@ -146,7 +146,9 @@ const clients: Client[] = [
     tokenEndpointAuthMethod: "client_secret_basic",
     clientSecretHash: "hashed-secret",
     trustLevel: "first_party_trusted",
-    consentPolicy: "skip"
+    consentPolicy: "skip",
+    clientProfile: "web",
+    accessTokenAudience: null
   },
   {
     id: "client_record_acme_consent_required",
@@ -160,7 +162,9 @@ const clients: Client[] = [
     tokenEndpointAuthMethod: "client_secret_basic",
     clientSecretHash: "hashed-secret",
     trustLevel: "first_party_trusted",
-    consentPolicy: "require"
+    consentPolicy: "require",
+    clientProfile: "web",
+    accessTokenAudience: null
   }
 ];
 

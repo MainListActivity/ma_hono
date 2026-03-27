@@ -8,7 +8,18 @@ describe("app smoke", () => {
       adminBootstrapPasswordHash: "",
       adminWhitelist: [],
       managementApiToken: "",
-      platformHost: ""
+      authDomain: "auth.example.test",
+      oidcHost: "idp.example.test",
+      totpRepository: {
+        create: async () => undefined,
+        findByTenantAndUser: async () => null,
+        updateLastUsedWindow: async () => undefined
+      },
+      mfaPasskeyChallengeRepository: {
+        create: async () => undefined,
+        consumeByChallengeHash: async () => null
+      },
+      totpEncryptionKey: new Uint8Array(32)
     });
 
     const response = await app.request("http://localhost/unknown");

@@ -189,7 +189,9 @@ const buildClients = async (): Promise<Client[]> => [
     tokenEndpointAuthMethod: "client_secret_basic",
     clientSecretHash: await sha256Base64Url(CLIENT_SECRET),
     trustLevel: "first_party_trusted",
-    consentPolicy: "skip"
+    consentPolicy: "skip",
+    clientProfile: "web",
+    accessTokenAudience: null
   }
 ];
 

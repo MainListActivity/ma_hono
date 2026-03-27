@@ -143,7 +143,8 @@ const buildClientAndPolicyRepos = async () => {
     clientName: "App1", applicationType: "web", grantTypes: ["authorization_code"],
     redirectUris: ["https://app.example.test/callback"], responseTypes: ["code"],
     tokenEndpointAuthMethod: "none", clientSecretHash: null,
-    trustLevel: "first_party_trusted", consentPolicy: "skip"
+    trustLevel: "first_party_trusted", consentPolicy: "skip",
+    clientProfile: "web", accessTokenAudience: null
   });
 
   const policyRepo = new MemoryClientAuthMethodPolicyRepository();
@@ -270,7 +271,8 @@ const makeMfaApp = async ({
     clientName: "App1", applicationType: "web", grantTypes: ["authorization_code"],
     redirectUris: ["https://app.example.test/callback"], responseTypes: ["code"],
     tokenEndpointAuthMethod: "none", clientSecretHash: null,
-    trustLevel: "first_party_trusted", consentPolicy: "skip"
+    trustLevel: "first_party_trusted", consentPolicy: "skip",
+    clientProfile: "web", accessTokenAudience: null
   });
 
   const userRepo = new MemoryUserRepository({ policies: [] });

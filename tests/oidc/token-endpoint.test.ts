@@ -102,7 +102,9 @@ const createClient = async ({
   tokenEndpointAuthMethod: authMethod,
   clientSecretHash: secret === null ? null : await sha256Base64Url(secret),
   trustLevel: "first_party_trusted",
-  consentPolicy: "skip"
+  consentPolicy: "skip",
+  clientProfile: "web",
+  accessTokenAudience: null
 });
 
 const seedAuthorizationCode = async ({
