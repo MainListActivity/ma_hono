@@ -313,32 +313,23 @@ class D1TenantRepository implements TenantRepository {
 
   async update(id: string, input: TenantUpdateInput): Promise<void> {
     const now = new Date().toISOString();
-    const ops: ReturnType<typeof this.db.update>[] = [];
 
     if (input.displayName !== undefined || input.status !== undefined) {
-      ops.push(
-        this.db
-          .update(tenants)
-          .set({
-            ...(input.displayName !== undefined ? { displayName: input.displayName } : {}),
-            ...(input.status !== undefined ? { status: input.status } : {}),
-            updatedAt: now
-          })
-          .where(eq(tenants.id, id))
-      );
+      await this.db
+        .update(tenants)
+        .set({
+          ...(input.displayName !== undefined ? { displayName: input.displayName } : {}),
+          ...(input.status !== undefined ? { status: input.status } : {}),
+          updatedAt: now
+        })
+        .where(eq(tenants.id, id));
     }
 
     if (input.primaryIssuerUrl !== undefined) {
-      ops.push(
-        this.db
-          .update(tenantIssuers)
-          .set({ issuerUrl: input.primaryIssuerUrl, updatedAt: now })
-          .where(and(eq(tenantIssuers.tenantId, id), eq(tenantIssuers.isPrimary, true)))
-      );
-    }
-
-    if (ops.length > 0) {
-      await this.db.batch(ops as [typeof ops[0], ...typeof ops]);
+      await this.db
+        .update(tenantIssuers)
+        .set({ issuerUrl: input.primaryIssuerUrl, updatedAt: now })
+        .where(and(eq(tenantIssuers.tenantId, id), eq(tenantIssuers.isPrimary, true)));
     }
   }
 
