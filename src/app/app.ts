@@ -30,9 +30,14 @@ import type {
   LoginChallengeRepository
 } from "../domain/authorization/repository";
 import type { AuthorizeSession } from "../domain/authorization/types";
+import type { AccessTokenClaimsRepository } from "../domain/clients/access-token-claims-repository";
 import type { RegistrationAccessTokenRepository } from "../domain/clients/registration-access-token-repository";
 import { sha256Base64Url } from "../lib/hash";
-import { registerClient } from "../domain/clients/register-client";
+import {
+  registerClient,
+  registerClientFromAdmin
+} from "../domain/clients/register-client";
+import type { AccessTokenCustomClaim } from "../domain/clients/access-token-claims-types";
 import type { ClientAuthMethodPolicy } from "../domain/clients/types";
 import type { ClientAuthMethodPolicyRepository, ClientRepository } from "../domain/clients/repository";
 import { buildJwks } from "../domain/keys/jwks";
@@ -115,6 +120,20 @@ class EmptyRegistrationAccessTokenRepository implements RegistrationAccessTokenR
 
   async store(): Promise<void> {
     return;
+  }
+}
+
+class EmptyAccessTokenClaimsRepository implements AccessTokenClaimsRepository {
+  async createMany(): Promise<void> {
+    return;
+  }
+
+  async replaceAllForClient(): Promise<void> {
+    return;
+  }
+
+  async listByClientId(): Promise<AccessTokenCustomClaim[]> {
+    return [];
   }
 }
 
@@ -279,6 +298,7 @@ export interface AppOptions {
   /** Root domain, e.g. "maplayer.top". Used to build login redirect URLs: https://auth.{authDomain}/login/{slug} */
   authDomain: string;
   browserSessionRepository?: BrowserSessionRepository;
+  accessTokenClaimsRepository?: AccessTokenClaimsRepository;
   clientAuthMethodPolicyRepository?: ClientAuthMethodPolicyRepository;
   clientRepository?: ClientRepository;
   keyRepository?: KeyRepository;
@@ -310,6 +330,8 @@ export const createApp = (options: AppOptions) => {
   const authorizeSessionResolver = options.authorizeSessionResolver ?? (async () => null);
   const browserSessionRepository =
     options.browserSessionRepository ?? new EmptyBrowserSessionRepository();
+  const accessTokenClaimsRepository =
+    options.accessTokenClaimsRepository ?? new EmptyAccessTokenClaimsRepository();
   const clientAuthMethodPolicyRepository =
     options.clientAuthMethodPolicyRepository ?? new EmptyClientAuthMethodPolicyRepository();
   const clientRepository = options.clientRepository ?? new EmptyClientRepository();
@@ -2058,6 +2080,7 @@ export const createApp = (options: AppOptions) => {
 
     const result = await exchangeAuthorizationCode({
       authorizationCodeRepository,
+      accessTokenClaimsRepository,
       clientRepository,
       issuerContext,
       request: {
@@ -2069,7 +2092,8 @@ export const createApp = (options: AppOptions) => {
         requestedClientId: formData.get("client_id")?.toString() ?? null,
         requestedClientSecret: formData.get("client_secret")?.toString() ?? null
       },
-      signer
+      signer,
+      userRepository
     });
 
     if (result.kind === "error") {
@@ -2898,6 +2922,8 @@ export const createApp = (options: AppOptions) => {
         client_id: c.clientId,
         client_name: c.clientName,
         application_type: c.applicationType,
+        client_profile: c.clientProfile,
+        access_token_audience: c.accessTokenAudience,
         redirect_uris: c.redirectUris,
         grant_types: c.grantTypes,
         response_types: c.responseTypes,
@@ -2926,6 +2952,7 @@ export const createApp = (options: AppOptions) => {
     if (client === null || client.tenantId !== tenantId) return context.notFound();
 
     let policy = await clientAuthMethodPolicyRepository.findByClientId(client.id);
+    const claims = await accessTokenClaimsRepository.listByClientId(client.id);
     if (policy === null) {
       // Synthesize and persist default all-disabled policy on first access (handles pre-migration clients)
       policy = {
@@ -2948,6 +2975,9 @@ export const createApp = (options: AppOptions) => {
       client_id: client.clientId,
       client_name: client.clientName,
       application_type: client.applicationType,
+      client_profile: client.clientProfile,
+      access_token_audience: client.accessTokenAudience,
+      access_token_custom_claims_count: claims.length,
       redirect_uris: client.redirectUris,
       grant_types: client.grantTypes,
       response_types: client.responseTypes,
@@ -3085,7 +3115,12 @@ export const createApp = (options: AppOptions) => {
       return context.json({ error: "invalid_request" }, 400);
     }
     try {
-      const result = await registerClient({ clientRepository, input: payload, issuerContext });
+      const result = await registerClientFromAdmin({
+        accessTokenClaimsRepository,
+        clientRepository,
+        input: payload,
+        issuerContext
+      });
       const tokenHash = await sha256Base64Url(result.registrationAccessToken);
       try {
         await registrationAccessTokenRepository.store({
@@ -3118,7 +3153,9 @@ export const createApp = (options: AppOptions) => {
           targetId: result.client.clientId,
           payload: {
             application_type: result.client.applicationType,
-            client_name: result.client.clientName
+            client_name: result.client.clientName,
+            client_profile: result.client.clientProfile,
+            access_token_audience: result.client.accessTokenAudience
           },
           occurredAt: new Date().toISOString()
         });
@@ -3140,7 +3177,9 @@ export const createApp = (options: AppOptions) => {
           grant_types: result.client.grantTypes,
           response_types: result.client.responseTypes,
           trust_level: result.client.trustLevel,
-          consent_policy: result.client.consentPolicy
+          consent_policy: result.client.consentPolicy,
+          client_profile: result.client.clientProfile,
+          access_token_audience: result.client.accessTokenAudience
         },
         201
       );
