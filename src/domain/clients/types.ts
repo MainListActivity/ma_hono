@@ -9,6 +9,8 @@ export type ClientTrustLevel = "first_party_trusted" | "third_party";
 
 export type ClientConsentPolicy = "skip" | "require";
 
+export type ClientProfile = "spa" | "web" | "native";
+
 export interface ClientAuthMethodPolicy {
   clientId: string; // oidc_clients.id (UUID), NOT the OAuth client_id string
   tenantId: string;
@@ -35,6 +37,8 @@ export interface Client {
   clientSecretHash: string | null;
   trustLevel: ClientTrustLevel;
   consentPolicy: ClientConsentPolicy;
+  clientProfile: ClientProfile;
+  accessTokenAudience: string | null;
   authMethodPolicy?: ClientAuthMethodPolicy;
 }
 
