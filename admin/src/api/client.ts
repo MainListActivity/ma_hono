@@ -136,6 +136,9 @@ export interface ClientSummary {
   client_id: string;
   client_name: string;
   application_type: "web" | "native";
+  client_profile: "spa" | "web" | "native";
+  access_token_audience: string | null;
+  access_token_custom_claims_count?: number;
   redirect_uris: string[];
   grant_types: string[];
   response_types: string[];
@@ -210,11 +213,19 @@ export const createClient = async (
   tenantId: string,
   payload: {
     client_name: string;
+    client_profile: "spa" | "web" | "native";
     application_type: "web" | "native";
     redirect_uris: string[];
     token_endpoint_auth_method: string;
     grant_types: string[];
     response_types: string[];
+    access_token_audience?: string;
+    access_token_custom_claims?: {
+      claim_name: string;
+      source_type: "fixed" | "user_field";
+      fixed_value?: string;
+      user_field?: string;
+    }[];
   }
 ) => {
   const res = await checkOk(

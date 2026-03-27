@@ -2912,9 +2912,14 @@ export const createApp = (options: AppOptions) => {
     const clients = await clientRepository.listByTenantId(tenantId);
 
     // Fetch policies for all clients in parallel
-    const policies = await Promise.all(
-      clients.map((c) => clientAuthMethodPolicyRepository.findByClientId(c.id))
-    );
+    const [policies, claimLists] = await Promise.all([
+      Promise.all(
+        clients.map((c) => clientAuthMethodPolicyRepository.findByClientId(c.id))
+      ),
+      Promise.all(
+        clients.map((c) => accessTokenClaimsRepository.listByClientId(c.id))
+      )
+    ]);
 
     return context.json({
       clients: clients.map((c, i) => ({
@@ -2924,6 +2929,7 @@ export const createApp = (options: AppOptions) => {
         application_type: c.applicationType,
         client_profile: c.clientProfile,
         access_token_audience: c.accessTokenAudience,
+        access_token_custom_claims_count: claimLists[i]?.length ?? 0,
         redirect_uris: c.redirectUris,
         grant_types: c.grantTypes,
         response_types: c.responseTypes,

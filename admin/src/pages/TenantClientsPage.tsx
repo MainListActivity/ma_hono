@@ -45,6 +45,29 @@ const monoStyle: React.CSSProperties = {
   whiteSpace: 'nowrap' as const
 };
 
+type ClientProfile = "spa" | "web" | "native";
+type ClaimSourceType = "fixed" | "user_field";
+type ClaimUserField = "id" | "email" | "email_verified" | "username" | "display_name";
+
+interface ClaimEditorRow {
+  id: string;
+  claimName: string;
+  sourceType: ClaimSourceType;
+  fixedValue: string;
+  userField: ClaimUserField;
+}
+
+const userFieldOptions: ClaimUserField[] = [
+  "id",
+  "email",
+  "email_verified",
+  "username",
+  "display_name"
+];
+
+const profileLabel = (profile: ClientProfile) =>
+  profile === "spa" ? "SPA" : profile === "web" ? "Web" : "Native";
+
 // Build a PKCE code_challenge from a verifier (SHA-256 / base64url)
 async function buildPkce(): Promise<{ verifier: string; challenge: string }> {
   const array = new Uint8Array(32);
@@ -278,9 +301,11 @@ export default function TenantClientsPage() {
   // Create modal state
   const [showCreate, setShowCreate] = useState(false);
   const [clientName, setClientName] = useState('');
-  const [appType, setAppType] = useState<'web' | 'native'>('native');
+  const [clientProfile, setClientProfile] = useState<ClientProfile>('web');
   const [redirectUris, setRedirectUris] = useState('');
-  const [authMethod, setAuthMethod] = useState('none');
+  const [authMethod, setAuthMethod] = useState('client_secret_basic');
+  const [accessTokenAudience, setAccessTokenAudience] = useState('');
+  const [customClaims, setCustomClaims] = useState<ClaimEditorRow[]>([]);
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [createdSecret, setCreatedSecret] = useState<{ clientId: string; secret: string | null } | null>(null);
@@ -290,6 +315,22 @@ export default function TenantClientsPage() {
 
   // Auth policy modal state
   const [policyClient, setPolicyClient] = useState<ClientSummary | null>(null);
+
+  const derivedApplicationType: "web" | "native" =
+    clientProfile === "native" ? "native" : "web";
+  const effectiveAuthMethod =
+    clientProfile === "web" ? authMethod : "none";
+
+  const resetCreateForm = () => {
+    setShowCreate(false);
+    setClientName('');
+    setClientProfile('web');
+    setRedirectUris('');
+    setAuthMethod('client_secret_basic');
+    setAccessTokenAudience('');
+    setCustomClaims([]);
+    setFormError(null);
+  };
 
   const load = async () => {
     if (!token || !tenantId) return;
@@ -315,25 +356,53 @@ export default function TenantClientsPage() {
     e.preventDefault();
     setFormError(null);
     const uris = redirectUris.split('\n').map(u => u.trim()).filter(Boolean);
+    const trimmedAudience = accessTokenAudience.trim();
+
     if (!clientName.trim() || uris.length === 0) {
       setFormError("CLIENT NAME AND AT LEAST ONE REDIRECT URI REQUIRED");
       return;
     }
+
+    if (clientProfile === 'spa' && trimmedAudience.length === 0) {
+      setFormError("SPA CLIENTS REQUIRE AN ACCESS TOKEN AUDIENCE");
+      return;
+    }
+
+    for (const claim of customClaims) {
+      if (!claim.claimName.trim()) {
+        setFormError("EVERY CUSTOM CLAIM REQUIRES A CLAIM NAME");
+        return;
+      }
+      if (claim.sourceType === 'fixed' && !claim.fixedValue.trim()) {
+        setFormError("FIXED CLAIMS REQUIRE A VALUE");
+        return;
+      }
+    }
+
     setSubmitting(true);
     try {
       const result = await createClient(token!, tenantId!, {
         client_name: clientName.trim(),
-        application_type: appType,
+        client_profile: clientProfile,
+        application_type: derivedApplicationType,
         redirect_uris: uris,
-        token_endpoint_auth_method: authMethod,
+        token_endpoint_auth_method: effectiveAuthMethod,
         grant_types: ['authorization_code'],
-        response_types: ['code']
+        response_types: ['code'],
+        ...(trimmedAudience ? { access_token_audience: trimmedAudience } : {}),
+        ...(customClaims.length > 0
+          ? {
+              access_token_custom_claims: customClaims.map((claim) => ({
+                claim_name: claim.claimName.trim(),
+                source_type: claim.sourceType,
+                ...(claim.sourceType === 'fixed'
+                  ? { fixed_value: claim.fixedValue.trim() }
+                  : { user_field: claim.userField })
+              }))
+            }
+          : {})
       });
-      setShowCreate(false);
-      setClientName('');
-      setRedirectUris('');
-      setAppType('native');
-      setAuthMethod('none');
+      resetCreateForm();
       if (result.client_secret) {
         setCreatedSecret({ clientId: result.client_id, secret: result.client_secret });
       }
@@ -403,7 +472,7 @@ export default function TenantClientsPage() {
           </div>
         </div>
         <button
-          onClick={() => { setShowCreate(true); setFormError(null); }}
+          onClick={() => { resetCreateForm(); setShowCreate(true); }}
           style={{ ...btnStyle(), padding: '8px 16px', fontSize: '11px', display: 'flex', alignItems: 'center', gap: '6px' }}
           onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = 'rgba(0,229,255,0.08)'; }}
           onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = 'transparent'; }}
@@ -435,23 +504,36 @@ export default function TenantClientsPage() {
           <div style={{ fontSize: '13px' }}>Create a client to start an OIDC authorization flow</div>
         </div>
       ) : (
-        <div style={{ border: '1px solid var(--border)', background: 'var(--bg-surface)', overflow: 'hidden' }}>
+        <div style={{ border: '1px solid var(--border)', background: 'var(--bg-surface)', overflowX: 'auto' }}>
           {/* Table header */}
-          <div style={{ display: 'grid', gridTemplateColumns: '2fr 1.2fr 1fr 1fr 220px', padding: '10px 16px', borderBottom: '1px solid var(--border)', background: 'var(--bg-elevated)' }}>
-            {['CLIENT NAME', 'CLIENT ID', 'TYPE', 'AUTH METHOD', 'ACTIONS'].map(h => (
+          <div style={{ display: 'grid', gridTemplateColumns: '2fr 1.2fr 0.9fr 0.8fr 1fr 220px', padding: '10px 16px', borderBottom: '1px solid var(--border)', background: 'var(--bg-elevated)', minWidth: '960px' }}>
+            {['CLIENT NAME', 'CLIENT ID', 'PROFILE', 'TYPE', 'AUTH METHOD', 'ACTIONS'].map(h => (
               <span key={h} className="font-display" style={{ fontSize: '9px', letterSpacing: '0.15em', color: 'var(--text-dim)', textTransform: 'uppercase' }}>{h}</span>
             ))}
           </div>
 
           {clients.map((c, i) => (
-            <div key={c.id} style={{ display: 'grid', gridTemplateColumns: '2fr 1.2fr 1fr 1fr 220px', padding: '12px 16px', borderBottom: i < clients.length - 1 ? '1px solid var(--border)' : 'none', alignItems: 'center' }}>
+            <div key={c.id} style={{ display: 'grid', gridTemplateColumns: '2fr 1.2fr 0.9fr 0.8fr 1fr 220px', padding: '12px 16px', borderBottom: i < clients.length - 1 ? '1px solid var(--border)' : 'none', alignItems: 'center', minWidth: '960px' }}>
               <div>
                 <div style={{ fontSize: '13px', color: 'var(--text-primary)', marginBottom: '2px' }}>{c.client_name}</div>
                 <div style={{ fontSize: '10px', color: 'var(--text-muted)', fontFamily: "'Space Mono', monospace" }}>
                   {c.redirect_uris.length} redirect URI{c.redirect_uris.length !== 1 ? 's' : ''}
                 </div>
+                {c.access_token_audience && (
+                  <div style={{ fontSize: '10px', color: 'var(--accent-amber, #fbbf24)', fontFamily: "'Space Mono', monospace", marginTop: '4px' }}>
+                    AUD {c.access_token_audience}
+                  </div>
+                )}
               </div>
               <span style={{ ...monoStyle, color: 'var(--accent-cyan)', fontSize: '11px' }}>{c.client_id}</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span style={{ ...monoStyle, fontSize: '11px' }}>{profileLabel(c.client_profile)}</span>
+                {(c.access_token_custom_claims_count ?? 0) > 0 && (
+                  <span style={{ fontSize: '9px', color: 'var(--accent-amber, #fbbf24)', border: '1px solid rgba(251,191,36,0.35)', padding: '2px 6px', fontFamily: "'Space Mono', monospace" }}>
+                    {c.access_token_custom_claims_count} CLAIM{c.access_token_custom_claims_count === 1 ? '' : 'S'}
+                  </span>
+                )}
+              </div>
               <span style={{ ...monoStyle, fontSize: '11px' }}>{c.application_type}</span>
               <span style={{ ...monoStyle, fontSize: '11px' }}>{c.token_endpoint_auth_method}</span>
               <div style={{ display: 'flex', gap: '6px' }}>
@@ -481,7 +563,7 @@ export default function TenantClientsPage() {
 
       {/* Create modal */}
       {showCreate && (
-        <Modal title="NEW OIDC CLIENT" onClose={() => setShowCreate(false)}>
+        <Modal title="NEW OIDC CLIENT" onClose={resetCreateForm}>
           <form onSubmit={handleCreate}>
             {formError && (
               <div style={{ padding: '8px 12px', marginBottom: '16px', background: 'rgba(239,68,68,0.05)', border: '1px solid rgba(239,68,68,0.2)' }}>
@@ -497,25 +579,61 @@ export default function TenantClientsPage() {
             </div>
 
             <div style={{ marginBottom: '14px' }}>
+              <label style={labelStyle}>CLIENT PROFILE</label>
+              <select
+                value={clientProfile}
+                onChange={e => {
+                  const profile = e.target.value as ClientProfile;
+                  setClientProfile(profile);
+                  if (profile === 'web') {
+                    setAuthMethod(current => current === 'none' ? 'client_secret_basic' : current);
+                    return;
+                  }
+                  setAuthMethod('none');
+                }}
+                style={{ ...inputStyle, cursor: 'pointer' }}
+              >
+                <option value="web">web</option>
+                <option value="spa">spa</option>
+                <option value="native">native</option>
+              </select>
+            </div>
+
+            <div style={{ marginBottom: '14px' }}>
               <label style={labelStyle}>APPLICATION TYPE</label>
-              <select value={appType} onChange={e => {
-                const v = e.target.value as 'web' | 'native';
-                setAppType(v);
-                if (v === 'native') setAuthMethod('none');
-                else setAuthMethod('client_secret_basic');
-              }} style={{ ...inputStyle, cursor: 'pointer' }}>
-                <option value="native">native (public client, no secret)</option>
-                <option value="web">web (confidential client)</option>
+              <select value={derivedApplicationType} disabled style={{ ...inputStyle, cursor: 'not-allowed', opacity: 0.7 }}>
+                <option value="web">web</option>
+                <option value="native">native</option>
               </select>
             </div>
 
             <div style={{ marginBottom: '14px' }}>
               <label style={labelStyle}>TOKEN ENDPOINT AUTH METHOD</label>
-              <select value={authMethod} onChange={e => setAuthMethod(e.target.value)} style={{ ...inputStyle, cursor: 'pointer' }}>
-                {appType === 'native' && <option value="none">none</option>}
-                {appType === 'web' && <option value="client_secret_basic">client_secret_basic</option>}
-                {appType === 'web' && <option value="client_secret_post">client_secret_post</option>}
+              <select
+                value={effectiveAuthMethod}
+                onChange={e => setAuthMethod(e.target.value)}
+                disabled={clientProfile !== 'web'}
+                style={{ ...inputStyle, cursor: clientProfile === 'web' ? 'pointer' : 'not-allowed', opacity: clientProfile === 'web' ? 1 : 0.7 }}
+              >
+                {clientProfile !== 'web' && <option value="none">none</option>}
+                {clientProfile === 'web' && <option value="client_secret_basic">client_secret_basic</option>}
+                {clientProfile === 'web' && <option value="client_secret_post">client_secret_post</option>}
               </select>
+            </div>
+
+            <div style={{ marginBottom: '14px' }}>
+              <label style={labelStyle}>
+                ACCESS TOKEN AUDIENCE{clientProfile === 'spa' ? ' (required)' : ''}
+              </label>
+              <input
+                type="text"
+                value={accessTokenAudience}
+                onChange={e => setAccessTokenAudience(e.target.value)}
+                placeholder="https://api.example.com"
+                style={inputStyle}
+                onFocus={e => (e.target.style.borderColor = 'var(--accent-cyan)')}
+                onBlur={e => (e.target.style.borderColor = 'var(--border)')}
+              />
             </div>
 
             <div style={{ marginBottom: '20px' }}>
@@ -529,6 +647,90 @@ export default function TenantClientsPage() {
                 onFocus={e => (e.target.style.borderColor = 'var(--accent-cyan)')}
                 onBlur={e => (e.target.style.borderColor = 'var(--border)')}
               />
+            </div>
+
+            <div style={{ marginBottom: '20px', padding: '14px', border: '1px solid var(--border)', background: 'var(--bg-surface)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
+                <div>
+                  <label style={labelStyle}>CUSTOM ACCESS TOKEN CLAIMS</label>
+                  <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                    Fixed values or user field mappings appended to the access token.
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setCustomClaims((current) => [
+                    ...current,
+                    {
+                      id: crypto.randomUUID(),
+                      claimName: '',
+                      sourceType: 'fixed',
+                      fixedValue: '',
+                      userField: 'email'
+                    }
+                  ])}
+                  style={{ ...btnStyle('var(--accent-amber, #fbbf24)'), padding: '5px 10px' }}
+                >
+                  + CLAIM
+                </button>
+              </div>
+
+              {customClaims.length === 0 ? (
+                <div style={{ fontSize: '11px', color: 'var(--text-dim)', fontFamily: "'Space Mono', monospace" }}>
+                  NO CUSTOM CLAIMS
+                </div>
+              ) : (
+                <div style={{ display: 'grid', gap: '10px' }}>
+                  {customClaims.map((claim) => (
+                    <div key={claim.id} style={{ border: '1px solid var(--border)', padding: '12px', background: 'var(--bg-base)' }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1.3fr 1fr auto', gap: '10px', marginBottom: '10px' }}>
+                        <input
+                          type="text"
+                          value={claim.claimName}
+                          onChange={e => setCustomClaims((current) => current.map((row) => row.id === claim.id ? { ...row, claimName: e.target.value } : row))}
+                          placeholder="claim name"
+                          style={inputStyle}
+                        />
+                        <select
+                          value={claim.sourceType}
+                          onChange={e => setCustomClaims((current) => current.map((row) => row.id === claim.id ? { ...row, sourceType: e.target.value as ClaimSourceType } : row))}
+                          style={{ ...inputStyle, cursor: 'pointer' }}
+                        >
+                          <option value="fixed">fixed value</option>
+                          <option value="user_field">user field</option>
+                        </select>
+                        <button
+                          type="button"
+                          onClick={() => setCustomClaims((current) => current.filter((row) => row.id !== claim.id))}
+                          style={{ ...btnStyle('#ef4444'), padding: '6px 10px' }}
+                        >
+                          REMOVE
+                        </button>
+                      </div>
+
+                      {claim.sourceType === 'fixed' ? (
+                        <input
+                          type="text"
+                          value={claim.fixedValue}
+                          onChange={e => setCustomClaims((current) => current.map((row) => row.id === claim.id ? { ...row, fixedValue: e.target.value } : row))}
+                          placeholder="fixed value"
+                          style={inputStyle}
+                        />
+                      ) : (
+                        <select
+                          value={claim.userField}
+                          onChange={e => setCustomClaims((current) => current.map((row) => row.id === claim.id ? { ...row, userField: e.target.value as ClaimUserField } : row))}
+                          style={{ ...inputStyle, cursor: 'pointer' }}
+                        >
+                          {userFieldOptions.map((option) => (
+                            <option key={option} value={option}>{option}</option>
+                          ))}
+                        </select>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
             <button type="submit" disabled={submitting} style={{ width: '100%', background: 'transparent', border: '1px solid var(--accent-cyan)', color: submitting ? 'var(--text-muted)' : 'var(--accent-cyan)', padding: '10px', fontSize: '11px', fontFamily: "'Space Mono', monospace", letterSpacing: '0.15em', textTransform: 'uppercase', cursor: submitting ? 'not-allowed' : 'pointer' }}>
