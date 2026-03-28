@@ -476,11 +476,30 @@ class D1AccessTokenClaimsRepository implements AccessTokenClaimsRepository {
     clientId: string,
     claims: AccessTokenCustomClaim[]
   ): Promise<void> {
-    await this.db
+    const deleteOp = this.db
       .delete(clientAccessTokenClaims)
       .where(eq(clientAccessTokenClaims.clientId, clientId));
 
-    await this.createMany(claims);
+    if (claims.length === 0) {
+      await deleteOp;
+      return;
+    }
+
+    const insertOp = this.db.insert(clientAccessTokenClaims).values(
+      claims.map((claim) => ({
+        id: claim.id,
+        clientId: claim.clientId,
+        tenantId: claim.tenantId,
+        claimName: claim.claimName,
+        sourceType: claim.sourceType,
+        fixedValue: claim.fixedValue,
+        userField: claim.userField,
+        createdAt: claim.createdAt,
+        updatedAt: claim.updatedAt
+      }))
+    );
+
+    await this.db.batch([deleteOp, insertOp]);
   }
 
   async listByClientId(clientId: string): Promise<AccessTokenCustomClaim[]> {
@@ -488,6 +507,33 @@ class D1AccessTokenClaimsRepository implements AccessTokenClaimsRepository {
       .select()
       .from(clientAccessTokenClaims)
       .where(eq(clientAccessTokenClaims.clientId, clientId));
+
+    return rows.map((row) => ({
+      id: row.id,
+      clientId: row.clientId,
+      tenantId: row.tenantId,
+      claimName: row.claimName,
+      sourceType: row.sourceType as AccessTokenCustomClaim["sourceType"],
+      fixedValue: row.fixedValue,
+      userField: row.userField as AccessTokenCustomClaim["userField"],
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt
+    }));
+  }
+
+  async listByClientIdAndTenantId(
+    clientId: string,
+    tenantId: string
+  ): Promise<AccessTokenCustomClaim[]> {
+    const rows = await this.db
+      .select()
+      .from(clientAccessTokenClaims)
+      .where(
+        and(
+          eq(clientAccessTokenClaims.clientId, clientId),
+          eq(clientAccessTokenClaims.tenantId, tenantId)
+        )
+      );
 
     return rows.map((row) => ({
       id: row.id,

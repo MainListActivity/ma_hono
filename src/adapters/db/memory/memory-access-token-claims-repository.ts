@@ -21,4 +21,13 @@ export class MemoryAccessTokenClaimsRepository
   async listByClientId(clientId: string): Promise<AccessTokenCustomClaim[]> {
     return this.claims.filter((claim) => claim.clientId === clientId);
   }
+
+  async listByClientIdAndTenantId(
+    clientId: string,
+    tenantId: string
+  ): Promise<AccessTokenCustomClaim[]> {
+    return this.claims.filter(
+      (claim) => claim.clientId === clientId && claim.tenantId === tenantId
+    );
+  }
 }

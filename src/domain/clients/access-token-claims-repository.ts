@@ -7,4 +7,8 @@ export interface AccessTokenClaimsRepository {
     claims: AccessTokenCustomClaim[]
   ): Promise<void>;
   listByClientId(clientId: string): Promise<AccessTokenCustomClaim[]>;
+  listByClientIdAndTenantId(
+    clientId: string,
+    tenantId: string
+  ): Promise<AccessTokenCustomClaim[]>;
 }

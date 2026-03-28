@@ -135,6 +135,10 @@ class EmptyAccessTokenClaimsRepository implements AccessTokenClaimsRepository {
   async listByClientId(): Promise<AccessTokenCustomClaim[]> {
     return [];
   }
+
+  async listByClientIdAndTenantId(): Promise<AccessTokenCustomClaim[]> {
+    return [];
+  }
 }
 
 class EmptyLoginChallengeRepository implements LoginChallengeRepository {

@@ -52,12 +52,12 @@ export const buildAccessTokenClaims = ({
   clientId: string;
   extraClaims?: Record<string, unknown>;
 }): AccessTokenClaims => ({
+  ...extraClaims,
   iss: issuer,
   sub: userId,
   aud: audience,
   client_id: clientId,
   iat: nowSeconds,
   exp: nowSeconds + 60 * 60,
-  scope,
-  ...extraClaims
+  scope
 });

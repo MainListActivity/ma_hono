@@ -72,7 +72,7 @@ export const adminClientRegistrationSchema = z
       "none"
     ]),
     access_token_audience: z.string().min(1).optional(),
-    access_token_custom_claims: z.array(customClaimSchema).optional()
+    access_token_custom_claims: z.array(customClaimSchema).max(20).optional()
   })
   .superRefine((value, ctx) => {
     if (value.client_profile === "spa") {
@@ -97,6 +97,21 @@ export const adminClientRegistrationSchema = z
           code: z.ZodIssueCode.custom,
           message: "SPA clients require an access_token_audience",
           path: ["access_token_audience"]
+        });
+      }
+    }
+
+    if (value.access_token_custom_claims) {
+      const names = value.access_token_custom_claims.map((c) => c.claim_name);
+      const duplicates = names.filter(
+        (name, index) => names.indexOf(name) !== index
+      );
+
+      for (const dup of new Set(duplicates)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `duplicate claim name "${dup}"`,
+          path: ["access_token_custom_claims"]
         });
       }
     }

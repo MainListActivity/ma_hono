@@ -351,8 +351,9 @@ export const exchangeAuthorizationCode = async ({
 
   try {
     const client = authenticatedClient.client;
-    const customClaimConfigs = await accessTokenClaimsRepository.listByClientId(
-      client.id
+    const customClaimConfigs = await accessTokenClaimsRepository.listByClientIdAndTenantId(
+      client.id,
+      codeRecord.tenantId
     );
     let extraClaims: Record<string, unknown> = {};
 
