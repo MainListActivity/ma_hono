@@ -14,6 +14,7 @@ import {
 } from "../api/client";
 import { useAuth } from "../App";
 import Modal from "../components/Modal";
+import AgentContextModal from "../components/AgentContextModal";
 
 const inputStyle: React.CSSProperties = {
   width: '100%',
@@ -329,6 +330,9 @@ export default function TenantClientsPage() {
   const [editError, setEditError] = useState<string | null>(null);
   const [editSubmitting, setEditSubmitting] = useState(false);
 
+  // Agent context modal state
+  const [agentClient, setAgentClient] = useState<ClientSummary | null>(null);
+
   // Delete state
   const [deletingClientId, setDeletingClientId] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<ClientSummary | null>(null);
@@ -619,14 +623,14 @@ export default function TenantClientsPage() {
       ) : (
         <div style={{ border: '1px solid var(--border)', background: 'var(--bg-surface)', overflowX: 'auto' }}>
           {/* Table header */}
-          <div style={{ display: 'grid', gridTemplateColumns: '2fr 1.2fr 0.9fr 0.8fr 1fr 320px', padding: '10px 16px', borderBottom: '1px solid var(--border)', background: 'var(--bg-elevated)', minWidth: '1060px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '2fr 1.2fr 0.9fr 0.8fr 1fr 390px', padding: '10px 16px', borderBottom: '1px solid var(--border)', background: 'var(--bg-elevated)', minWidth: '1130px' }}>
             {['CLIENT NAME', 'CLIENT ID', 'PROFILE', 'TYPE', 'AUTH METHOD', 'ACTIONS'].map(h => (
               <span key={h} className="font-display" style={{ fontSize: '9px', letterSpacing: '0.15em', color: 'var(--text-dim)', textTransform: 'uppercase' }}>{h}</span>
             ))}
           </div>
 
           {clients.map((c, i) => (
-            <div key={c.id} style={{ display: 'grid', gridTemplateColumns: '2fr 1.2fr 0.9fr 0.8fr 1fr 320px', padding: '12px 16px', borderBottom: i < clients.length - 1 ? '1px solid var(--border)' : 'none', alignItems: 'center', minWidth: '1060px' }}>
+            <div key={c.id} style={{ display: 'grid', gridTemplateColumns: '2fr 1.2fr 0.9fr 0.8fr 1fr 390px', padding: '12px 16px', borderBottom: i < clients.length - 1 ? '1px solid var(--border)' : 'none', alignItems: 'center', minWidth: '1130px' }}>
               <div>
                 <div style={{ fontSize: '13px', color: 'var(--text-primary)', marginBottom: '2px' }}>{c.client_name}</div>
                 <div style={{ fontSize: '10px', color: 'var(--text-muted)', fontFamily: "'Space Mono', monospace" }}>
@@ -675,6 +679,14 @@ export default function TenantClientsPage() {
                   onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = 'transparent'; }}
                 >
                   EDIT
+                </button>
+                <button
+                  onClick={() => setAgentClient(c)}
+                  style={{ ...btnStyle('var(--accent-blue, #3b82f6)'), padding: '5px 10px' }}
+                  onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = 'rgba(59,130,246,0.08)'; }}
+                  onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = 'transparent'; }}
+                >
+                  AGENT
                 </button>
                 <button
                   onClick={() => setConfirmDelete(c)}
@@ -1126,6 +1138,15 @@ export default function TenantClientsPage() {
             </button>
           </form>
         </Modal>
+      )}
+
+      {/* Agent context modal */}
+      {agentClient && tenant && (
+        <AgentContextModal
+          tenant={tenant}
+          client={agentClient}
+          onClose={() => setAgentClient(null)}
+        />
       )}
     </div>
   );
