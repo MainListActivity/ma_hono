@@ -355,8 +355,9 @@ describe("end-to-end login flows", () => {
       headers: { "content-type": "application/x-www-form-urlencoded" },
       method: "POST"
     });
-    expect(passwordResponse.status).toBe(302);
-    const callbackUrl = new URL(passwordResponse.headers.get("location") ?? "");
+    expect(passwordResponse.status).toBe(200);
+    const passwordBody = (await passwordResponse.json()) as { redirect_uri: string };
+    const callbackUrl = new URL(passwordBody.redirect_uri);
     const code = callbackUrl.searchParams.get("code");
     expect(code).toBeTruthy();
     expect(callbackUrl.searchParams.get("state")).toBe("test-state");
@@ -418,8 +419,9 @@ describe("end-to-end login flows", () => {
       headers: { "content-type": "application/x-www-form-urlencoded" },
       method: "POST"
     });
-    expect(consumeResponse.status).toBe(302);
-    const callbackUrl = new URL(consumeResponse.headers.get("location") ?? "");
+    expect(consumeResponse.status).toBe(200);
+    const consumeBody = (await consumeResponse.json()) as { redirect_uri: string };
+    const callbackUrl = new URL(consumeBody.redirect_uri);
     const code = callbackUrl.searchParams.get("code");
     expect(code).toBeTruthy();
 
@@ -496,8 +498,9 @@ describe("end-to-end login flows", () => {
       headers: { "content-type": "application/json" },
       method: "POST"
     });
-    expect(loginFinish.status).toBe(302);
-    const callbackUrl = new URL(loginFinish.headers.get("location") ?? "");
+    expect(loginFinish.status).toBe(200);
+    const loginFinishBody = (await loginFinish.json()) as { redirect_uri: string };
+    const callbackUrl = new URL(loginFinishBody.redirect_uri);
     const code = callbackUrl.searchParams.get("code");
     expect(code).toBeTruthy();
 

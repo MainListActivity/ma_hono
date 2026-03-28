@@ -293,8 +293,9 @@ describe("magic link login", () => {
       }
     );
 
-    expect(consumeResponse.status).toBe(302);
-    const location = new URL(consumeResponse.headers.get("location") ?? "");
+    expect(consumeResponse.status).toBe(200);
+    const consumeBody = (await consumeResponse.json()) as { redirect_uri: string };
+    const location = new URL(consumeBody.redirect_uri);
     expect(location.origin + location.pathname).toBe("https://app.acme.test/callback");
     expect(location.searchParams.get("state")).toBe("opaque-state");
     expect(location.searchParams.get("code")).toEqual(expect.any(String));
@@ -411,7 +412,7 @@ describe("magic link login", () => {
         method: "POST"
       }
     );
-    expect(firstConsume.status).toBe(302);
+    expect(firstConsume.status).toBe(200);
 
     const secondConsume = await app.request(
       "https://idp.example.test/login/acme/magic-link/consume",

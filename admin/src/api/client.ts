@@ -213,7 +213,6 @@ export const registerUser = async (
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
-    redirect: "manual"
   });
 };
 
@@ -312,8 +311,7 @@ export const loginWithPassword = async (
   return fetch(`${BASE_URL}/login/${tenantSlug}/password`, {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
-    body,
-    redirect: "manual"
+    body
   });
 };
 
@@ -340,7 +338,6 @@ export const consumeMagicLink = async (
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
     body,
-    redirect: "manual"
   });
 };
 
@@ -379,7 +376,6 @@ export const finishPasskeyLogin = async (
         signature: toBase64(assertion.signature)
       }
     }),
-    redirect: "manual"
   });
 };
 
@@ -400,7 +396,6 @@ export const mfaTotpVerify = async (
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ login_challenge: loginChallenge, code }),
-    redirect: "manual"
   });
 
 export const mfaPasskeyStart = async (
@@ -443,7 +438,6 @@ export const mfaPasskeyFinish = async (
         signature: toBase64(assertion.signature)
       }
     }),
-    redirect: "manual"
   });
 };
 
@@ -481,5 +475,4 @@ export const mfaEnrollFinish = async (
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ login_challenge: loginChallenge, code }),
-    redirect: "manual"
   });

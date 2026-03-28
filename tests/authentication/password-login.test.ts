@@ -270,8 +270,9 @@ describe("password login", () => {
       method: "POST"
     });
 
-    expect(response.status).toBe(302);
-    const location = new URL(response.headers.get("location") ?? "");
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { redirect_uri: string };
+    const location = new URL(body.redirect_uri);
 
     expect(location.origin + location.pathname).toBe("https://app.acme.test/callback");
     expect(location.searchParams.get("state")).toBe("opaque-state");
@@ -447,8 +448,9 @@ describe("password login", () => {
       method: "POST"
     });
 
-    expect(response.status).toBe(302);
-    const location = new URL(response.headers.get("location") ?? "");
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { redirect_uri: string };
+    const location = new URL(body.redirect_uri);
 
     expect(location.origin + location.pathname).toBe("https://app.acme.test/consent");
     expect(location.searchParams.get("error")).toBe("consent_required");
@@ -528,7 +530,7 @@ describe("password login", () => {
       },
       method: "POST"
     });
-    expect(firstResponse.status).toBe(302);
+    expect(firstResponse.status).toBe(200);
 
     const secondResponse = await app.request("https://idp.example.test/login/acme/password", {
       body: new URLSearchParams({
@@ -855,7 +857,7 @@ describe("password login", () => {
       },
       method: "POST"
     });
-    expect(successResponse.status).toBe(302);
+    expect(successResponse.status).toBe(200);
 
     const failureResponse = await app.request("https://idp.example.test/login/acme/password", {
       body: new URLSearchParams({

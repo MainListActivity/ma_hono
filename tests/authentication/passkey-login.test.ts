@@ -305,8 +305,9 @@ describe("passkey enrollment and login", () => {
       }
     );
 
-    expect(loginFinish.status).toBe(302);
-    const location = new URL(loginFinish.headers.get("location") ?? "");
+    expect(loginFinish.status).toBe(200);
+    const loginFinishBody = (await loginFinish.json()) as { redirect_uri: string };
+    const location = new URL(loginFinishBody.redirect_uri);
     expect(location.origin + location.pathname).toBe("https://app.acme.test/callback");
     expect(location.searchParams.get("code")).toEqual(expect.any(String));
     expect(loginFinish.headers.get("set-cookie")).toMatch(/^user_session=/);

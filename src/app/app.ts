@@ -893,14 +893,16 @@ export const createApp = (options: AppOptions) => {
       });
 
       if (authorizationResult.shouldRedirect && authorizationResult.redirectUri !== null) {
-        return context.redirect(
-          buildClientErrorRedirectUrl({
-            error: authorizationResult.error,
-            errorDescription: authorizationResult.errorDescription,
-            redirectUri: authorizationResult.redirectUri,
-            state: authorizationResult.state
-          }),
-          302
+        return context.json(
+          {
+            redirect_uri: buildClientErrorRedirectUrl({
+              error: authorizationResult.error,
+              errorDescription: authorizationResult.errorDescription,
+              redirectUri: authorizationResult.redirectUri,
+              state: authorizationResult.state
+            })
+          },
+          200
         );
       }
 
@@ -929,13 +931,15 @@ export const createApp = (options: AppOptions) => {
         }
       });
 
-      return context.redirect(
-        buildClientErrorRedirectUrl({
-          error: "consent_required",
-          redirectUri: authorizationResult.request.redirectUri,
-          state: authorizationResult.request.state
-        }),
-        302
+      return context.json(
+        {
+          redirect_uri: buildClientErrorRedirectUrl({
+            error: "consent_required",
+            redirectUri: authorizationResult.request.redirectUri,
+            state: authorizationResult.request.state
+          })
+        },
+        200
       );
     }
 
@@ -967,7 +971,7 @@ export const createApp = (options: AppOptions) => {
       redirectUrl.searchParams.set("state", authorizationResult.request.state);
     }
 
-    return context.redirect(redirectUrl.toString(), 302);
+    return context.json({ redirect_uri: redirectUrl.toString() }, 200);
   };
 
   const handleMagicLinkRequest = async (context: Context) => {
@@ -1138,14 +1142,16 @@ export const createApp = (options: AppOptions) => {
       });
 
       if (authorizationResult.shouldRedirect && authorizationResult.redirectUri !== null) {
-        return context.redirect(
-          buildClientErrorRedirectUrl({
-            error: authorizationResult.error,
-            errorDescription: authorizationResult.errorDescription,
-            redirectUri: authorizationResult.redirectUri,
-            state: authorizationResult.state
-          }),
-          302
+        return context.json(
+          {
+            redirect_uri: buildClientErrorRedirectUrl({
+              error: authorizationResult.error,
+              errorDescription: authorizationResult.errorDescription,
+              redirectUri: authorizationResult.redirectUri,
+              state: authorizationResult.state
+            })
+          },
+          200
         );
       }
 
@@ -1166,13 +1172,15 @@ export const createApp = (options: AppOptions) => {
         }
       });
 
-      return context.redirect(
-        buildClientErrorRedirectUrl({
-          error: "consent_required",
-          redirectUri: authorizationResult.request.redirectUri,
-          state: authorizationResult.request.state
-        }),
-        302
+      return context.json(
+        {
+          redirect_uri: buildClientErrorRedirectUrl({
+            error: "consent_required",
+            redirectUri: authorizationResult.request.redirectUri,
+            state: authorizationResult.request.state
+          })
+        },
+        200
       );
     }
 
@@ -1198,7 +1206,7 @@ export const createApp = (options: AppOptions) => {
       redirectUrl.searchParams.set("state", authorizationResult.request.state);
     }
 
-    return context.redirect(redirectUrl.toString(), 302);
+    return context.json({ redirect_uri: redirectUrl.toString() }, 200);
   };
 
   const handlePasskeyEnrollStart = async (context: Context) => {
@@ -1458,14 +1466,16 @@ export const createApp = (options: AppOptions) => {
       });
 
       if (authorizationResult.shouldRedirect && authorizationResult.redirectUri !== null) {
-        return context.redirect(
-          buildClientErrorRedirectUrl({
-            error: authorizationResult.error,
-            errorDescription: authorizationResult.errorDescription,
-            redirectUri: authorizationResult.redirectUri,
-            state: authorizationResult.state
-          }),
-          302
+        return context.json(
+          {
+            redirect_uri: buildClientErrorRedirectUrl({
+              error: authorizationResult.error,
+              errorDescription: authorizationResult.errorDescription,
+              redirectUri: authorizationResult.redirectUri,
+              state: authorizationResult.state
+            })
+          },
+          200
         );
       }
 
@@ -1486,13 +1496,15 @@ export const createApp = (options: AppOptions) => {
         }
       });
 
-      return context.redirect(
-        buildClientErrorRedirectUrl({
-          error: "consent_required",
-          redirectUri: authorizationResult.request.redirectUri,
-          state: authorizationResult.request.state
-        }),
-        302
+      return context.json(
+        {
+          redirect_uri: buildClientErrorRedirectUrl({
+            error: "consent_required",
+            redirectUri: authorizationResult.request.redirectUri,
+            state: authorizationResult.request.state
+          })
+        },
+        200
       );
     }
 
@@ -1518,7 +1530,7 @@ export const createApp = (options: AppOptions) => {
       redirectUrl.searchParams.set("state", authorizationResult.request.state);
     }
 
-    return context.redirect(redirectUrl.toString(), 302);
+    return context.json({ redirect_uri: redirectUrl.toString() }, 200);
   };
 
   // Shared helper called after any MFA step succeeds.
@@ -1583,14 +1595,16 @@ export const createApp = (options: AppOptions) => {
       });
 
       if (authorizationResult.shouldRedirect && authorizationResult.redirectUri !== null) {
-        return context.redirect(
-          buildClientErrorRedirectUrl({
-            error: authorizationResult.error,
-            errorDescription: authorizationResult.errorDescription,
-            redirectUri: authorizationResult.redirectUri,
-            state: authorizationResult.state
-          }),
-          302
+        return context.json(
+          {
+            redirect_uri: buildClientErrorRedirectUrl({
+              error: authorizationResult.error,
+              errorDescription: authorizationResult.errorDescription,
+              redirectUri: authorizationResult.redirectUri,
+              state: authorizationResult.state
+            })
+          },
+          200
         );
       }
 
@@ -1598,13 +1612,15 @@ export const createApp = (options: AppOptions) => {
     }
 
     if (authorizationResult.kind === "consent_required") {
-      return context.redirect(
-        buildClientErrorRedirectUrl({
-          error: "consent_required",
-          redirectUri: authorizationResult.request.redirectUri,
-          state: authorizationResult.request.state
-        }),
-        302
+      return context.json(
+        {
+          redirect_uri: buildClientErrorRedirectUrl({
+            error: "consent_required",
+            redirectUri: authorizationResult.request.redirectUri,
+            state: authorizationResult.request.state
+          })
+        },
+        200
       );
     }
 
@@ -1630,7 +1646,7 @@ export const createApp = (options: AppOptions) => {
       redirectUrl.searchParams.set("state", authorizationResult.request.state);
     }
 
-    return context.redirect(redirectUrl.toString(), 302);
+    return context.json({ redirect_uri: redirectUrl.toString() }, 200);
   };
 
   const handleMfaTotpVerify = async (context: Context) => {
@@ -2510,14 +2526,16 @@ export const createApp = (options: AppOptions) => {
       });
 
       if (authorizationResult.shouldRedirect && authorizationResult.redirectUri !== null) {
-        return context.redirect(
-          buildClientErrorRedirectUrl({
-            error: authorizationResult.error,
-            errorDescription: authorizationResult.errorDescription,
-            redirectUri: authorizationResult.redirectUri,
-            state: authorizationResult.state
-          }),
-          302
+        return context.json(
+          {
+            redirect_uri: buildClientErrorRedirectUrl({
+              error: authorizationResult.error,
+              errorDescription: authorizationResult.errorDescription,
+              redirectUri: authorizationResult.redirectUri,
+              state: authorizationResult.state
+            })
+          },
+          200
         );
       }
 
@@ -2546,13 +2564,15 @@ export const createApp = (options: AppOptions) => {
         }
       });
 
-      return context.redirect(
-        buildClientErrorRedirectUrl({
-          error: "consent_required",
-          redirectUri: authorizationResult.request.redirectUri,
-          state: authorizationResult.request.state
-        }),
-        302
+      return context.json(
+        {
+          redirect_uri: buildClientErrorRedirectUrl({
+            error: "consent_required",
+            redirectUri: authorizationResult.request.redirectUri,
+            state: authorizationResult.request.state
+          })
+        },
+        200
       );
     }
 
@@ -2577,7 +2597,7 @@ export const createApp = (options: AppOptions) => {
     if (authorizationResult.request.state !== null) {
       redirectUrl.searchParams.set("state", authorizationResult.request.state);
     }
-    return context.redirect(redirectUrl.toString(), 302);
+    return context.json({ redirect_uri: redirectUrl.toString() }, 200);
   });
 
   const tenantToWire = (tenant: Tenant) => ({

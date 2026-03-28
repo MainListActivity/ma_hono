@@ -116,10 +116,6 @@ function RegisterForm({
         ...(username.trim() ? { username: username.trim() } : {}),
         password
       });
-      if (res.status === 302 || res.type === "opaqueredirect") {
-        const location = res.headers.get("location");
-        if (location) { window.location.href = location; return; }
-      }
       if (!res.ok) {
         const body = await res.json().catch(() => ({})) as { error?: string };
         if (body.error === "email_already_exists") {
@@ -129,6 +125,8 @@ function RegisterForm({
         }
         return;
       }
+      const body = await res.json().catch(() => ({})) as { redirect_uri?: string };
+      if (body.redirect_uri) { window.location.href = body.redirect_uri; return; }
     } catch {
       setError("Network error — please try again");
     } finally {
@@ -207,13 +205,6 @@ function PasswordForm({
     setLoading(true);
     try {
       const res = await loginWithPassword(tenantSlug, loginChallenge, username, password);
-      if (res.status === 302 || res.type === "opaqueredirect") {
-        const location = res.headers.get("location");
-        if (location) {
-          window.location.href = location;
-          return;
-        }
-      }
       if (!res.ok) {
         const body = await res.json().catch(() => ({})) as { error?: string };
         setError(body.error ?? "Login failed");
@@ -420,10 +411,6 @@ function PasskeyForm({
       }
 
       const res = await finishPasskeyLogin(tenantSlug, startResult.assertion_session_id, credential);
-      if (res.status === 302 || res.type === "opaqueredirect") {
-        const location = res.headers.get("location");
-        if (location) { window.location.href = location; return; }
-      }
       if (!res.ok) {
         const body = await res.json().catch(() => ({})) as { error?: string };
         setError(body.error ?? "Passkey authentication failed");
@@ -501,10 +488,6 @@ function MfaTotpVerifyView({
     setLoading(true);
     try {
       const res = await mfaTotpVerify(tenantSlug, loginChallenge, code);
-      if (res.status === 302 || res.type === "opaqueredirect") {
-        const location = res.headers.get("location");
-        if (location) { window.location.href = location; return; }
-      }
       const body = await res.json().catch(() => ({})) as {
         error?: string; remaining_attempts?: number; redirect_uri?: string
       };
@@ -572,10 +555,6 @@ function MfaPasskeyStepUpView({
       if (!credential) { setError("No passkey selected"); return; }
       // Pass the raw nonce; mfaPasskeyFinish will SHA-256 hash it before sending to the server
       const res = await mfaPasskeyFinish(tenantSlug, loginChallenge, startResult.challenge, credential);
-      if (res.status === 302 || res.type === "opaqueredirect") {
-        const loc = res.headers.get("location");
-        if (loc) { window.location.href = loc; return; }
-      }
       const body = await res.json().catch(() => ({})) as { error?: string; redirect_uri?: string };
       if (body.redirect_uri) { window.location.href = body.redirect_uri; return; }
       if (body.error === "challenge_invalidated") {
@@ -650,10 +629,6 @@ function MfaEnrollTotpView({
     setError(null); setLoading(true);
     try {
       const res = await mfaEnrollFinish(tenantSlug, loginChallenge, code);
-      if (res.status === 302 || res.type === "opaqueredirect") {
-        const loc = res.headers.get("location");
-        if (loc) { window.location.href = loc; return; }
-      }
       const body = await res.json().catch(() => ({})) as { error?: string; redirect_uri?: string };
       if (body.redirect_uri) { window.location.href = body.redirect_uri; return; }
       if (body.error === "challenge_invalidated") {
@@ -749,13 +724,10 @@ function MagicLinkConsuming({
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    consumeMagicLink(tenantSlug, token).then(res => {
-      if (res.status === 302 || res.type === "opaqueredirect") {
-        const location = res.headers.get("location");
-        if (location) {
-          window.location.href = location;
-          return;
-        }
+    consumeMagicLink(tenantSlug, token).then(async res => {
+      if (res.ok) {
+        const body = await res.json().catch(() => ({})) as { redirect_uri?: string };
+        if (body.redirect_uri) { window.location.href = body.redirect_uri; return; }
       }
       setError("This link has expired or has already been used.");
     }).catch(() => {
