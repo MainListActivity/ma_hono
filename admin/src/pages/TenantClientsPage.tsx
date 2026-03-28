@@ -4,6 +4,8 @@ import {
   getTenant,
   listClients,
   createClient,
+  deleteClient,
+  updateClient,
   getClient,
   updateClientAuthMethodPolicy,
   type TenantSummary,
@@ -316,6 +318,21 @@ export default function TenantClientsPage() {
   // Auth policy modal state
   const [policyClient, setPolicyClient] = useState<ClientSummary | null>(null);
 
+  // Edit modal state
+  const [editClient, setEditClient] = useState<ClientSummary | null>(null);
+  const [editName, setEditName] = useState('');
+  const [editProfile, setEditProfile] = useState<ClientProfile>('web');
+  const [editRedirectUris, setEditRedirectUris] = useState('');
+  const [editAuthMethod, setEditAuthMethod] = useState('');
+  const [editAudience, setEditAudience] = useState('');
+  const [editClaims, setEditClaims] = useState<ClaimEditorRow[]>([]);
+  const [editError, setEditError] = useState<string | null>(null);
+  const [editSubmitting, setEditSubmitting] = useState(false);
+
+  // Delete state
+  const [deletingClientId, setDeletingClientId] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<ClientSummary | null>(null);
+
   const derivedApplicationType: "web" | "native" =
     clientProfile === "native" ? "native" : "web";
   const effectiveAuthMethod =
@@ -435,6 +452,102 @@ export default function TenantClientsPage() {
     }
   };
 
+  const openEditModal = async (c: ClientSummary) => {
+    setEditClient(c);
+    setEditName(c.client_name);
+    setEditProfile(c.client_profile);
+    setEditRedirectUris(c.redirect_uris.join('\n'));
+    setEditAuthMethod(c.token_endpoint_auth_method);
+    setEditAudience(c.access_token_audience ?? '');
+    setEditError(null);
+    setEditSubmitting(false);
+    try {
+      const detail = await getClient(token!, tenantId!, c.client_id);
+      setEditClaims(
+        (detail.access_token_custom_claims ?? []).map((claim) => ({
+          id: crypto.randomUUID(),
+          claimName: claim.claim_name,
+          sourceType: claim.source_type as ClaimSourceType,
+          fixedValue: claim.fixed_value ?? '',
+          userField: (claim.user_field ?? 'email') as ClaimUserField
+        }))
+      );
+    } catch {
+      setEditClaims([]);
+    }
+  };
+
+  const handleEdit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setEditError(null);
+    if (!editClient) return;
+
+    const uris = editRedirectUris.split('\n').map(u => u.trim()).filter(Boolean);
+    const trimmedAudience = editAudience.trim();
+
+    if (!editName.trim() || uris.length === 0) {
+      setEditError("CLIENT NAME AND AT LEAST ONE REDIRECT URI REQUIRED");
+      return;
+    }
+
+    if (editProfile === 'spa' && trimmedAudience.length === 0) {
+      setEditError("SPA CLIENTS REQUIRE AN ACCESS TOKEN AUDIENCE");
+      return;
+    }
+
+    for (const claim of editClaims) {
+      if (!claim.claimName.trim()) {
+        setEditError("EVERY CUSTOM CLAIM REQUIRES A CLAIM NAME");
+        return;
+      }
+      if (claim.sourceType === 'fixed' && !claim.fixedValue.trim()) {
+        setEditError("FIXED CLAIMS REQUIRE A VALUE");
+        return;
+      }
+    }
+
+    const editDerivedAppType: "web" | "native" = editProfile === "native" ? "native" : "web";
+    const editEffectiveAuth = editProfile === "web" ? editAuthMethod : "none";
+
+    setEditSubmitting(true);
+    try {
+      await updateClient(token!, tenantId!, editClient.client_id, {
+        client_name: editName.trim(),
+        client_profile: editProfile,
+        application_type: editDerivedAppType,
+        redirect_uris: uris,
+        token_endpoint_auth_method: editEffectiveAuth,
+        access_token_audience: trimmedAudience || null,
+        access_token_custom_claims: editClaims.map((claim) => ({
+          claim_name: claim.claimName.trim(),
+          source_type: claim.sourceType,
+          ...(claim.sourceType === 'fixed'
+            ? { fixed_value: claim.fixedValue.trim() }
+            : { user_field: claim.userField })
+        }))
+      });
+      setEditClient(null);
+      await load();
+    } catch {
+      setEditError("FAILED TO UPDATE CLIENT");
+    } finally {
+      setEditSubmitting(false);
+    }
+  };
+
+  const handleDelete = async (c: ClientSummary) => {
+    setDeletingClientId(c.client_id);
+    try {
+      await deleteClient(token!, tenantId!, c.client_id);
+      setConfirmDelete(null);
+      await load();
+    } catch {
+      alert('Failed to delete client');
+    } finally {
+      setDeletingClientId(null);
+    }
+  };
+
   const btnStyle = (accent = 'var(--accent-cyan)'): React.CSSProperties => ({
     background: 'transparent',
     border: `1px solid ${accent}`,
@@ -506,14 +619,14 @@ export default function TenantClientsPage() {
       ) : (
         <div style={{ border: '1px solid var(--border)', background: 'var(--bg-surface)', overflowX: 'auto' }}>
           {/* Table header */}
-          <div style={{ display: 'grid', gridTemplateColumns: '2fr 1.2fr 0.9fr 0.8fr 1fr 220px', padding: '10px 16px', borderBottom: '1px solid var(--border)', background: 'var(--bg-elevated)', minWidth: '960px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '2fr 1.2fr 0.9fr 0.8fr 1fr 320px', padding: '10px 16px', borderBottom: '1px solid var(--border)', background: 'var(--bg-elevated)', minWidth: '1060px' }}>
             {['CLIENT NAME', 'CLIENT ID', 'PROFILE', 'TYPE', 'AUTH METHOD', 'ACTIONS'].map(h => (
               <span key={h} className="font-display" style={{ fontSize: '9px', letterSpacing: '0.15em', color: 'var(--text-dim)', textTransform: 'uppercase' }}>{h}</span>
             ))}
           </div>
 
           {clients.map((c, i) => (
-            <div key={c.id} style={{ display: 'grid', gridTemplateColumns: '2fr 1.2fr 0.9fr 0.8fr 1fr 220px', padding: '12px 16px', borderBottom: i < clients.length - 1 ? '1px solid var(--border)' : 'none', alignItems: 'center', minWidth: '960px' }}>
+            <div key={c.id} style={{ display: 'grid', gridTemplateColumns: '2fr 1.2fr 0.9fr 0.8fr 1fr 320px', padding: '12px 16px', borderBottom: i < clients.length - 1 ? '1px solid var(--border)' : 'none', alignItems: 'center', minWidth: '1060px' }}>
               <div>
                 <div style={{ fontSize: '13px', color: 'var(--text-primary)', marginBottom: '2px' }}>{c.client_name}</div>
                 <div style={{ fontSize: '10px', color: 'var(--text-muted)', fontFamily: "'Space Mono', monospace" }}>
@@ -536,7 +649,7 @@ export default function TenantClientsPage() {
               </div>
               <span style={{ ...monoStyle, fontSize: '11px' }}>{c.application_type}</span>
               <span style={{ ...monoStyle, fontSize: '11px' }}>{c.token_endpoint_auth_method}</span>
-              <div style={{ display: 'flex', gap: '6px' }}>
+              <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
                 <button
                   onClick={() => handleTestLogin(c)}
                   disabled={testingClientId === c.client_id}
@@ -554,6 +667,22 @@ export default function TenantClientsPage() {
                   onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = 'transparent'; }}
                 >
                   AUTH
+                </button>
+                <button
+                  onClick={() => openEditModal(c)}
+                  style={{ ...btnStyle('var(--accent-cyan)'), padding: '5px 10px' }}
+                  onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = 'rgba(0,229,255,0.08)'; }}
+                  onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = 'transparent'; }}
+                >
+                  EDIT
+                </button>
+                <button
+                  onClick={() => setConfirmDelete(c)}
+                  style={{ ...btnStyle('#ef4444'), padding: '5px 10px' }}
+                  onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = 'rgba(239,68,68,0.08)'; }}
+                  onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = 'transparent'; }}
+                >
+                  DEL
                 </button>
               </div>
             </div>
@@ -775,6 +904,227 @@ export default function TenantClientsPage() {
           <button onClick={() => setCreatedSecret(null)} style={{ width: '100%', background: 'transparent', border: '1px solid var(--accent-cyan)', color: 'var(--accent-cyan)', padding: '10px', fontSize: '11px', fontFamily: "'Space Mono', monospace", letterSpacing: '0.15em', textTransform: 'uppercase', cursor: 'pointer' }}>
             I HAVE SAVED THE SECRET
           </button>
+        </Modal>
+      )}
+
+      {/* Delete confirmation modal */}
+      {confirmDelete && (
+        <Modal title="DELETE CLIENT" onClose={() => setConfirmDelete(null)}>
+          <div style={{ marginBottom: '16px', padding: '10px 14px', background: 'rgba(239,68,68,0.05)', border: '1px solid rgba(239,68,68,0.3)' }}>
+            <span className="font-display" style={{ fontSize: '9px', letterSpacing: '0.12em', color: '#ef4444' }}>
+              THIS ACTION CANNOT BE UNDONE
+            </span>
+          </div>
+          <div style={{ marginBottom: '16px', fontSize: '13px', color: 'var(--text-secondary)' }}>
+            Delete <strong style={{ color: 'var(--text-primary)' }}>{confirmDelete.client_name}</strong> and all associated
+            configuration including auth method policies and custom access token claims?
+          </div>
+          <div style={{ marginBottom: '20px' }}>
+            <label style={labelStyle}>CLIENT ID</label>
+            <div style={{ ...monoStyle, color: 'var(--accent-cyan)', fontSize: '12px', padding: '8px 12px', background: 'var(--bg-base)', border: '1px solid var(--border)' }}>
+              {confirmDelete.client_id}
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: '10px' }}>
+            <button
+              onClick={() => setConfirmDelete(null)}
+              style={{ flex: 1, background: 'transparent', border: '1px solid var(--border)', color: 'var(--text-muted)', padding: '10px', fontSize: '11px', fontFamily: "'Space Mono', monospace", letterSpacing: '0.15em', textTransform: 'uppercase', cursor: 'pointer' }}
+            >
+              CANCEL
+            </button>
+            <button
+              onClick={() => handleDelete(confirmDelete)}
+              disabled={deletingClientId === confirmDelete.client_id}
+              style={{ flex: 1, background: 'rgba(239,68,68,0.1)', border: '1px solid #ef4444', color: '#ef4444', padding: '10px', fontSize: '11px', fontFamily: "'Space Mono', monospace", letterSpacing: '0.15em', textTransform: 'uppercase', cursor: deletingClientId === confirmDelete.client_id ? 'not-allowed' : 'pointer' }}
+            >
+              {deletingClientId === confirmDelete.client_id ? 'DELETING...' : 'DELETE'}
+            </button>
+          </div>
+        </Modal>
+      )}
+
+      {/* Edit client modal */}
+      {editClient && (
+        <Modal title="EDIT OIDC CLIENT" onClose={() => setEditClient(null)}>
+          <form onSubmit={handleEdit}>
+            {editError && (
+              <div style={{ padding: '8px 12px', marginBottom: '16px', background: 'rgba(239,68,68,0.05)', border: '1px solid rgba(239,68,68,0.2)' }}>
+                <span className="font-display" style={{ fontSize: '10px', color: '#ef4444', letterSpacing: '0.08em' }}>✕ {editError}</span>
+              </div>
+            )}
+
+            <div style={{ marginBottom: '10px' }}>
+              <label style={labelStyle}>CLIENT ID</label>
+              <div style={{ ...monoStyle, color: 'var(--accent-cyan)', fontSize: '12px', padding: '8px 12px', background: 'var(--bg-base)', border: '1px solid var(--border)' }}>
+                {editClient.client_id}
+              </div>
+            </div>
+
+            <div style={{ marginBottom: '14px' }}>
+              <label style={labelStyle}>CLIENT NAME</label>
+              <input type="text" value={editName} onChange={e => setEditName(e.target.value)} style={inputStyle}
+                onFocus={e => (e.target.style.borderColor = 'var(--accent-cyan)')}
+                onBlur={e => (e.target.style.borderColor = 'var(--border)')} />
+            </div>
+
+            <div style={{ marginBottom: '14px' }}>
+              <label style={labelStyle}>CLIENT PROFILE</label>
+              <select
+                value={editProfile}
+                onChange={e => {
+                  const profile = e.target.value as ClientProfile;
+                  setEditProfile(profile);
+                  if (profile === 'web') {
+                    setEditAuthMethod(current => current === 'none' ? 'client_secret_basic' : current);
+                    return;
+                  }
+                  setEditAuthMethod('none');
+                }}
+                style={{ ...inputStyle, cursor: 'pointer' }}
+              >
+                <option value="web">web</option>
+                <option value="spa">spa</option>
+                <option value="native">native</option>
+              </select>
+            </div>
+
+            <div style={{ marginBottom: '14px' }}>
+              <label style={labelStyle}>APPLICATION TYPE</label>
+              <select value={editProfile === "native" ? "native" : "web"} disabled style={{ ...inputStyle, cursor: 'not-allowed', opacity: 0.7 }}>
+                <option value="web">web</option>
+                <option value="native">native</option>
+              </select>
+            </div>
+
+            <div style={{ marginBottom: '14px' }}>
+              <label style={labelStyle}>TOKEN ENDPOINT AUTH METHOD</label>
+              <select
+                value={editProfile === 'web' ? editAuthMethod : 'none'}
+                onChange={e => setEditAuthMethod(e.target.value)}
+                disabled={editProfile !== 'web'}
+                style={{ ...inputStyle, cursor: editProfile === 'web' ? 'pointer' : 'not-allowed', opacity: editProfile === 'web' ? 1 : 0.7 }}
+              >
+                {editProfile !== 'web' && <option value="none">none</option>}
+                {editProfile === 'web' && <option value="client_secret_basic">client_secret_basic</option>}
+                {editProfile === 'web' && <option value="client_secret_post">client_secret_post</option>}
+              </select>
+            </div>
+
+            <div style={{ marginBottom: '14px' }}>
+              <label style={labelStyle}>
+                ACCESS TOKEN AUDIENCE{editProfile === 'spa' ? ' (required)' : ''}
+              </label>
+              <input
+                type="text"
+                value={editAudience}
+                onChange={e => setEditAudience(e.target.value)}
+                placeholder="https://api.example.com"
+                style={inputStyle}
+                onFocus={e => (e.target.style.borderColor = 'var(--accent-cyan)')}
+                onBlur={e => (e.target.style.borderColor = 'var(--border)')}
+              />
+            </div>
+
+            <div style={{ marginBottom: '20px' }}>
+              <label style={labelStyle}>REDIRECT URIS (one per line)</label>
+              <textarea
+                value={editRedirectUris}
+                onChange={e => setEditRedirectUris(e.target.value)}
+                rows={3}
+                style={{ ...inputStyle, resize: 'vertical' as const, lineHeight: '1.5' }}
+                onFocus={e => (e.target.style.borderColor = 'var(--accent-cyan)')}
+                onBlur={e => (e.target.style.borderColor = 'var(--border)')}
+              />
+            </div>
+
+            <div style={{ marginBottom: '20px', padding: '14px', border: '1px solid var(--border)', background: 'var(--bg-surface)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
+                <div>
+                  <label style={labelStyle}>CUSTOM ACCESS TOKEN CLAIMS</label>
+                  <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                    Fixed values or user field mappings appended to the access token.
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setEditClaims((current) => [
+                    ...current,
+                    {
+                      id: crypto.randomUUID(),
+                      claimName: '',
+                      sourceType: 'fixed',
+                      fixedValue: '',
+                      userField: 'email'
+                    }
+                  ])}
+                  style={{ ...btnStyle('var(--accent-amber, #fbbf24)'), padding: '5px 10px' }}
+                >
+                  + CLAIM
+                </button>
+              </div>
+
+              {editClaims.length === 0 ? (
+                <div style={{ fontSize: '11px', color: 'var(--text-dim)', fontFamily: "'Space Mono', monospace" }}>
+                  NO CUSTOM CLAIMS
+                </div>
+              ) : (
+                <div style={{ display: 'grid', gap: '10px' }}>
+                  {editClaims.map((claim) => (
+                    <div key={claim.id} style={{ border: '1px solid var(--border)', padding: '12px', background: 'var(--bg-base)' }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1.3fr 1fr auto', gap: '10px', marginBottom: '10px' }}>
+                        <input
+                          type="text"
+                          value={claim.claimName}
+                          onChange={e => setEditClaims((current) => current.map((row) => row.id === claim.id ? { ...row, claimName: e.target.value } : row))}
+                          placeholder="claim name"
+                          style={inputStyle}
+                        />
+                        <select
+                          value={claim.sourceType}
+                          onChange={e => setEditClaims((current) => current.map((row) => row.id === claim.id ? { ...row, sourceType: e.target.value as ClaimSourceType } : row))}
+                          style={{ ...inputStyle, cursor: 'pointer' }}
+                        >
+                          <option value="fixed">fixed value</option>
+                          <option value="user_field">user field</option>
+                        </select>
+                        <button
+                          type="button"
+                          onClick={() => setEditClaims((current) => current.filter((row) => row.id !== claim.id))}
+                          style={{ ...btnStyle('#ef4444'), padding: '6px 10px' }}
+                        >
+                          REMOVE
+                        </button>
+                      </div>
+
+                      {claim.sourceType === 'fixed' ? (
+                        <input
+                          type="text"
+                          value={claim.fixedValue}
+                          onChange={e => setEditClaims((current) => current.map((row) => row.id === claim.id ? { ...row, fixedValue: e.target.value } : row))}
+                          placeholder="fixed value"
+                          style={inputStyle}
+                        />
+                      ) : (
+                        <select
+                          value={claim.userField}
+                          onChange={e => setEditClaims((current) => current.map((row) => row.id === claim.id ? { ...row, userField: e.target.value as ClaimUserField } : row))}
+                          style={{ ...inputStyle, cursor: 'pointer' }}
+                        >
+                          {userFieldOptions.map((option) => (
+                            <option key={option} value={option}>{option}</option>
+                          ))}
+                        </select>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <button type="submit" disabled={editSubmitting} style={{ width: '100%', background: 'transparent', border: '1px solid var(--accent-cyan)', color: editSubmitting ? 'var(--text-muted)' : 'var(--accent-cyan)', padding: '10px', fontSize: '11px', fontFamily: "'Space Mono', monospace", letterSpacing: '0.15em', textTransform: 'uppercase', cursor: editSubmitting ? 'not-allowed' : 'pointer' }}>
+              {editSubmitting ? 'SAVING...' : 'SAVE CHANGES'}
+            </button>
+          </form>
         </Modal>
       )}
     </div>

@@ -130,3 +130,65 @@ export const adminClientRegistrationSchema = z
 export type AdminClientRegistrationInput = z.infer<
   typeof adminClientRegistrationSchema
 >;
+
+export const adminClientUpdateSchema = z
+  .object({
+    client_name: z.string().min(1).optional(),
+    client_profile: z.enum(["spa", "web", "native"]).optional(),
+    application_type: z.enum(["web", "native"]).optional(),
+    token_endpoint_auth_method: z
+      .enum(["client_secret_basic", "client_secret_post", "none"])
+      .optional(),
+    redirect_uris: z.array(redirectUriSchema).min(1).optional(),
+    access_token_audience: z.string().min(1).nullable().optional(),
+    access_token_custom_claims: z.array(customClaimSchema).max(20).optional()
+  })
+  .superRefine((value, ctx) => {
+    const profile = value.client_profile;
+
+    if (profile === "spa") {
+      if (value.application_type !== undefined && value.application_type !== "web") {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "SPA clients must have application_type web",
+          path: ["application_type"]
+        });
+      }
+      if (
+        value.token_endpoint_auth_method !== undefined &&
+        value.token_endpoint_auth_method !== "none"
+      ) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "SPA clients must use token_endpoint_auth_method none",
+          path: ["token_endpoint_auth_method"]
+        });
+      }
+    }
+
+    if (profile === "web") {
+      if (value.token_endpoint_auth_method === "none") {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "web clients must use a confidential auth method",
+          path: ["token_endpoint_auth_method"]
+        });
+      }
+    }
+
+    if (value.access_token_custom_claims) {
+      const names = value.access_token_custom_claims.map((c) => c.claim_name);
+      const duplicates = names.filter(
+        (name, index) => names.indexOf(name) !== index
+      );
+      for (const dup of new Set(duplicates)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `duplicate claim name "${dup}"`,
+          path: ["access_token_custom_claims"]
+        });
+      }
+    }
+  });
+
+export type AdminClientUpdateInput = z.infer<typeof adminClientUpdateSchema>;

@@ -166,13 +166,22 @@ export const listClients = async (token: string, tenantId: string) => {
   return res.json() as Promise<{ clients: ClientSummary[] }>;
 };
 
+export interface ClientDetail extends ClientSummary {
+  access_token_custom_claims?: {
+    claim_name: string;
+    source_type: "fixed" | "user_field";
+    fixed_value: string | null;
+    user_field: string | null;
+  }[];
+}
+
 export const getClient = async (token: string, tenantId: string, clientId: string) => {
   const res = await checkOk(
     await fetch(`${BASE_URL}/admin/tenants/${tenantId}/clients/${clientId}`, {
       headers: authHeaders(token)
     })
   );
-  return res.json() as Promise<ClientSummary>;
+  return res.json() as Promise<ClientDetail>;
 };
 
 export const updateClientAuthMethodPolicy = async (
@@ -236,6 +245,44 @@ export const createClient = async (
     })
   );
   return res.json() as Promise<ClientSummary & { client_secret?: string }>;
+};
+
+export const deleteClient = async (token: string, tenantId: string, clientId: string) => {
+  await checkOk(
+    await fetch(`${BASE_URL}/admin/tenants/${tenantId}/clients/${clientId}`, {
+      method: "DELETE",
+      headers: authHeaders(token)
+    })
+  );
+};
+
+export const updateClient = async (
+  token: string,
+  tenantId: string,
+  clientId: string,
+  payload: {
+    client_name?: string;
+    client_profile?: "spa" | "web" | "native";
+    application_type?: "web" | "native";
+    redirect_uris?: string[];
+    token_endpoint_auth_method?: string;
+    access_token_audience?: string | null;
+    access_token_custom_claims?: {
+      claim_name: string;
+      source_type: "fixed" | "user_field";
+      fixed_value?: string;
+      user_field?: string;
+    }[];
+  }
+) => {
+  const res = await checkOk(
+    await fetch(`${BASE_URL}/admin/tenants/${tenantId}/clients/${clientId}`, {
+      method: "PATCH",
+      headers: authHeaders(token),
+      body: JSON.stringify(payload)
+    })
+  );
+  return res.json() as Promise<ClientSummary>;
 };
 
 // ─── Tenant login API ────────────────────────────────────────────────────────

@@ -37,7 +37,8 @@ import {
   registerClient,
   registerClientFromAdmin
 } from "../domain/clients/register-client";
-import type { AccessTokenCustomClaim } from "../domain/clients/access-token-claims-types";
+import type { AccessTokenCustomClaim, AccessTokenClaimUserField } from "../domain/clients/access-token-claims-types";
+import { adminClientUpdateSchema } from "../domain/clients/admin-registration-schema";
 import type { ClientAuthMethodPolicy } from "../domain/clients/types";
 import type { ClientAuthMethodPolicyRepository, ClientRepository } from "../domain/clients/repository";
 import { buildJwks } from "../domain/keys/jwks";
@@ -91,6 +92,10 @@ class EmptyKeyRepository implements KeyRepository {
 
 class EmptyClientRepository implements ClientRepository {
   async create(): Promise<void> {
+    return;
+  }
+
+  async update(): Promise<void> {
     return;
   }
 
@@ -2988,6 +2993,12 @@ export const createApp = (options: AppOptions) => {
       client_profile: client.clientProfile,
       access_token_audience: client.accessTokenAudience,
       access_token_custom_claims_count: claims.length,
+      access_token_custom_claims: claims.map((c) => ({
+        claim_name: c.claimName,
+        source_type: c.sourceType,
+        fixed_value: c.fixedValue,
+        user_field: c.userField
+      })),
       redirect_uris: client.redirectUris,
       grant_types: client.grantTypes,
       response_types: client.responseTypes,
@@ -3193,6 +3204,150 @@ export const createApp = (options: AppOptions) => {
         },
         201
       );
+    } catch (error) {
+      if (error instanceof ZodError) {
+        return context.json({ error: "invalid_client_metadata", issues: error.issues }, 400);
+      }
+      throw error;
+    }
+  });
+
+  app.delete("/admin/tenants/:tenantId/clients/:clientId", async (context) => {
+    const session = await authenticateAdminSession({
+      adminRepository,
+      authorizationHeader: context.req.header("authorization")
+    });
+    if (session === null) {
+      return context.json({ error: "unauthorized" }, 401);
+    }
+    const tenantId = context.req.param("tenantId");
+    const clientId = context.req.param("clientId");
+    const tenant = await tenantRepository.findById(tenantId);
+    if (tenant === null) return context.notFound();
+
+    const client = await clientRepository.findByClientId(clientId);
+    if (client === null || client.tenantId !== tenantId) return context.notFound();
+
+    // Cascade deletes in DB handle client_access_token_claims and client_auth_method_policies
+    await clientRepository.deleteByClientId(clientId);
+
+    await auditRepository.record({
+      id: crypto.randomUUID(),
+      actorType: "admin_user",
+      actorId: session.adminUserId,
+      tenantId,
+      eventType: "oidc.client.deleted",
+      targetType: "oidc_client",
+      targetId: clientId,
+      payload: { client_name: client.clientName },
+      occurredAt: new Date().toISOString()
+    });
+
+    return context.json({ deleted: true });
+  });
+
+  app.patch("/admin/tenants/:tenantId/clients/:clientId", async (context) => {
+    const session = await authenticateAdminSession({
+      adminRepository,
+      authorizationHeader: context.req.header("authorization")
+    });
+    if (session === null) {
+      return context.json({ error: "unauthorized" }, 401);
+    }
+    const tenantId = context.req.param("tenantId");
+    const clientId = context.req.param("clientId");
+    const tenant = await tenantRepository.findById(tenantId);
+    if (tenant === null) return context.notFound();
+
+    const client = await clientRepository.findByClientId(clientId);
+    if (client === null || client.tenantId !== tenantId) return context.notFound();
+
+    let body: unknown;
+    try {
+      body = await context.req.json();
+    } catch {
+      return context.json({ error: "invalid_request" }, 400);
+    }
+
+    try {
+      const parsed = adminClientUpdateSchema.parse(body);
+
+      // Apply updates to client fields
+      const updated = { ...client };
+      if (parsed.client_name !== undefined) updated.clientName = parsed.client_name;
+      if (parsed.client_profile !== undefined) updated.clientProfile = parsed.client_profile;
+      if (parsed.application_type !== undefined) updated.applicationType = parsed.application_type;
+      if (parsed.token_endpoint_auth_method !== undefined) {
+        updated.tokenEndpointAuthMethod = parsed.token_endpoint_auth_method;
+      }
+      if (parsed.redirect_uris !== undefined) updated.redirectUris = parsed.redirect_uris;
+      if (parsed.access_token_audience !== undefined) {
+        updated.accessTokenAudience = parsed.access_token_audience;
+      }
+
+      // Validate SPA audience requirement after merge
+      if (updated.clientProfile === "spa" && !updated.accessTokenAudience) {
+        return context.json(
+          { error: "invalid_client_metadata", message: "SPA clients require an access_token_audience" },
+          400
+        );
+      }
+
+      await clientRepository.update(updated);
+
+      // Replace custom claims if provided
+      if (parsed.access_token_custom_claims !== undefined) {
+        const now = new Date().toISOString();
+        const newClaims: AccessTokenCustomClaim[] = parsed.access_token_custom_claims.map(
+          (c) => ({
+            id: crypto.randomUUID(),
+            clientId: client.id,
+            tenantId,
+            claimName: c.claim_name,
+            sourceType: c.source_type,
+            fixedValue: c.source_type === "fixed" ? (c.fixed_value ?? null) : null,
+            userField:
+              c.source_type === "user_field"
+                ? ((c.user_field ?? null) as AccessTokenClaimUserField | null)
+                : null,
+            createdAt: now,
+            updatedAt: now
+          })
+        );
+        await accessTokenClaimsRepository.replaceAllForClient(client.id, newClaims);
+      }
+
+      const claims = await accessTokenClaimsRepository.listByClientId(client.id);
+      const policy = await clientAuthMethodPolicyRepository.findByClientId(client.id);
+
+      await auditRepository.record({
+        id: crypto.randomUUID(),
+        actorType: "admin_user",
+        actorId: session.adminUserId,
+        tenantId,
+        eventType: "oidc.client.updated",
+        targetType: "oidc_client",
+        targetId: clientId,
+        payload: parsed,
+        occurredAt: new Date().toISOString()
+      });
+
+      return context.json({
+        id: updated.id,
+        client_id: updated.clientId,
+        client_name: updated.clientName,
+        application_type: updated.applicationType,
+        client_profile: updated.clientProfile,
+        access_token_audience: updated.accessTokenAudience,
+        access_token_custom_claims_count: claims.length,
+        redirect_uris: updated.redirectUris,
+        grant_types: updated.grantTypes,
+        response_types: updated.responseTypes,
+        token_endpoint_auth_method: updated.tokenEndpointAuthMethod,
+        trust_level: updated.trustLevel,
+        consent_policy: updated.consentPolicy,
+        auth_method_policy: policyToWire(policy)
+      });
     } catch (error) {
       if (error instanceof ZodError) {
         return context.json({ error: "invalid_client_metadata", issues: error.issues }, 400);

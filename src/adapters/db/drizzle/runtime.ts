@@ -393,6 +393,24 @@ class D1ClientRepository implements ClientRepository {
     });
   }
 
+  async update(client: Client): Promise<void> {
+    const now = new Date().toISOString();
+    await this.db
+      .update(oidcClients)
+      .set({
+        clientName: client.clientName,
+        applicationType: client.applicationType,
+        clientProfile: client.clientProfile,
+        tokenEndpointAuthMethod: client.tokenEndpointAuthMethod,
+        redirectUris: client.redirectUris,
+        grantTypes: client.grantTypes,
+        responseTypes: client.responseTypes,
+        accessTokenAudience: client.accessTokenAudience,
+        updatedAt: now
+      })
+      .where(eq(oidcClients.clientId, client.clientId));
+  }
+
   async deleteByClientId(clientId: string): Promise<void> {
     await this.db.delete(oidcClients).where(eq(oidcClients.clientId, clientId));
   }

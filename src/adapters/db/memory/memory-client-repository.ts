@@ -12,6 +12,13 @@ export class MemoryClientRepository implements ClientRepository {
     this.clients.push(client);
   }
 
+  async update(client: Client): Promise<void> {
+    const index = this.clients.findIndex((c) => c.clientId === client.clientId);
+    if (index !== -1) {
+      this.clients[index] = client;
+    }
+  }
+
   async deleteByClientId(clientId: string): Promise<void> {
     this.clients = this.clients.filter((client) => client.clientId !== clientId);
   }
