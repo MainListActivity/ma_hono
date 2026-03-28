@@ -189,7 +189,7 @@ const createSigner = async (): Promise<{
   material: SigningKeyMaterial;
   signer: SigningKeySigner;
 }> => {
-  const { privateKey, publicKey } = await generateKeyPair("ES256", {
+  const { privateKey, publicKey } = await generateKeyPair("RS256", {
     extractable: true
   });
   const privateJwk = await exportJWK(privateKey);
@@ -199,19 +199,19 @@ const createSigner = async (): Promise<{
       id: "key_tenant_1",
       tenantId: "tenant_1",
       kid: "kid-tenant-1",
-      alg: "ES256",
-      kty: "EC",
+      alg: "RS256",
+      kty: "RSA",
       status: "active",
       publicJwk: {
         ...publicJwk,
-        alg: "ES256",
+        alg: "RS256",
         kid: "kid-tenant-1",
         use: "sig"
       }
     },
     privateJwk: {
       ...privateJwk,
-      alg: "ES256",
+      alg: "RS256",
       kid: "kid-tenant-1"
     }
   };

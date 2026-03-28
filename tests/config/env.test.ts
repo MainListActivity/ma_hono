@@ -3,7 +3,10 @@ import { getTableColumns, getTableName } from "drizzle-orm";
 import { getTableConfig } from "drizzle-orm/sqlite-core";
 
 import { readRuntimeConfig } from "../../src/config/env";
-import { createRuntimeRepositories } from "../../src/adapters/db/drizzle/runtime";
+import {
+  createRuntimeRepositories,
+  rotateSigningKeysForTenants
+} from "../../src/adapters/db/drizzle/runtime";
 import {
   adminUsers,
   auditEvents,
@@ -185,6 +188,86 @@ describe("drizzle schema", () => {
 });
 
 describe("createRuntimeRepositories", () => {
+  it("retires existing active signing keys and bootstraps fresh tenant-scoped keys", async () => {
+    const retireCalls: string[] = [];
+    const signerCalls: string[] = [];
+
+    const fakeDb = {
+      update: () => ({
+        set: (values: Record<string, unknown>) => ({
+          where: async () => {
+            retireCalls.push(String(values.status));
+          }
+        })
+      })
+    } as never;
+
+    await rotateSigningKeysForTenants({
+      db: fakeDb,
+      signer: {
+        async ensureActiveSigningKeyMaterial(tenantId: string) {
+          signerCalls.push(tenantId);
+          return {
+            key: {
+              id: `key_${tenantId}`,
+              tenantId,
+              kid: `kid_${tenantId}`,
+              alg: "RS256",
+              kty: "RSA",
+              status: "active",
+              publicJwk: { kid: `kid_${tenantId}`, kty: "RSA", alg: "RS256", use: "sig" }
+            },
+            privateJwk: { kid: `kid_${tenantId}`, kty: "RSA", alg: "RS256" }
+          };
+        },
+        async loadActiveSigningKeyMaterial() {
+          return null;
+        }
+      },
+      tenantRepository: {
+        async create() {
+          return;
+        },
+        async update() {
+          return;
+        },
+        async delete() {
+          return;
+        },
+        async findById() {
+          return null;
+        },
+        async findBySlug() {
+          return null;
+        },
+        async findByCustomDomain() {
+          return null;
+        },
+        async list() {
+          return [
+            {
+              id: "tenant_acme",
+              slug: "acme",
+              displayName: "Acme",
+              status: "active",
+              issuers: []
+            },
+            {
+              id: "tenant_umbrella",
+              slug: "umbrella",
+              displayName: "Umbrella",
+              status: "active",
+              issuers: []
+            }
+          ];
+        }
+      }
+    });
+
+    expect(retireCalls).toEqual(["retired"]);
+    expect(signerCalls).toEqual(["tenant_acme", "tenant_umbrella"]);
+  });
+
   it("builds concrete runtime repositories from Cloudflare bindings", async () => {
     const repositories = await createRuntimeRepositories({
       adminSessionsKv: fakeAdminSessionsKv,

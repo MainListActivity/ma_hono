@@ -4,8 +4,8 @@ export interface DevKeyMaterial {
   publicJwk: JWK;
 }
 
-export const generateDevEs256PublicJwk = async (): Promise<DevKeyMaterial> => {
-  const { publicKey } = await generateKeyPair("ES256");
+export const generateDevRs256PublicJwk = async (): Promise<DevKeyMaterial> => {
+  const { publicKey } = await generateKeyPair("RS256");
 
   return {
     publicJwk: await exportJWK(publicKey)

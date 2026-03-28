@@ -9,7 +9,7 @@ A tenant-aware OIDC Identity Provider built on Cloudflare Workers with Hono, Dri
 - Email magic link login
 - Passkey (WebAuthn) enrollment and login
 - Multi-tenant with platform-path (`/t/:slug`) and custom-domain issuers
-- JWT-signed ID tokens and access tokens (ES256)
+- JWT-signed ID tokens and access tokens (RS256)
 - Admin API for tenant and user management
 - Audit event logging
 
@@ -64,12 +64,7 @@ pnpm exec drizzle-kit check
 
 ## Key Bootstrap
 
-On first deploy, the IdP needs a signing key. Bootstrap it via the admin API after deploying:
-
-```bash
-# The signing key is auto-bootstrapped on first token issuance
-# if none exists. Key material is stored in R2, metadata in D1.
-```
+On startup, the IdP retires any existing active signing keys and ensures each tenant has its own active `RS256` signing key. Private key material is stored in R2 and key metadata in D1.
 
 ## User Provisioning
 

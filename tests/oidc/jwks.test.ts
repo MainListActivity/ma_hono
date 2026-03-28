@@ -5,7 +5,7 @@ import { MemoryTenantRepository } from "../../src/adapters/db/memory/memory-tena
 import { MemoryTotpRepository } from "../../src/adapters/db/memory/memory-totp-repository";
 import { MemoryMfaPasskeyChallengeRepository } from "../../src/adapters/db/memory/memory-mfa-passkey-challenge-repository";
 import { createApp } from "../../src/app/app";
-import { D1SigningKeyBootstrapper } from "../../src/adapters/db/drizzle/runtime";
+import { D1KeyRepository, D1SigningKeyBootstrapper } from "../../src/adapters/db/drizzle/runtime";
 import { createSigningKeySigner } from "../../src/domain/keys/signer";
 import type { KeyMaterialStore } from "../../src/domain/keys/key-material-store";
 import type { KeyRepository } from "../../src/domain/keys/repository";
@@ -47,34 +47,32 @@ const keyRepository = new MemoryKeyRepository([
     id: "key_active_acme",
     tenantId: "tenant_acme",
     kid: "kid-active",
-    alg: "ES256",
-    kty: "EC",
+    alg: "RS256",
+    kty: "RSA",
     status: "active",
     publicJwk: {
       kid: "kid-active",
-      kty: "EC",
-      crv: "P-256",
-      alg: "ES256",
+      kty: "RSA",
+      alg: "RS256",
       use: "sig",
-      x: "f83OJ3D2xF4xT5cU6d1b6q8L6o-l7Yx31xHn0SI7g0Y",
-      y: "x_FEzRu9pG2bGS7dUdr9YzQKQwe4S4n1lWv1q5rE6E8"
+      n: "sXch0M8WtfzT1p1p1v9gZyJ3VG5X5M8uB1e9dJ6s2WjzW6O7rN7U2kQ7XQe8n0JdE3cH8pN5vK4zM3sT2uP1qQ",
+      e: "AQAB"
     }
   },
   {
     id: "key_inactive_acme",
     tenantId: "tenant_acme",
     kid: "kid-inactive",
-    alg: "ES256",
-    kty: "EC",
+    alg: "RS256",
+    kty: "RSA",
     status: "retired",
     publicJwk: {
       kid: "kid-inactive",
-      kty: "EC",
-      crv: "P-256",
-      alg: "ES256",
+      kty: "RSA",
+      alg: "RS256",
       use: "sig",
-      x: "4B2YVZxjzG5b1W3oJ6iQf0WQkXxwA7s1W8vM3v7F8I0",
-      y: "7lP3zM7Q6Lq2iA9gH9hT1qT9mWk4xA5bD1rJ6qS2pLQ"
+      n: "uQ7z4Kj1Qm2Gd4Pf6Lk9Vb2Ws3Hx7Nt5Yp8Rc1Mn4Ta6Yz9Le3Hc2Vq8Nb5Jd7Fs0Xr4Cu6Dp1Mw9Kt2Lp5Q",
+      e: "AQAB"
     }
   }
 ]);
@@ -114,8 +112,8 @@ describe("OIDC JWKS", () => {
     expect(body.keys).toHaveLength(1);
     expect(body.keys[0]).toMatchObject({
       kid: "kid-active",
-      kty: "EC",
-      alg: "ES256",
+      kty: "RSA",
+      alg: "RS256",
       use: "sig"
     });
     expect(body.keys[0]).not.toHaveProperty("d");
@@ -162,28 +160,26 @@ describe("OIDC JWKS", () => {
 
   it("loads active signing key material from D1 metadata and R2 private material", async () => {
     const privateJwk = {
-      kty: "EC",
-      crv: "P-256",
-      x: "f83OJ3D2xF4xT5cU6d1b6q8L6o-l7Yx31xHn0SI7g0Y",
-      y: "x_FEzRu9pG2bGS7dUdr9YzQKQwe4S4n1lWv1q5rE6E8",
-      d: "n0SI7g0Yf83OJ3D2xF4xT5cU6d1b6q8L6o-l7Yx31xH"
+      kty: "RSA",
+      n: "sXch0M8WtfzT1p1p1v9gZyJ3VG5X5M8uB1e9dJ6s2WjzW6O7rN7U2kQ7XQe8n0JdE3cH8pN5vK4zM3sT2uP1qQ",
+      e: "AQAB",
+      d: "Yf7J3mN9pQ2sV5tX8wC1eR4yU7iO0pL3kN6bH9dF2gJ5mQ8rT1vW4xY7zA0cD3fG6hJ9kL2mN5pQ8rT1vW4xY"
     };
     const tenantKey: SigningKey = {
       id: "key_active_acme",
       tenantId: "tenant_acme",
       kid: "kid-active",
-      alg: "ES256",
-      kty: "EC",
+      alg: "RS256",
+      kty: "RSA",
       status: "active",
       privateKeyRef: "signing-keys/tenant_acme/kid-active.json",
       publicJwk: {
         kid: "kid-active",
-        kty: "EC",
-        crv: "P-256",
-        alg: "ES256",
+        kty: "RSA",
+        alg: "RS256",
         use: "sig",
-        x: privateJwk.x,
-        y: privateJwk.y
+        n: privateJwk.n,
+        e: privateJwk.e
       }
     };
     const keyRepositoryWithPrivateKey: KeyRepository = {
@@ -252,12 +248,11 @@ describe("OIDC JWKS", () => {
     expect(material.key.privateKeyRef).toContain("signing-keys/tenant_acme/");
     expect(material.key.publicJwk).toMatchObject({
       kid: material.key.kid,
-      alg: "ES256",
+      alg: "RS256",
       use: "sig"
     });
     expect(material.privateJwk).toMatchObject({
-      kty: "EC",
-      crv: "P-256"
+      kty: "RSA"
     });
     expect(bootstrapCalls).toHaveLength(1);
     expect(bootstrapCalls[0]).toMatchObject({
@@ -265,7 +260,7 @@ describe("OIDC JWKS", () => {
     });
     await expect(
       keyMaterialStore.get(material.key.privateKeyRef as string)
-    ).resolves.toContain('"kty":"EC"');
+    ).resolves.toContain('"kty":"RSA"');
   });
 
   it("recovers from a duplicate D1 bootstrap insert by loading the existing private material", async () => {
@@ -279,19 +274,18 @@ describe("OIDC JWKS", () => {
     const existingKey: SigningKey = {
       id: "key_existing_bootstrap",
       tenantId: "tenant_acme",
-      kid: "bootstrap-tenant_acme-es256",
-      alg: "ES256",
-      kty: "EC",
+      kid: "bootstrap-tenant_acme-rs256",
+      alg: "RS256",
+      kty: "RSA",
       status: "active",
-      privateKeyRef: "signing-keys/tenant_acme/bootstrap-tenant_acme-es256.json",
+      privateKeyRef: "signing-keys/tenant_acme/bootstrap-tenant_acme-rs256.json",
       publicJwk: {
-        kid: "bootstrap-tenant_acme-es256",
-        kty: "EC",
-        crv: "P-256",
-        alg: "ES256",
+        kid: "bootstrap-tenant_acme-rs256",
+        kty: "RSA",
+        alg: "RS256",
         use: "sig",
-        x: "existing-x",
-        y: "existing-y"
+        n: "existing-n",
+        e: "AQAB"
       }
     };
     const keyMaterialStore = createMemoryKeyMaterialStore({
@@ -333,8 +327,8 @@ describe("OIDC JWKS", () => {
     const material = await bootstrapper.bootstrapSigningKey({
       tenantId: "tenant_acme",
       kid: existingKey.kid,
-      alg: "ES256",
-      kty: "EC",
+      alg: "RS256",
+      kty: "RSA",
       privateKeyRef: existingKey.privateKeyRef as string,
       publicJwk: existingKey.publicJwk,
       privateJwk
@@ -373,5 +367,45 @@ describe("OIDC JWKS", () => {
     }
 
     await expect(keyMaterialStore.get(capturedPrivateKeyRef)).resolves.toBeNull();
+  });
+
+  it("does not include global active keys when listing a tenant's signing keys", async () => {
+    const fakeDb = {
+      select: () => ({
+        from: () => ({
+          where: () => ({
+            orderBy: async () => [
+              {
+                id: "key_tenant_acme",
+                tenantId: "tenant_acme",
+                kid: "kid-tenant-acme",
+                alg: "RS256",
+                kty: "RSA",
+                status: "active",
+                privateKeyRef: "signing-keys/tenant_acme/kid-tenant-acme.json",
+                publicJwk: {
+                  kid: "kid-tenant-acme",
+                  kty: "RSA",
+                  alg: "RS256",
+                  use: "sig",
+                  n: "tenant-n",
+                  e: "AQAB"
+                }
+              }
+            ]
+          })
+        })
+      })
+    } as never;
+
+    const repository = new D1KeyRepository(fakeDb);
+
+    await expect(repository.listActiveKeysForTenant("tenant_acme")).resolves.toEqual([
+      expect.objectContaining({
+        tenantId: "tenant_acme",
+        kid: "kid-tenant-acme",
+        alg: "RS256"
+      })
+    ]);
   });
 });

@@ -1,4 +1,4 @@
-import { and, desc, eq, isNull, or, sql } from "drizzle-orm";
+import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 
 import type { AuditRepository } from "../../../domain/audit/repository";
@@ -28,7 +28,7 @@ import type {
 } from "../../../domain/authentication/passkey-repository";
 import type { KeyMaterialStore } from "../../../domain/keys/key-material-store";
 import type { KeyRepository } from "../../../domain/keys/repository";
-import { createSigningKeySigner } from "../../../domain/keys/signer";
+import { createSigningKeySigner, type SigningKeySigner } from "../../../domain/keys/signer";
 import type { SigningKey, SigningKeyMaterial } from "../../../domain/keys/types";
 import type { RuntimeConfig } from "../../../config/env";
 import type { TotpCredential, TotpRepository } from "../../../domain/mfa/totp-repository";
@@ -338,19 +338,14 @@ class D1TenantRepository implements TenantRepository {
   }
 }
 
-class D1KeyRepository implements KeyRepository {
+export class D1KeyRepository implements KeyRepository {
   constructor(private readonly db: ReturnType<typeof drizzle>) {}
 
   async listActiveKeysForTenant(tenantId: string): Promise<SigningKey[]> {
     const rows = await this.db
       .select()
       .from(signingKeys)
-      .where(
-        and(
-          eq(signingKeys.status, "active"),
-          or(eq(signingKeys.tenantId, tenantId), isNull(signingKeys.tenantId))
-        )
-      )
+      .where(and(eq(signingKeys.status, "active"), eq(signingKeys.tenantId, tenantId)))
       .orderBy(desc(signingKeys.activatedAt), desc(signingKeys.createdAt));
 
     return rows.map((row) => ({
@@ -365,6 +360,32 @@ class D1KeyRepository implements KeyRepository {
     }));
   }
 }
+
+export const rotateSigningKeysForTenants = async ({
+  db,
+  signer,
+  tenantRepository
+}: {
+  db: ReturnType<typeof drizzle>;
+  signer: SigningKeySigner;
+  tenantRepository: TenantRepository;
+}) => {
+  const retiredAt = new Date().toISOString();
+
+  await db
+    .update(signingKeys)
+    .set({
+      status: "retired",
+      retireAt: retiredAt
+    })
+    .where(eq(signingKeys.status, "active"));
+
+  const allTenants = await tenantRepository.list();
+
+  for (const tenant of allTenants) {
+    await signer.ensureActiveSigningKeyMaterial(tenant.id);
+  }
+};
 
 class D1ClientRepository implements ClientRepository {
   constructor(private readonly db: ReturnType<typeof drizzle>) {}
@@ -1486,21 +1507,19 @@ export const createRuntimeRepositories = async (config: RuntimeConfig) => {
   });
   const keyMaterialStore = new R2KeyMaterialStore(config.keyMaterialBucket);
   const keyRepository = new D1KeyRepository(db);
+  const tenantRepository = new D1TenantRepository(db);
   const signingKeyBootstrapper = new D1SigningKeyBootstrapper(db, keyMaterialStore);
   const signer = createSigningKeySigner({
     bootstrapSigningKey: signingKeyBootstrapper.bootstrapSigningKey.bind(signingKeyBootstrapper),
     keyMaterialStore,
     keyRepository
   });
-  const [existingSigningKey] = await db
-    .select({ id: signingKeys.id })
-    .from(signingKeys)
-    .where(eq(signingKeys.status, "active"))
-    .limit(1);
 
-  if (existingSigningKey === undefined) {
-    await signer.ensureActiveSigningKeyMaterial(null);
-  }
+  await rotateSigningKeysForTenants({
+    db,
+    signer,
+    tenantRepository
+  });
 
   const loginChallengeRepository = new D1LoginChallengeRepository(db);
 
@@ -1520,7 +1539,7 @@ export const createRuntimeRepositories = async (config: RuntimeConfig) => {
     registrationAccessTokenRepository: new KvRegistrationAccessTokenRepository(
       config.registrationTokensKv
     ),
-    tenantRepository: new D1TenantRepository(db),
+    tenantRepository,
     totpRepository: new D1TotpRepository(db),
     mfaPasskeyChallengeRepository: new D1MfaPasskeyChallengeRepository(db),
     close: async () => undefined

@@ -42,7 +42,7 @@ const tenantRepository = new MemoryTenantRepository([
 ]);
 
 const createSigner = async (): Promise<{ signer: SigningKeySigner; material: SigningKeyMaterial }> => {
-  const { privateKey, publicKey } = await generateKeyPair("ES256", {
+  const { privateKey, publicKey } = await generateKeyPair("RS256", {
     extractable: true
   });
   const privateJwk = await exportJWK(privateKey);
@@ -52,19 +52,19 @@ const createSigner = async (): Promise<{ signer: SigningKeySigner; material: Sig
       id: "key_acme",
       tenantId: "tenant_acme",
       kid: "kid-acme",
-      alg: "ES256",
-      kty: "EC",
+      alg: "RS256",
+      kty: "RSA",
       status: "active",
       publicJwk: {
         ...publicJwk,
-        alg: "ES256",
+        alg: "RS256",
         kid: "kid-acme",
         use: "sig"
       }
     },
     privateJwk: {
       ...privateJwk,
-      alg: "ES256",
+      alg: "RS256",
       kid: "kid-acme"
     }
   };
@@ -264,7 +264,7 @@ describe("/token", () => {
     expect(response.headers.get("cache-control")).toBe("no-store");
     expect(response.headers.get("pragma")).toBe("no-cache");
 
-    const verificationKey = await importJWK(material.key.publicJwk as JWK, "ES256");
+    const verificationKey = await importJWK(material.key.publicJwk as JWK, "RS256");
     const idToken = await jwtVerify(body.id_token, verificationKey, {
       issuer: "https://idp.example.test/t/acme",
       audience: client.clientId
@@ -684,7 +684,7 @@ describe("/token", () => {
       mfaPasskeyChallengeRepository: new MemoryMfaPasskeyChallengeRepository(),
       totpEncryptionKey: new Uint8Array(32).fill(0)
     });
-    const verificationKey = await importJWK(material.key.publicJwk as JWK, "ES256");
+    const verificationKey = await importJWK(material.key.publicJwk as JWK, "RS256");
 
     const platformResponse = await exchangeCode({
       app,

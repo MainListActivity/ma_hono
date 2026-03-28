@@ -5,7 +5,7 @@ import type { KeyRepository } from "./repository";
 import type { SigningKey, SigningKeyMaterial } from "./types";
 
 export interface SigningKeyBootstrapInput {
-  tenantId: string | null;
+  tenantId: string;
   kid: string;
   alg: string;
   kty: string;
@@ -20,27 +20,26 @@ export interface SigningKeyBootstrapper {
 
 export interface SigningKeySigner {
   loadActiveSigningKeyMaterial(tenantId: string): Promise<SigningKeyMaterial | null>;
-  ensureActiveSigningKeyMaterial(tenantId: string | null): Promise<SigningKeyMaterial>;
+  ensureActiveSigningKeyMaterial(tenantId: string): Promise<SigningKeyMaterial>;
 }
 
 const signingKeyPrefix = "signing-keys";
 
-const createBootstrapKeyId = (tenantId: string | null) =>
-  `bootstrap-${tenantId ?? "global"}-es256`;
+const createBootstrapKeyId = (tenantId: string) => `bootstrap-${tenantId}-rs256`;
 
-const createPrivateKeyRef = (tenantId: string | null, kid: string) =>
-  `${signingKeyPrefix}/${tenantId ?? "global"}/${kid}.json`;
+const createPrivateKeyRef = (tenantId: string, kid: string) =>
+  `${signingKeyPrefix}/${tenantId}/${kid}.json`;
 
 const normalizePublicJwk = (jwk: JWK, kid: string): JWK => ({
   ...jwk,
-  alg: "ES256",
+  alg: "RS256",
   kid,
   use: "sig"
 });
 
 const normalizePrivateJwk = (jwk: JWK, kid: string): JWK => ({
   ...jwk,
-  alg: "ES256",
+  alg: "RS256",
   kid
 });
 
@@ -98,13 +97,13 @@ export const createSigningKeySigner = ({
   };
 
   const bootstrapKeyMaterial = async (
-    tenantId: string | null
+    tenantId: string
   ): Promise<SigningKeyMaterial> => {
     if (bootstrapSigningKey === undefined) {
-      throw new Error(`No active signing key material is available for ${tenantId ?? "the global issuer"}`);
+      throw new Error(`No active signing key material is available for ${tenantId}`);
     }
 
-    const { publicKey, privateKey } = await generateKeyPair("ES256", {
+    const { publicKey, privateKey } = await generateKeyPair("RS256", {
       extractable: true
     });
     const kid = createBootstrapKeyId(tenantId);
@@ -115,8 +114,8 @@ export const createSigningKeySigner = ({
     return await bootstrapSigningKey({
       tenantId,
       kid,
-      alg: "ES256",
-      kty: "EC",
+      alg: "RS256",
+      kty: "RSA",
       privateKeyRef,
       publicJwk,
       privateJwk
@@ -124,27 +123,25 @@ export const createSigningKeySigner = ({
   };
 
   const ensureActiveSigningKeyMaterial = async (
-    tenantId: string | null
+    tenantId: string
   ): Promise<SigningKeyMaterial> => {
-    const lookupTenantId = tenantId ?? "";
-    const existingMaterial = await loadActiveSigningKeyMaterial(lookupTenantId);
+    const existingMaterial = await loadActiveSigningKeyMaterial(tenantId);
 
     if (existingMaterial !== null) {
       return existingMaterial;
     }
 
-    const bootstrapKeyId = tenantId ?? "__global__";
-    const inFlightBootstrap = inFlightBootstraps.get(bootstrapKeyId);
+    const inFlightBootstrap = inFlightBootstraps.get(tenantId);
 
     if (inFlightBootstrap !== undefined) {
       return inFlightBootstrap;
     }
 
     const bootstrapPromise = bootstrapKeyMaterial(tenantId).finally(() => {
-      inFlightBootstraps.delete(bootstrapKeyId);
+      inFlightBootstraps.delete(tenantId);
     });
 
-    inFlightBootstraps.set(bootstrapKeyId, bootstrapPromise);
+    inFlightBootstraps.set(tenantId, bootstrapPromise);
 
     return bootstrapPromise;
   };
