@@ -224,7 +224,7 @@ function renderTemplate(
     "{{audience}}": client.access_token_audience ?? "",
     "{{authorize_endpoint}}": `${issuer}/authorize`,
     "{{token_endpoint}}": `${issuer}/token`,
-    "{{jwks_uri}}": `${issuer}/jwks`,
+    "{{jwks_uri}}": `${issuer}/jwks.json`,
     "{{userinfo_endpoint}}": `${issuer}/userinfo`,
     "{{discovery_url}}": `${issuer}/.well-known/openid-configuration`
   };
