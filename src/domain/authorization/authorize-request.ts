@@ -12,6 +12,20 @@ import type {
   ValidatedAuthorizeRequest
 } from "./types";
 
+const REGEX_PREFIX = "regex:";
+
+const matchRedirectUri = (registeredUris: string[], redirectUri: string): boolean =>
+  registeredUris.some((entry) => {
+    if (entry.startsWith(REGEX_PREFIX)) {
+      try {
+        return new RegExp(`^${entry.slice(REGEX_PREFIX.length)}$`).test(redirectUri);
+      } catch {
+        return false;
+      }
+    }
+    return entry === redirectUri;
+  });
+
 const authorizationCodeLifetimeMs = 5 * 60 * 1000;
 const loginChallengeLifetimeMs = 10 * 60 * 1000;
 
@@ -64,7 +78,7 @@ const buildValidatedAuthorizeRequest = async ({
     };
   }
 
-  if (!client.redirectUris.includes(redirectUri)) {
+  if (!matchRedirectUri(client.redirectUris, redirectUri)) {
     return {
       kind: "error",
       error: "invalid_redirect_uri",

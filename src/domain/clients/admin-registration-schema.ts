@@ -5,7 +5,29 @@ import {
   RESERVED_CLAIM_NAMES
 } from "./access-token-claims-types";
 
+const REGEX_PREFIX = "regex:";
+
 const redirectUriSchema = z.string().superRefine((value, ctx) => {
+  if (value.startsWith(REGEX_PREFIX)) {
+    const pattern = value.slice(REGEX_PREFIX.length);
+    if (pattern.length === 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "regex pattern must not be empty"
+      });
+      return;
+    }
+    try {
+      new RegExp(pattern);
+    } catch {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "redirect uri contains an invalid regex pattern"
+      });
+    }
+    return;
+  }
+
   try {
     const url = new URL(value);
 

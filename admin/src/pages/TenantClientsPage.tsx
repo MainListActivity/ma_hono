@@ -778,11 +778,11 @@ export default function TenantClientsPage() {
             </div>
 
             <div style={{ marginBottom: '20px' }}>
-              <label style={labelStyle}>REDIRECT URIS (one per line)</label>
+              <label style={labelStyle}>REDIRECT URIS (one per line, prefix regex: for pattern matching)</label>
               <textarea
                 value={redirectUris}
                 onChange={e => setRedirectUris(e.target.value)}
-                placeholder={"https://myapp.example.com/callback\nhttps://localhost:3000/callback"}
+                placeholder={"https://myapp.example.com/callback\nregex:https://.*\\.example\\.com/callback"}
                 rows={3}
                 style={{ ...inputStyle, resize: 'vertical' as const, lineHeight: '1.5' }}
                 onFocus={e => (e.target.style.borderColor = 'var(--accent-cyan)')}
@@ -1038,7 +1038,7 @@ export default function TenantClientsPage() {
             </div>
 
             <div style={{ marginBottom: '20px' }}>
-              <label style={labelStyle}>REDIRECT URIS (one per line)</label>
+              <label style={labelStyle}>REDIRECT URIS (one per line, prefix regex: for pattern matching)</label>
               <textarea
                 value={editRedirectUris}
                 onChange={e => setEditRedirectUris(e.target.value)}
