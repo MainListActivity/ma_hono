@@ -65,7 +65,7 @@ export default function Modal({ title, onClose, children }: ModalProps) {
         </div>
 
         {/* Body */}
-        <div style={{ padding: '20px' }}>
+        <div style={{ padding: '20px', maxHeight: 'calc(100vh - 140px)', overflowY: 'auto' }}>
           {children}
         </div>
       </div>
