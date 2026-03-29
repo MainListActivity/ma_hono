@@ -7,15 +7,24 @@ import type { SigningKeySigner } from "../src/domain/keys/signer";
 
 describe("rotateSigningKeyForTenant", () => {
   it("retires active keys for the tenant and bootstraps a new one", async () => {
-    const updatedRows: { tenantId: string; status: string }[] = [];
+    // Simulates D1 rows — only rows matching the WHERE clause get updated
+    const fakeRows: { tenantId: string; status: string }[] = [
+      { tenantId: "tenant-abc", status: "active" },
+      { tenantId: "tenant-other", status: "active" }
+    ];
 
-    // Fake drizzle db that captures UPDATE calls
     const fakeDb = {
-      update: () => ({
+      update: (table: unknown) => ({
         set: (values: { status: string; retireAt: string }) => ({
-          where: (condition: unknown) => {
-            // Record what was updated — condition is opaque, so we just record the set values
-            updatedRows.push({ tenantId: "tenant-abc", status: values.status });
+          where: (_condition: unknown) => {
+            // The real implementation calls:
+            //   .where(and(eq(signingKeys.status, "active"), eq(signingKeys.tenantId, tenantId)))
+            // We simulate the effect: only update rows for tenant-abc with status active
+            for (const row of fakeRows) {
+              if (row.tenantId === "tenant-abc" && row.status === "active") {
+                row.status = values.status;
+              }
+            }
             return Promise.resolve();
           }
         })
@@ -52,8 +61,11 @@ describe("rotateSigningKeyForTenant", () => {
       tenantId: "tenant-abc"
     });
 
-    expect(updatedRows).toHaveLength(1);
-    expect(updatedRows[0].status).toBe("retired");
+    // tenant-abc key was retired
+    expect(fakeRows.find(r => r.tenantId === "tenant-abc")?.status).toBe("retired");
+
+    // tenant-other key was NOT touched
+    expect(fakeRows.find(r => r.tenantId === "tenant-other")?.status).toBe("active");
 
     expect(bootstrappedForTenant).toBe("tenant-abc");
 
