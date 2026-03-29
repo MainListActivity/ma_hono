@@ -2896,8 +2896,23 @@ export const createApp = (options: AppOptions) => {
     }
     const rotatedAt = new Date().toISOString();
     await keyRepository.retireActiveKeysForTenant(tenantId, rotatedAt);
-    const material = await signer.ensureActiveSigningKeyMaterial(tenantId);
-    return context.json({ kid: material.key.kid, alg: material.key.alg, rotated_at: rotatedAt }, 200);
+    try {
+      const material = await signer.ensureActiveSigningKeyMaterial(tenantId);
+      await auditRepository.record({
+        id: crypto.randomUUID(),
+        actorType: "admin_user",
+        actorId: session.adminUserId,
+        tenantId,
+        eventType: "signing_key.rotated",
+        targetType: "signing_key",
+        targetId: material.key.kid,
+        payload: { alg: material.key.alg, rotated_at: rotatedAt },
+        occurredAt: rotatedAt
+      });
+      return context.json({ kid: material.key.kid, alg: material.key.alg, rotated_at: rotatedAt }, 200);
+    } catch {
+      return context.json({ error: "key_bootstrap_failed" }, 500);
+    }
   });
 
   app.delete("/admin/tenants/:tenantId", async (context) => {
