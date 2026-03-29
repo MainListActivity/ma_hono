@@ -5,6 +5,7 @@ import { getTableConfig } from "drizzle-orm/sqlite-core";
 import { readRuntimeConfig } from "../../src/config/env";
 import {
   createRuntimeRepositories,
+  ensureTenantSigningKeys,
   rotateSigningKeysForTenants
 } from "../../src/adapters/db/drizzle/runtime";
 import {
@@ -188,6 +189,88 @@ describe("drizzle schema", () => {
 });
 
 describe("createRuntimeRepositories", () => {
+  it("bootstraps signing keys only for tenants without an active key", async () => {
+    const ensuredTenantIds: string[] = [];
+
+    await ensureTenantSigningKeys({
+      signer: {
+        async ensureActiveSigningKeyMaterial(tenantId: string) {
+          ensuredTenantIds.push(tenantId);
+          return {
+            key: {
+              id: `key_${tenantId}`,
+              tenantId,
+              kid: `kid_${tenantId}`,
+              alg: "RS256",
+              kty: "RSA",
+              status: "active",
+              publicJwk: { kid: `kid_${tenantId}`, kty: "RSA", alg: "RS256", use: "sig" }
+            },
+            privateJwk: { kid: `kid_${tenantId}`, kty: "RSA", alg: "RS256" }
+          };
+        },
+        async loadActiveSigningKeyMaterial(tenantId: string) {
+          if (tenantId === "tenant_acme") {
+            return {
+              key: {
+                id: "key_tenant_acme",
+                tenantId,
+                kid: "kid_tenant_acme",
+                alg: "RS256",
+                kty: "RSA",
+                status: "active",
+                publicJwk: { kid: "kid_tenant_acme", kty: "RSA", alg: "RS256", use: "sig" }
+              },
+              privateJwk: { kid: "kid_tenant_acme", kty: "RSA", alg: "RS256" }
+            };
+          }
+
+          return null;
+        }
+      },
+      tenantRepository: {
+        async create() {
+          return;
+        },
+        async update() {
+          return;
+        },
+        async delete() {
+          return;
+        },
+        async findById() {
+          return null;
+        },
+        async findBySlug() {
+          return null;
+        },
+        async findByCustomDomain() {
+          return null;
+        },
+        async list() {
+          return [
+            {
+              id: "tenant_acme",
+              slug: "acme",
+              displayName: "Acme",
+              status: "active",
+              issuers: []
+            },
+            {
+              id: "tenant_umbrella",
+              slug: "umbrella",
+              displayName: "Umbrella",
+              status: "active",
+              issuers: []
+            }
+          ];
+        }
+      }
+    });
+
+    expect(ensuredTenantIds).toEqual(["tenant_umbrella"]);
+  });
+
   it("retires existing active signing keys and bootstraps fresh tenant-scoped keys", async () => {
     const retireCalls: string[] = [];
     const signerCalls: string[] = [];

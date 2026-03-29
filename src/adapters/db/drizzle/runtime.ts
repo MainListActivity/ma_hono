@@ -394,6 +394,24 @@ export const rotateSigningKeysForTenants = async ({
   }
 };
 
+export const ensureTenantSigningKeys = async ({
+  signer,
+  tenantRepository
+}: {
+  signer: SigningKeySigner;
+  tenantRepository: TenantRepository;
+}) => {
+  const allTenants = await tenantRepository.list();
+
+  for (const tenant of allTenants) {
+    const existingMaterial = await signer.loadActiveSigningKeyMaterial(tenant.id);
+
+    if (existingMaterial === null) {
+      await signer.ensureActiveSigningKeyMaterial(tenant.id);
+    }
+  }
+};
+
 class D1ClientRepository implements ClientRepository {
   constructor(private readonly db: ReturnType<typeof drizzle>) {}
 
@@ -1522,8 +1540,7 @@ export const createRuntimeRepositories = async (config: RuntimeConfig) => {
     keyRepository
   });
 
-  await rotateSigningKeysForTenants({
-    db,
+  await ensureTenantSigningKeys({
     signer,
     tenantRepository
   });
