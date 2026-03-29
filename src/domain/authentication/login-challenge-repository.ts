@@ -7,7 +7,8 @@ export interface AuthenticationLoginChallengeRepository {
   setMfaState(
     challengeId: string,
     authenticatedUserId: string,
-    mfaState: LoginChallenge["mfaState"]
+    mfaState: LoginChallenge["mfaState"],
+    authMethod?: LoginChallenge["authMethod"]
   ): Promise<void>;
   /** Increment mfa_attempt_count. Returns new count. */
   incrementMfaAttemptCount(challengeId: string): Promise<number>;

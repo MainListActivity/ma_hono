@@ -11,16 +11,39 @@ export type ClientConsentPolicy = "skip" | "require";
 
 export type ClientProfile = "spa" | "web" | "native";
 
+export type ClientAuthMethodName =
+  | "password"
+  | "magic_link"
+  | "passkey"
+  | "google"
+  | "apple"
+  | "facebook"
+  | "wechat";
+
+export const DEFAULT_TOKEN_TTL_SECONDS = 60 * 60;
+export const REFRESH_TOKEN_ABSOLUTE_TTL_SECONDS = 60 * 24 * 60 * 60;
+
+export interface ClientPrimaryAuthMethodPolicy {
+  enabled: boolean;
+  allowRegistration: boolean;
+  tokenTtlSeconds?: number;
+}
+
+export interface ClientSocialAuthMethodPolicy {
+  enabled: boolean;
+  tokenTtlSeconds?: number;
+}
+
 export interface ClientAuthMethodPolicy {
   clientId: string; // oidc_clients.id (UUID), NOT the OAuth client_id string
   tenantId: string;
-  password: { enabled: boolean; allowRegistration: boolean };
-  emailMagicLink: { enabled: boolean; allowRegistration: boolean };
-  passkey: { enabled: boolean; allowRegistration: boolean };
-  google: { enabled: boolean };
-  apple: { enabled: boolean };
-  facebook: { enabled: boolean };
-  wechat: { enabled: boolean };
+  password: ClientPrimaryAuthMethodPolicy;
+  emailMagicLink: ClientPrimaryAuthMethodPolicy;
+  passkey: ClientPrimaryAuthMethodPolicy;
+  google: ClientSocialAuthMethodPolicy;
+  apple: ClientSocialAuthMethodPolicy;
+  facebook: ClientSocialAuthMethodPolicy;
+  wechat: ClientSocialAuthMethodPolicy;
   mfaRequired: boolean;
 }
 

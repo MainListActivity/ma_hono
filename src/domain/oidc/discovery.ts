@@ -23,7 +23,7 @@ export const buildDiscoveryMetadata = (
   registration_endpoint: `${issuerContext.issuer}/connect/register`,
   authorization_endpoint: `${issuerContext.issuer}/authorize`,
   token_endpoint: `${issuerContext.issuer}/token`,
-  grant_types_supported: ["authorization_code"],
+  grant_types_supported: ["authorization_code", "refresh_token"],
   response_types_supported: ["code"],
   code_challenge_methods_supported: ["S256"],
   scopes_supported: ["openid"],

@@ -3,7 +3,9 @@ import { describe, expect, it } from "vitest";
 
 import { MemoryAuditRepository } from "../../src/adapters/db/memory/memory-audit-repository";
 import { MemoryAuthorizationCodeRepository } from "../../src/adapters/db/memory/memory-authorization-code-repository";
+import { MemoryClientAuthMethodPolicyRepository } from "../../src/adapters/db/memory/memory-client-auth-method-policy-repository";
 import { MemoryClientRepository } from "../../src/adapters/db/memory/memory-client-repository";
+import { MemoryRefreshTokenRepository } from "../../src/adapters/db/memory/memory-refresh-token-repository";
 import { MemoryTenantRepository } from "../../src/adapters/db/memory/memory-tenant-repository";
 import { MemoryTotpRepository } from "../../src/adapters/db/memory/memory-totp-repository";
 import { MemoryMfaPasskeyChallengeRepository } from "../../src/adapters/db/memory/memory-mfa-passkey-challenge-repository";
@@ -206,6 +208,48 @@ const exchangeCode = async ({
   });
 };
 
+const exchangeRefreshToken = async ({
+  app,
+  clientId,
+  refreshToken,
+  requestUrl,
+  secret,
+  useBasicAuth
+}: {
+  app: ReturnType<typeof createApp>;
+  clientId: string;
+  refreshToken: string;
+  requestUrl: string;
+  secret: string | null;
+  useBasicAuth: boolean;
+}) => {
+  const body = new URLSearchParams({
+    grant_type: "refresh_token",
+    refresh_token: refreshToken
+  });
+
+  if (!useBasicAuth) {
+    body.set("client_id", clientId);
+    if (secret !== null) {
+      body.set("client_secret", secret);
+    }
+  }
+
+  const headers = new Headers({
+    "content-type": "application/x-www-form-urlencoded"
+  });
+
+  if (useBasicAuth && secret !== null) {
+    headers.set("authorization", `Basic ${btoa(`${clientId}:${secret}`)}`);
+  }
+
+  return app.request(requestUrl, {
+    method: "POST",
+    headers,
+    body: body.toString()
+  });
+};
+
 describe("/token", () => {
   it("returns id_token and signed jwt access_token for valid code + PKCE exchange", async () => {
     const { material, signer } = await createSigner();
@@ -253,6 +297,7 @@ describe("/token", () => {
     const body = (await response.json()) as {
       access_token: string;
       id_token: string;
+      refresh_token?: string;
       token_type: string;
       expires_in: number;
     };
@@ -261,6 +306,7 @@ describe("/token", () => {
     expect(body.expires_in).toBeGreaterThan(0);
     expect(body.id_token).toBeTypeOf("string");
     expect(body.access_token).toBeTypeOf("string");
+    expect(body.refresh_token).toBeTypeOf("string");
     expect(response.headers.get("cache-control")).toBe("no-store");
     expect(response.headers.get("pragma")).toBe("no-cache");
 
@@ -279,6 +325,196 @@ describe("/token", () => {
     expect(idToken.payload.auth_time).toBeUndefined();
     expect(accessToken.payload.sub).toBe("user_123");
     expect(accessToken.payload.scope).toBe("openid profile");
+  });
+
+  it("uses the auth-method token TTL for expires_in and JWT exp", async () => {
+    const { material, signer } = await createSigner();
+    const client = await createClient({
+      authMethod: "client_secret_basic",
+      clientId: "client_ttl_basic",
+      secret: "ttl-secret"
+    });
+    const codeRepository = new MemoryAuthorizationCodeRepository();
+    const policyRepository = new MemoryClientAuthMethodPolicyRepository();
+
+    await policyRepository.create({
+      clientId: client.id,
+      tenantId: client.tenantId,
+      password: {
+        enabled: true,
+        allowRegistration: false,
+        tokenTtlSeconds: 1800
+      },
+      emailMagicLink: {
+        enabled: false,
+        allowRegistration: false,
+        tokenTtlSeconds: 3600
+      },
+      passkey: {
+        enabled: false,
+        allowRegistration: false,
+        tokenTtlSeconds: 3600
+      },
+      google: { enabled: false, tokenTtlSeconds: 3600 },
+      apple: { enabled: false, tokenTtlSeconds: 3600 },
+      facebook: { enabled: false, tokenTtlSeconds: 3600 },
+      wechat: { enabled: false, tokenTtlSeconds: 3600 },
+      mfaRequired: false
+    } as any);
+
+    await codeRepository.create({
+      id: "authorization_code_ttl_password",
+      tenantId: "tenant_acme",
+      issuer: "https://idp.example.test/t/acme",
+      clientId: client.clientId,
+      userId: "user_123",
+      redirectUri: "https://app.acme.test/callback",
+      scope: "openid profile",
+      nonce: "nonce_ttl",
+      codeChallenge: await sha256Base64Url("verifier-123456"),
+      codeChallengeMethod: "S256",
+      tokenHash: await sha256Base64Url("code-ttl-password"),
+      expiresAt: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+      consumedAt: null,
+      createdAt: new Date().toISOString(),
+      authMethod: "password"
+    } as any);
+
+    const app = createApp({
+      auditRepository: new MemoryAuditRepository(),
+      authorizationCodeRepository: codeRepository,
+      clientAuthMethodPolicyRepository: policyRepository,
+      clientRepository: new MemoryClientRepository([client]),
+      adminBootstrapPasswordHash: "",
+      adminWhitelist: [],
+      managementApiToken: "",
+      oidcHost: "idp.example.test",
+      authDomain: "auth.example.test",
+      signer,
+      tenantRepository,
+      totpRepository: new MemoryTotpRepository(),
+      mfaPasskeyChallengeRepository: new MemoryMfaPasskeyChallengeRepository(),
+      totpEncryptionKey: new Uint8Array(32).fill(0)
+    });
+
+    const response = await exchangeCode({
+      app,
+      clientId: client.clientId,
+      code: "code-ttl-password",
+      codeVerifier: "verifier-123456",
+      redirectUri: "https://app.acme.test/callback",
+      secret: "ttl-secret",
+      useBasicAuth: true,
+      requestUrl: "https://idp.example.test/t/acme/token"
+    });
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      access_token: string;
+      id_token: string;
+      expires_in: number;
+    };
+    expect(body.expires_in).toBe(1800);
+
+    const verificationKey = await importJWK(material.key.publicJwk as JWK, "RS256");
+    const idToken = await jwtVerify(body.id_token, verificationKey, {
+      issuer: "https://idp.example.test/t/acme",
+      audience: client.clientId
+    });
+    const accessToken = await jwtVerify(body.access_token, verificationKey, {
+      issuer: "https://idp.example.test/t/acme",
+      audience: client.clientId
+    });
+
+    expect(idToken.payload.exp! - idToken.payload.iat!).toBe(1800);
+    expect(accessToken.payload.exp! - accessToken.payload.iat!).toBe(1800);
+  });
+
+  it("rotates refresh tokens and rejects refresh token reuse", async () => {
+    const { signer } = await createSigner();
+    const client = await createClient({
+      authMethod: "client_secret_post",
+      clientId: "client_refresh_rotation",
+      secret: "post-secret"
+    });
+    const codeRepository = new MemoryAuthorizationCodeRepository();
+    const refreshTokenRepository = new MemoryRefreshTokenRepository();
+
+    await seedAuthorizationCode({
+      code: "code-refresh-rotation",
+      clientId: client.clientId,
+      codeRepository,
+      expiresAt: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+      issuer: "https://idp.example.test/t/acme"
+    });
+
+    const app = createApp({
+      auditRepository: new MemoryAuditRepository(),
+      authorizationCodeRepository: codeRepository,
+      clientRepository: new MemoryClientRepository([client]),
+      refreshTokenRepository,
+      adminBootstrapPasswordHash: "",
+      adminWhitelist: [],
+      managementApiToken: "",
+      oidcHost: "idp.example.test",
+      authDomain: "auth.example.test",
+      signer,
+      tenantRepository,
+      totpRepository: new MemoryTotpRepository(),
+      mfaPasskeyChallengeRepository: new MemoryMfaPasskeyChallengeRepository(),
+      totpEncryptionKey: new Uint8Array(32).fill(0)
+    });
+
+    const initialResponse = await exchangeCode({
+      app,
+      clientId: client.clientId,
+      code: "code-refresh-rotation",
+      codeVerifier: "verifier-123456",
+      redirectUri: "https://app.acme.test/callback",
+      secret: "post-secret",
+      useBasicAuth: false,
+      requestUrl: "https://idp.example.test/t/acme/token"
+    });
+
+    expect(initialResponse.status).toBe(200);
+    const initialBody = (await initialResponse.json()) as {
+      refresh_token?: string;
+      access_token: string;
+      id_token: string;
+    };
+    expect(initialBody.refresh_token).toBeTypeOf("string");
+
+    const rotatedResponse = await exchangeRefreshToken({
+      app,
+      clientId: client.clientId,
+      refreshToken: initialBody.refresh_token!,
+      requestUrl: "https://idp.example.test/t/acme/token",
+      secret: "post-secret",
+      useBasicAuth: false
+    });
+
+    expect(rotatedResponse.status).toBe(200);
+    const rotatedBody = (await rotatedResponse.json()) as {
+      refresh_token?: string;
+      access_token: string;
+      id_token: string;
+    };
+    expect(rotatedBody.refresh_token).toBeTypeOf("string");
+    expect(rotatedBody.refresh_token).not.toBe(initialBody.refresh_token);
+    expect(rotatedBody.access_token).not.toBe(initialBody.access_token);
+    expect(rotatedBody.id_token).not.toBe(initialBody.id_token);
+
+    const reusedResponse = await exchangeRefreshToken({
+      app,
+      clientId: client.clientId,
+      refreshToken: initialBody.refresh_token!,
+      requestUrl: "https://idp.example.test/t/acme/token",
+      secret: "post-secret",
+      useBasicAuth: false
+    });
+
+    expect(reusedResponse.status).toBe(400);
+    await expect(reusedResponse.json()).resolves.toEqual({ error: "invalid_grant" });
   });
 
   it("rejects reused and expired authorization codes", async () => {

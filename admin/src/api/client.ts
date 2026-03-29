@@ -162,13 +162,37 @@ export interface ClientSummary {
 }
 
 export interface AuthMethodPolicyWire {
-  password: { enabled: boolean; allow_registration: boolean };
-  magic_link: { enabled: boolean; allow_registration: boolean };
-  passkey: { enabled: boolean; allow_registration: boolean };
-  google: { enabled: boolean };
-  apple: { enabled: boolean };
-  facebook: { enabled: boolean };
-  wechat: { enabled: boolean };
+  password: {
+    enabled: boolean;
+    allow_registration: boolean;
+    token_ttl_seconds: number;
+  };
+  magic_link: {
+    enabled: boolean;
+    allow_registration: boolean;
+    token_ttl_seconds: number;
+  };
+  passkey: {
+    enabled: boolean;
+    allow_registration: boolean;
+    token_ttl_seconds: number;
+  };
+  google: {
+    enabled: boolean;
+    token_ttl_seconds: number;
+  };
+  apple: {
+    enabled: boolean;
+    token_ttl_seconds: number;
+  };
+  facebook: {
+    enabled: boolean;
+    token_ttl_seconds: number;
+  };
+  wechat: {
+    enabled: boolean;
+    token_ttl_seconds: number;
+  };
   mfa_required: boolean;
 }
 

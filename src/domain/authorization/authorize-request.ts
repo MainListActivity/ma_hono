@@ -166,6 +166,7 @@ const buildValidatedAuthorizeRequest = async ({
 };
 
 export const authorizeRequest = async ({
+  authMethod = null,
   authorizationCodeRepository,
   clientRepository,
   issuerContext,
@@ -174,6 +175,7 @@ export const authorizeRequest = async ({
   request,
   session
 }: {
+  authMethod?: AuthorizationCode["authMethod"];
   authorizationCodeRepository: AuthorizationCodeRepository;
   clientRepository: ClientRepository;
   issuerContext: ResolvedIssuerContext;
@@ -199,6 +201,7 @@ export const authorizeRequest = async ({
       tenantId: validatedRequest.tenantId,
       issuer: validatedRequest.issuer,
       clientId: validatedRequest.clientId,
+      authMethod: null,
       redirectUri: validatedRequest.redirectUri,
       scope: validatedRequest.scope,
       state: validatedRequest.state ?? "",
@@ -238,6 +241,7 @@ export const authorizeRequest = async ({
     tenantId: validatedRequest.tenantId,
     issuer: validatedRequest.issuer,
     clientId: validatedRequest.clientId,
+    authMethod,
     userId: session.userId,
     redirectUri: validatedRequest.redirectUri,
     scope: validatedRequest.scope,

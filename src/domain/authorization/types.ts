@@ -1,4 +1,4 @@
-import type { Client } from "../clients/types";
+import type { Client, ClientAuthMethodName } from "../clients/types";
 
 export type PkceCodeChallengeMethod = "S256";
 
@@ -36,6 +36,7 @@ export interface LoginChallenge {
   tenantId: string;
   issuer: string;
   clientId: string;
+  authMethod?: ClientAuthMethodName | null;
   redirectUri: string;
   scope: string;
   state: string;
@@ -58,6 +59,7 @@ export interface AuthorizationCode {
   tenantId: string;
   issuer: string;
   clientId: string;
+  authMethod?: ClientAuthMethodName | null;
   userId: string;
   redirectUri: string;
   scope: string;

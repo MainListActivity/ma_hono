@@ -109,6 +109,77 @@ describe("PATCH /admin/tenants/:tenantId/clients/:clientId/auth-method-policy", 
     expect(patchBody.auth_method_policy).toHaveProperty("mfa_required", true);
   });
 
+  it("accepts and returns token_ttl_seconds for first-party auth methods", async () => {
+    const { app, clientRepository } = makeApp([acmeTenant]);
+    const token = await loginAs(app);
+
+    await clientRepository.create({
+      id: "client_ttl_1",
+      tenantId: "tenant_acme",
+      clientId: "ttl-client",
+      clientName: "TTL Client",
+      applicationType: "web",
+      grantTypes: ["authorization_code"],
+      redirectUris: ["https://app.example.test/callback"],
+      responseTypes: ["code"],
+      tokenEndpointAuthMethod: "none",
+      clientSecretHash: null,
+      trustLevel: "first_party_trusted",
+      consentPolicy: "skip",
+      clientProfile: "web",
+      accessTokenAudience: null
+    });
+
+    const patchRes = await app.request(
+      "https://idp.example.test/admin/tenants/tenant_acme/clients/ttl-client/auth-method-policy",
+      {
+        method: "PATCH",
+        headers: {
+          authorization: `Bearer ${token}`,
+          "content-type": "application/json"
+        },
+        body: JSON.stringify({
+          password: {
+            enabled: true,
+            allow_registration: false,
+            token_ttl_seconds: 1800
+          },
+          magic_link: {
+            enabled: true,
+            allow_registration: true,
+            token_ttl_seconds: 7200
+          },
+          passkey: {
+            enabled: true,
+            allow_registration: false,
+            token_ttl_seconds: 900
+          }
+        })
+      }
+    );
+
+    expect(patchRes.status).toBe(200);
+    await expect(patchRes.json()).resolves.toMatchObject({
+      auth_method_policy: {
+        password: {
+          enabled: true,
+          allow_registration: false,
+          token_ttl_seconds: 1800
+        },
+        magic_link: {
+          enabled: true,
+          allow_registration: true,
+          token_ttl_seconds: 7200
+        },
+        passkey: {
+          enabled: true,
+          allow_registration: false,
+          token_ttl_seconds: 900
+        }
+      }
+    });
+  });
+
   it("should toggle mfa_required from true to false", async () => {
     const { app, clientRepository } = makeApp([acmeTenant]);
     const token = await loginAs(app);
@@ -160,5 +231,49 @@ describe("PATCH /admin/tenants/:tenantId/clients/:clientId/auth-method-policy", 
     expect(patchRes.status).toBe(200);
     const patchBody = (await patchRes.json()) as Record<string, unknown>;
     expect(patchBody.auth_method_policy).toHaveProperty("mfa_required", false);
+  });
+
+  it("returns synthesized default token_ttl_seconds values on client detail reads", async () => {
+    const { app, clientRepository } = makeApp([acmeTenant]);
+    const token = await loginAs(app);
+
+    await clientRepository.create({
+      id: "client_default_ttl",
+      tenantId: "tenant_acme",
+      clientId: "default-ttl-client",
+      clientName: "Default TTL Client",
+      applicationType: "web",
+      grantTypes: ["authorization_code"],
+      redirectUris: ["https://app.example.test/callback"],
+      responseTypes: ["code"],
+      tokenEndpointAuthMethod: "none",
+      clientSecretHash: null,
+      trustLevel: "first_party_trusted",
+      consentPolicy: "skip",
+      clientProfile: "web",
+      accessTokenAudience: null
+    });
+
+    const response = await app.request(
+      "https://idp.example.test/admin/tenants/tenant_acme/clients/default-ttl-client",
+      {
+        headers: {
+          authorization: `Bearer ${token}`
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      auth_method_policy: {
+        password: { token_ttl_seconds: 3600 },
+        magic_link: { token_ttl_seconds: 3600 },
+        passkey: { token_ttl_seconds: 3600 },
+        google: { token_ttl_seconds: 3600 },
+        apple: { token_ttl_seconds: 3600 },
+        facebook: { token_ttl_seconds: 3600 },
+        wechat: { token_ttl_seconds: 3600 }
+      }
+    });
   });
 });

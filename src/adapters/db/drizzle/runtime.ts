@@ -12,7 +12,10 @@ import type {
   ClientAuthMethodPolicyRepository,
   ClientRepository
 } from "../../../domain/clients/repository";
-import type { Client, ClientAuthMethodPolicy } from "../../../domain/clients/types";
+import type {
+  Client,
+  ClientAuthMethodPolicy
+} from "../../../domain/clients/types";
 import type {
   AuthorizationCodeRepository,
   LoginChallengeRepository
@@ -22,6 +25,10 @@ import type {
   AuthorizationCode,
   LoginChallenge
 } from "../../../domain/authorization/types";
+import type {
+  RefreshTokenRecord,
+  RefreshTokenRepository
+} from "../../../domain/tokens/refresh-token-repository";
 import type {
   PasskeyCredential,
   PasskeyRepository
@@ -60,6 +67,7 @@ import {
   emailLoginTokens,
   loginChallenges,
   oidcClients,
+  refreshTokens,
   signingKeys,
   tenantAuthMethodPolicies,
   tenantIssuers,
@@ -624,6 +632,7 @@ class D1LoginChallengeRepository
       tenantId: challenge.tenantId,
       issuer: challenge.issuer,
       clientId: challenge.clientId,
+      authMethod: challenge.authMethod ?? null,
       redirectUri: challenge.redirectUri,
       scope: challenge.scope,
       state: challenge.state,
@@ -677,6 +686,7 @@ class D1LoginChallengeRepository
       tenantId: row.tenantId,
       issuer: row.issuer,
       clientId: row.clientId,
+      authMethod: row.authMethod as LoginChallenge["authMethod"],
       redirectUri: row.redirectUri,
       scope: row.scope,
       state: row.state,
@@ -695,9 +705,18 @@ class D1LoginChallengeRepository
     };
   }
 
-  async setMfaState(challengeId: string, authenticatedUserId: string, mfaState: LoginChallenge["mfaState"]): Promise<void> {
+  async setMfaState(
+    challengeId: string,
+    authenticatedUserId: string,
+    mfaState: LoginChallenge["mfaState"],
+    authMethod?: LoginChallenge["authMethod"]
+  ): Promise<void> {
     await this.db.update(loginChallenges)
-      .set({ authenticatedUserId, mfaState })
+      .set({
+        authenticatedUserId,
+        mfaState,
+        ...(authMethod === undefined ? {} : { authMethod })
+      })
       .where(eq(loginChallenges.id, challengeId));
   }
 
@@ -747,6 +766,7 @@ class D1AuthorizationCodeRepository implements AuthorizationCodeRepository {
       tenantId: code.tenantId,
       issuer: code.issuer,
       clientId: code.clientId,
+      authMethod: code.authMethod ?? null,
       userId: code.userId,
       redirectUri: code.redirectUri,
       scope: code.scope,
@@ -781,6 +801,7 @@ class D1AuthorizationCodeRepository implements AuthorizationCodeRepository {
       tenantId: row.tenantId,
       issuer: row.issuer,
       clientId: row.clientId,
+      authMethod: row.authMethod as AuthorizationCode["authMethod"],
       userId: row.userId,
       redirectUri: row.redirectUri,
       scope: row.scope,
@@ -909,13 +930,25 @@ const toClientAuthMethodPolicy = (
 ): ClientAuthMethodPolicy => ({
   clientId: row.clientId,
   tenantId: row.tenantId,
-  password: { enabled: row.passwordEnabled, allowRegistration: row.passwordAllowRegistration },
-  emailMagicLink: { enabled: row.magicLinkEnabled, allowRegistration: row.magicLinkAllowRegistration },
-  passkey: { enabled: row.passkeyEnabled, allowRegistration: row.passkeyAllowRegistration },
-  google: { enabled: row.googleEnabled },
-  apple: { enabled: row.appleEnabled },
-  facebook: { enabled: row.facebookEnabled },
-  wechat: { enabled: row.wechatEnabled },
+  password: {
+    enabled: row.passwordEnabled,
+    allowRegistration: row.passwordAllowRegistration,
+    tokenTtlSeconds: row.passwordTokenTtlSeconds
+  },
+  emailMagicLink: {
+    enabled: row.magicLinkEnabled,
+    allowRegistration: row.magicLinkAllowRegistration,
+    tokenTtlSeconds: row.magicLinkTokenTtlSeconds
+  },
+  passkey: {
+    enabled: row.passkeyEnabled,
+    allowRegistration: row.passkeyAllowRegistration,
+    tokenTtlSeconds: row.passkeyTokenTtlSeconds
+  },
+  google: { enabled: row.googleEnabled, tokenTtlSeconds: row.googleTokenTtlSeconds },
+  apple: { enabled: row.appleEnabled, tokenTtlSeconds: row.appleTokenTtlSeconds },
+  facebook: { enabled: row.facebookEnabled, tokenTtlSeconds: row.facebookTokenTtlSeconds },
+  wechat: { enabled: row.wechatEnabled, tokenTtlSeconds: row.wechatTokenTtlSeconds },
   mfaRequired: row.mfaRequired
 });
 
@@ -1263,14 +1296,21 @@ class D1ClientAuthMethodPolicyRepository implements ClientAuthMethodPolicyReposi
       tenantId: policy.tenantId,
       passwordEnabled: policy.password.enabled,
       passwordAllowRegistration: policy.password.allowRegistration,
+      passwordTokenTtlSeconds: policy.password.tokenTtlSeconds ?? 3600,
       magicLinkEnabled: policy.emailMagicLink.enabled,
       magicLinkAllowRegistration: policy.emailMagicLink.allowRegistration,
+      magicLinkTokenTtlSeconds: policy.emailMagicLink.tokenTtlSeconds ?? 3600,
       passkeyEnabled: policy.passkey.enabled,
       passkeyAllowRegistration: policy.passkey.allowRegistration,
+      passkeyTokenTtlSeconds: policy.passkey.tokenTtlSeconds ?? 3600,
       googleEnabled: policy.google.enabled,
+      googleTokenTtlSeconds: policy.google.tokenTtlSeconds ?? 3600,
       appleEnabled: policy.apple.enabled,
+      appleTokenTtlSeconds: policy.apple.tokenTtlSeconds ?? 3600,
       facebookEnabled: policy.facebook.enabled,
+      facebookTokenTtlSeconds: policy.facebook.tokenTtlSeconds ?? 3600,
       wechatEnabled: policy.wechat.enabled,
+      wechatTokenTtlSeconds: policy.wechat.tokenTtlSeconds ?? 3600,
       mfaRequired: policy.mfaRequired,
       createdAt: now,
       updatedAt: now
@@ -1293,18 +1333,94 @@ class D1ClientAuthMethodPolicyRepository implements ClientAuthMethodPolicyReposi
       .set({
         passwordEnabled: policy.password.enabled,
         passwordAllowRegistration: policy.password.allowRegistration,
+        passwordTokenTtlSeconds: policy.password.tokenTtlSeconds ?? 3600,
         magicLinkEnabled: policy.emailMagicLink.enabled,
         magicLinkAllowRegistration: policy.emailMagicLink.allowRegistration,
+        magicLinkTokenTtlSeconds: policy.emailMagicLink.tokenTtlSeconds ?? 3600,
         passkeyEnabled: policy.passkey.enabled,
         passkeyAllowRegistration: policy.passkey.allowRegistration,
+        passkeyTokenTtlSeconds: policy.passkey.tokenTtlSeconds ?? 3600,
         googleEnabled: policy.google.enabled,
+        googleTokenTtlSeconds: policy.google.tokenTtlSeconds ?? 3600,
         appleEnabled: policy.apple.enabled,
+        appleTokenTtlSeconds: policy.apple.tokenTtlSeconds ?? 3600,
         facebookEnabled: policy.facebook.enabled,
+        facebookTokenTtlSeconds: policy.facebook.tokenTtlSeconds ?? 3600,
         wechatEnabled: policy.wechat.enabled,
+        wechatTokenTtlSeconds: policy.wechat.tokenTtlSeconds ?? 3600,
         mfaRequired: policy.mfaRequired,
         updatedAt: now
       })
       .where(eq(clientAuthMethodPolicies.clientId, policy.clientId));
+  }
+}
+
+class D1RefreshTokenRepository implements RefreshTokenRepository {
+  constructor(private readonly db: ReturnType<typeof drizzle>) {}
+
+  async create(record: RefreshTokenRecord): Promise<void> {
+    await this.db.insert(refreshTokens).values({
+      id: record.id,
+      tenantId: record.tenantId,
+      issuer: record.issuer,
+      clientId: record.clientId,
+      userId: record.userId,
+      scope: record.scope,
+      authMethod: record.authMethod,
+      tokenHash: record.tokenHash,
+      absoluteExpiresAt: record.absoluteExpiresAt,
+      consumedAt: record.consumedAt,
+      parentTokenId: record.parentTokenId,
+      replacedByTokenId: record.replacedByTokenId,
+      createdAt: record.createdAt
+    });
+  }
+
+  async findActiveByTokenHash(tokenHash: string): Promise<RefreshTokenRecord | null> {
+    const [row] = await this.db
+      .select()
+      .from(refreshTokens)
+      .where(
+        and(eq(refreshTokens.tokenHash, tokenHash), isNull(refreshTokens.consumedAt))
+      )
+      .limit(1);
+
+    if (row === undefined) {
+      return null;
+    }
+
+    return {
+      id: row.id,
+      tenantId: row.tenantId,
+      issuer: row.issuer,
+      clientId: row.clientId,
+      userId: row.userId,
+      scope: row.scope,
+      authMethod: row.authMethod as RefreshTokenRecord["authMethod"],
+      tokenHash: row.tokenHash,
+      absoluteExpiresAt: row.absoluteExpiresAt,
+      consumedAt: row.consumedAt,
+      parentTokenId: row.parentTokenId,
+      replacedByTokenId: row.replacedByTokenId,
+      createdAt: row.createdAt
+    };
+  }
+
+  async consume(
+    id: string,
+    consumedAt: string,
+    replacedByTokenId: string | null = null
+  ): Promise<boolean> {
+    const [row] = await this.db
+      .update(refreshTokens)
+      .set({
+        consumedAt,
+        replacedByTokenId
+      })
+      .where(and(eq(refreshTokens.id, id), isNull(refreshTokens.consumedAt)))
+      .returning({ id: refreshTokens.id });
+
+    return row !== undefined;
   }
 }
 
@@ -1520,6 +1636,7 @@ export const createRuntimeRepositories = async (config: RuntimeConfig) => {
       emailLoginTokens,
       loginChallenges,
       oidcClients,
+      refreshTokens,
       signingKeys,
       tenantAuthMethodPolicies,
       tenantIssuers,
@@ -1563,6 +1680,7 @@ export const createRuntimeRepositories = async (config: RuntimeConfig) => {
     registrationAccessTokenRepository: new KvRegistrationAccessTokenRepository(
       config.registrationTokensKv
     ),
+    refreshTokenRepository: new D1RefreshTokenRepository(db),
     tenantRepository,
     totpRepository: new D1TotpRepository(db),
     mfaPasskeyChallengeRepository: new D1MfaPasskeyChallengeRepository(db),

@@ -11,6 +11,7 @@ export interface IdTokenClaims extends Record<string, unknown> {
   exp: number;
   iat: number;
   iss: string;
+  jti?: string;
   nonce?: string;
   sub: string;
 }
@@ -21,6 +22,7 @@ export interface AccessTokenClaims extends Record<string, unknown> {
   exp: number;
   iat: number;
   iss: string;
+  jti?: string;
   scope: string;
   sub: string;
 }
@@ -30,13 +32,20 @@ export const buildIdTokenClaims = ({
   issuer,
   nonce,
   nowSeconds,
+  tokenId,
+  ttlSeconds = 5 * 60,
   userId
-}: BaseTokenClaimsInput & { nonce: string | null }): IdTokenClaims => ({
+}: BaseTokenClaimsInput & {
+  nonce: string | null;
+  tokenId?: string;
+  ttlSeconds?: number;
+}): IdTokenClaims => ({
   iss: issuer,
   sub: userId,
   aud: audience,
   iat: nowSeconds,
-  exp: nowSeconds + 5 * 60,
+  exp: nowSeconds + ttlSeconds,
+  ...(tokenId === undefined ? {} : { jti: tokenId }),
   ...(nonce === null ? {} : { nonce })
 });
 
@@ -47,10 +56,14 @@ export const buildAccessTokenClaims = ({
   issuer,
   nowSeconds,
   scope,
+  tokenId,
+  ttlSeconds = 60 * 60,
   userId
 }: BaseTokenClaimsInput & {
   clientId: string;
   extraClaims?: Record<string, unknown>;
+  tokenId?: string;
+  ttlSeconds?: number;
 }): AccessTokenClaims => ({
   ...extraClaims,
   iss: issuer,
@@ -58,6 +71,7 @@ export const buildAccessTokenClaims = ({
   aud: audience,
   client_id: clientId,
   iat: nowSeconds,
-  exp: nowSeconds + 60 * 60,
+  exp: nowSeconds + ttlSeconds,
+  ...(tokenId === undefined ? {} : { jti: tokenId }),
   scope
 });

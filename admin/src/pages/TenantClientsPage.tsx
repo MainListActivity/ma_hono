@@ -128,13 +128,13 @@ function AuthMethodPolicyModal({
   const [mfaRequired, setMfaRequired] = useState(false);
 
   const defaultPolicy = (): AuthMethodPolicyWire => ({
-    password: { enabled: false, allow_registration: false },
-    magic_link: { enabled: false, allow_registration: false },
-    passkey: { enabled: false, allow_registration: false },
-    google: { enabled: false },
-    apple: { enabled: false },
-    facebook: { enabled: false },
-    wechat: { enabled: false },
+    password: { enabled: false, allow_registration: false, token_ttl_seconds: 3600 },
+    magic_link: { enabled: false, allow_registration: false, token_ttl_seconds: 3600 },
+    passkey: { enabled: false, allow_registration: false, token_ttl_seconds: 3600 },
+    google: { enabled: false, token_ttl_seconds: 3600 },
+    apple: { enabled: false, token_ttl_seconds: 3600 },
+    facebook: { enabled: false, token_ttl_seconds: 3600 },
+    wechat: { enabled: false, token_ttl_seconds: 3600 },
     mfa_required: false
   });
 
@@ -228,17 +228,17 @@ function AuthMethodPolicyModal({
         </div>
       )}
       <div style={{ marginBottom: '20px' }}>
-        <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1.5fr', padding: '6px 0', borderBottom: '1px solid var(--border)', marginBottom: '8px' }}>
-          {['METHOD', 'ENABLED', 'ALLOW REG.'].map(h => (
+        <div style={{ display: 'grid', gridTemplateColumns: '1.6fr 0.9fr 1.2fr 1.2fr', padding: '6px 0', borderBottom: '1px solid var(--border)', marginBottom: '8px', gap: '8px' }}>
+          {['METHOD', 'ENABLED', 'ALLOW REG.', 'TTL (SEC)'].map(h => (
             <span key={h} className="font-display" style={{ fontSize: '9px', letterSpacing: '0.15em', color: 'var(--text-dim)' }}>{h}</span>
           ))}
         </div>
         {policy && methods.map(({ key, label, hasReg }, i) => {
-          const val = policy[key] as { enabled: boolean; allow_registration?: boolean };
+          const val = policy[key] as { enabled: boolean; allow_registration?: boolean; token_ttl_seconds: number };
           return (
             <div key={key}>
               {i === 3 && <div style={{ borderTop: '1px solid var(--border)', margin: '8px 0' }} />}
-              <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1.5fr', padding: '6px 0', alignItems: 'center' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1.6fr 0.9fr 1.2fr 1.2fr', padding: '6px 0', alignItems: 'center', gap: '8px' }}>
                 <span style={{ fontSize: '13px', color: 'var(--text-primary)' }}>{label}</span>
                 <Toggle
                   active={val.enabled}
@@ -252,6 +252,23 @@ function AuthMethodPolicyModal({
                 ) : (
                   <span style={{ fontSize: '11px', color: 'var(--text-dim)', fontFamily: "'Space Mono', monospace" }}>—</span>
                 )}
+                <input
+                  type="number"
+                  min={1}
+                  step={1}
+                  value={val.token_ttl_seconds}
+                  onChange={(e) => {
+                    const nextValue = Number.parseInt(e.target.value, 10);
+                    setPolicy({
+                      ...policy,
+                      [key]: {
+                        ...val,
+                        token_ttl_seconds: Number.isInteger(nextValue) && nextValue > 0 ? nextValue : 1
+                      }
+                    });
+                  }}
+                  style={{ ...inputStyle, padding: '6px 8px', fontFamily: "'Space Mono', monospace" }}
+                />
               </div>
             </div>
           );

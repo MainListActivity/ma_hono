@@ -39,7 +39,11 @@ import {
 } from "../domain/clients/register-client";
 import type { AccessTokenCustomClaim, AccessTokenClaimUserField } from "../domain/clients/access-token-claims-types";
 import { adminClientUpdateSchema } from "../domain/clients/admin-registration-schema";
-import type { ClientAuthMethodPolicy } from "../domain/clients/types";
+import {
+  DEFAULT_TOKEN_TTL_SECONDS,
+  type ClientAuthMethodName,
+  type ClientAuthMethodPolicy
+} from "../domain/clients/types";
 import type { ClientAuthMethodPolicyRepository, ClientRepository } from "../domain/clients/repository";
 import { buildJwks } from "../domain/keys/jwks";
 import type { SigningKeySigner } from "../domain/keys/signer";
@@ -49,6 +53,7 @@ import { resolveIssuerContext, resolveIssuerContextBySlug } from "../domain/tena
 import type { Tenant } from "../domain/tenants/types";
 import { buildDiscoveryMetadata } from "../domain/oidc/discovery";
 import { exchangeAuthorizationCode } from "../domain/tokens/token-service";
+import type { RefreshTokenRepository } from "../domain/tokens/refresh-token-repository";
 import { activateUser } from "../domain/users/activate-user";
 import { hashPassword } from "../domain/users/passwords";
 import { provisionUser } from "../domain/users/provision-user";
@@ -166,7 +171,14 @@ class EmptyAuthenticationLoginChallengeRepository
     return null;
   }
 
-  async setMfaState(): Promise<void> { return; }
+  async setMfaState(
+    _challengeId: string,
+    _authenticatedUserId: string,
+    _mfaState: import("../domain/authorization/types").LoginChallenge["mfaState"],
+    _authMethod?: import("../domain/authorization/types").LoginChallenge["authMethod"]
+  ): Promise<void> {
+    return;
+  }
   async incrementMfaAttemptCount(): Promise<number> { return 0; }
   async incrementEnrollmentAttemptCount(): Promise<number> { return 0; }
   async satisfyMfa(): Promise<void> { return; }
@@ -194,6 +206,20 @@ class EmptyAuthorizationCodeRepository implements AuthorizationCodeRepository {
   }
 
   async consumeById(): Promise<false> {
+    return false;
+  }
+}
+
+class EmptyRefreshTokenRepository implements RefreshTokenRepository {
+  async create(): Promise<void> {
+    return;
+  }
+
+  async findActiveByTokenHash(): Promise<null> {
+    return null;
+  }
+
+  async consume(): Promise<false> {
     return false;
   }
 }
@@ -325,6 +351,7 @@ export interface AppOptions {
   /** OIDC protocol hostname, e.g. "o.maplayer.top". Used to resolve issuer context and build issuer URLs. */
   oidcHost: string;
   registrationAccessTokenRepository?: RegistrationAccessTokenRepository;
+  refreshTokenRepository?: RefreshTokenRepository;
   signer?: SigningKeySigner;
   tenantRepository?: TenantRepository;
   userRepository?: UserRepository;
@@ -363,6 +390,8 @@ export const createApp = (options: AppOptions) => {
   const signer = options.signer;
   const registrationAccessTokenRepository =
     options.registrationAccessTokenRepository ?? new EmptyRegistrationAccessTokenRepository();
+  const refreshTokenRepository =
+    options.refreshTokenRepository ?? new EmptyRefreshTokenRepository();
   const oidcHost = options.oidcHost;
 
   /**
@@ -380,15 +409,70 @@ export const createApp = (options: AppOptions) => {
     return resolveIssuerContext({ requestUrl: context.req.url, oidcHost, tenantRepository });
   };
 
+  const createDefaultClientAuthMethodPolicy = (
+    clientId: string,
+    tenantId: string
+  ): ClientAuthMethodPolicy => ({
+    clientId,
+    tenantId,
+    password: {
+      enabled: false,
+      allowRegistration: false,
+      tokenTtlSeconds: DEFAULT_TOKEN_TTL_SECONDS
+    },
+    emailMagicLink: {
+      enabled: false,
+      allowRegistration: false,
+      tokenTtlSeconds: DEFAULT_TOKEN_TTL_SECONDS
+    },
+    passkey: {
+      enabled: false,
+      allowRegistration: false,
+      tokenTtlSeconds: DEFAULT_TOKEN_TTL_SECONDS
+    },
+    google: { enabled: false, tokenTtlSeconds: DEFAULT_TOKEN_TTL_SECONDS },
+    apple: { enabled: false, tokenTtlSeconds: DEFAULT_TOKEN_TTL_SECONDS },
+    facebook: { enabled: false, tokenTtlSeconds: DEFAULT_TOKEN_TTL_SECONDS },
+    wechat: { enabled: false, tokenTtlSeconds: DEFAULT_TOKEN_TTL_SECONDS },
+    mfaRequired: false
+  });
+
+  const resolveTokenTtl = (value: unknown, fallback: number) =>
+    typeof value === "number" && Number.isInteger(value) && value > 0 ? value : fallback;
+
   const policyToWire = (policy: ClientAuthMethodPolicy | null | undefined) =>
     policy == null ? null : {
-      password: { enabled: policy.password.enabled, allow_registration: policy.password.allowRegistration },
-      magic_link: { enabled: policy.emailMagicLink.enabled, allow_registration: policy.emailMagicLink.allowRegistration },
-      passkey: { enabled: policy.passkey.enabled, allow_registration: policy.passkey.allowRegistration },
-      google: { enabled: policy.google.enabled },
-      apple: { enabled: policy.apple.enabled },
-      facebook: { enabled: policy.facebook.enabled },
-      wechat: { enabled: policy.wechat.enabled },
+      password: {
+        enabled: policy.password.enabled,
+        allow_registration: policy.password.allowRegistration,
+        token_ttl_seconds: policy.password.tokenTtlSeconds ?? DEFAULT_TOKEN_TTL_SECONDS
+      },
+      magic_link: {
+        enabled: policy.emailMagicLink.enabled,
+        allow_registration: policy.emailMagicLink.allowRegistration,
+        token_ttl_seconds: policy.emailMagicLink.tokenTtlSeconds ?? DEFAULT_TOKEN_TTL_SECONDS
+      },
+      passkey: {
+        enabled: policy.passkey.enabled,
+        allow_registration: policy.passkey.allowRegistration,
+        token_ttl_seconds: policy.passkey.tokenTtlSeconds ?? DEFAULT_TOKEN_TTL_SECONDS
+      },
+      google: {
+        enabled: policy.google.enabled,
+        token_ttl_seconds: policy.google.tokenTtlSeconds ?? DEFAULT_TOKEN_TTL_SECONDS
+      },
+      apple: {
+        enabled: policy.apple.enabled,
+        token_ttl_seconds: policy.apple.tokenTtlSeconds ?? DEFAULT_TOKEN_TTL_SECONDS
+      },
+      facebook: {
+        enabled: policy.facebook.enabled,
+        token_ttl_seconds: policy.facebook.tokenTtlSeconds ?? DEFAULT_TOKEN_TTL_SECONDS
+      },
+      wechat: {
+        enabled: policy.wechat.enabled,
+        token_ttl_seconds: policy.wechat.tokenTtlSeconds ?? DEFAULT_TOKEN_TTL_SECONDS
+      },
       mfa_required: policy.mfaRequired
     };
 
@@ -684,9 +768,11 @@ export const createApp = (options: AppOptions) => {
   };
 
   const mfaCheckAfterFirstFactor = async ({
+    authMethod,
     challenge,
     user,
   }: {
+    authMethod: ClientAuthMethodName;
     challenge: import("../domain/authorization/types").LoginChallenge;
     user: { id: string; tenantId: string };
   }): Promise<{
@@ -729,7 +815,12 @@ export const createApp = (options: AppOptions) => {
       mfaState = "pending_enrollment";
     }
 
-    await loginChallengeLookupRepository.setMfaState(challenge.id, user.id, mfaState);
+    await loginChallengeLookupRepository.setMfaState(
+      challenge.id,
+      user.id,
+      mfaState,
+      authMethod
+    );
 
     return { mfaRequired: true, mfaState, hasTotpFallback };
   };
@@ -800,6 +891,7 @@ export const createApp = (options: AppOptions) => {
     }
 
     const mfaCheck = await mfaCheckAfterFirstFactor({
+      authMethod: "password",
       challenge: result.challenge,
       user: result.user
     });
@@ -861,6 +953,7 @@ export const createApp = (options: AppOptions) => {
     );
 
     const authorizationResult = await authorizeRequest({
+      authMethod: "password",
       authorizationCodeRepository,
       clientRepository,
       issuerContext,
@@ -1051,6 +1144,7 @@ export const createApp = (options: AppOptions) => {
     }
 
     const mfaCheckMl = await mfaCheckAfterFirstFactor({
+      authMethod: "magic_link",
       challenge: result.challenge,
       user: result.user
     });
@@ -1110,6 +1204,7 @@ export const createApp = (options: AppOptions) => {
     );
 
     const authorizationResult = await authorizeRequest({
+      authMethod: "magic_link",
       authorizationCodeRepository,
       clientRepository,
       issuerContext,
@@ -1375,6 +1470,7 @@ export const createApp = (options: AppOptions) => {
     }
 
     const mfaCheckPk = await mfaCheckAfterFirstFactor({
+      authMethod: "passkey",
       challenge: result.challenge,
       user: result.user
     });
@@ -1434,6 +1530,7 @@ export const createApp = (options: AppOptions) => {
     );
 
     const authorizationResult = await authorizeRequest({
+      authMethod: "passkey",
       authorizationCodeRepository,
       clientRepository,
       issuerContext,
@@ -1566,6 +1663,7 @@ export const createApp = (options: AppOptions) => {
     );
 
     const authorizationResult = await authorizeRequest({
+      authMethod: challenge.authMethod ?? null,
       authorizationCodeRepository,
       clientRepository,
       issuerContext,
@@ -2043,7 +2141,10 @@ export const createApp = (options: AppOptions) => {
     }
 
     await loginChallengeLookupRepository.setMfaState(
-      challenge.id, challenge.authenticatedUserId, "pending_totp"
+      challenge.id,
+      challenge.authenticatedUserId,
+      "pending_totp",
+      challenge.authMethod ?? undefined
     );
     return context.json({ mfa_state: "pending_totp" }, 200);
   };
@@ -2109,12 +2210,15 @@ export const createApp = (options: AppOptions) => {
     const result = await exchangeAuthorizationCode({
       authorizationCodeRepository,
       accessTokenClaimsRepository,
+      clientAuthMethodPolicyRepository,
       clientRepository,
       issuerContext,
+      refreshTokenRepository,
       request: {
         authorizationHeader: context.req.header("authorization"),
         grantType: String(formData.get("grant_type") ?? ""),
         code: String(formData.get("code") ?? ""),
+        refreshToken: formData.get("refresh_token")?.toString() ?? null,
         redirectUri: String(formData.get("redirect_uri") ?? ""),
         codeVerifier: String(formData.get("code_verifier") ?? ""),
         requestedClientId: formData.get("client_id")?.toString() ?? null,
@@ -2497,6 +2601,7 @@ export const createApp = (options: AppOptions) => {
     );
 
     const authorizationResult = await authorizeRequest({
+      authMethod: "password",
       authorizationCodeRepository,
       clientRepository,
       issuerContext,
@@ -3030,18 +3135,7 @@ export const createApp = (options: AppOptions) => {
     const claims = await accessTokenClaimsRepository.listByClientId(client.id);
     if (policy === null) {
       // Synthesize and persist default all-disabled policy on first access (handles pre-migration clients)
-      policy = {
-        clientId: client.id,
-        tenantId: client.tenantId,
-        password: { enabled: false, allowRegistration: false },
-        emailMagicLink: { enabled: false, allowRegistration: false },
-        passkey: { enabled: false, allowRegistration: false },
-        google: { enabled: false },
-        apple: { enabled: false },
-        facebook: { enabled: false },
-        wechat: { enabled: false },
-        mfaRequired: false
-      };
+      policy = createDefaultClientAuthMethodPolicy(client.id, client.tenantId);
       await clientAuthMethodPolicyRepository.create(policy);
     }
 
@@ -3086,18 +3180,8 @@ export const createApp = (options: AppOptions) => {
     if (client === null || client.tenantId !== tenantId) return context.notFound();
 
     const existingOrNull = await clientAuthMethodPolicyRepository.findByClientId(client.id);
-    const existing = existingOrNull ?? {
-      clientId: client.id,
-      tenantId: client.tenantId,
-      password: { enabled: false, allowRegistration: false },
-      emailMagicLink: { enabled: false, allowRegistration: false },
-      passkey: { enabled: false, allowRegistration: false },
-      google: { enabled: false },
-      apple: { enabled: false },
-      facebook: { enabled: false },
-      wechat: { enabled: false },
-      mfaRequired: false
-    };
+    const existing =
+      existingOrNull ?? createDefaultClientAuthMethodPolicy(client.id, client.tenantId);
 
     let body: Record<string, unknown>;
     try {
@@ -3128,22 +3212,58 @@ export const createApp = (options: AppOptions) => {
       password: {
         enabled: typeof pw.enabled === "boolean" ? pw.enabled : existing.password.enabled,
         allowRegistration: typeof pw.allow_registration === "boolean"
-          ? pw.allow_registration : existing.password.allowRegistration
+          ? pw.allow_registration : existing.password.allowRegistration,
+        tokenTtlSeconds: resolveTokenTtl(
+          pw.token_ttl_seconds,
+          existing.password.tokenTtlSeconds ?? DEFAULT_TOKEN_TTL_SECONDS
+        )
       },
       emailMagicLink: {
         enabled: typeof ml.enabled === "boolean" ? ml.enabled : existing.emailMagicLink.enabled,
         allowRegistration: typeof ml.allow_registration === "boolean"
-          ? ml.allow_registration : existing.emailMagicLink.allowRegistration
+          ? ml.allow_registration : existing.emailMagicLink.allowRegistration,
+        tokenTtlSeconds: resolveTokenTtl(
+          ml.token_ttl_seconds,
+          existing.emailMagicLink.tokenTtlSeconds ?? DEFAULT_TOKEN_TTL_SECONDS
+        )
       },
       passkey: {
         enabled: typeof pk.enabled === "boolean" ? pk.enabled : existing.passkey.enabled,
         allowRegistration: typeof pk.allow_registration === "boolean"
-          ? pk.allow_registration : existing.passkey.allowRegistration
+          ? pk.allow_registration : existing.passkey.allowRegistration,
+        tokenTtlSeconds: resolveTokenTtl(
+          pk.token_ttl_seconds,
+          existing.passkey.tokenTtlSeconds ?? DEFAULT_TOKEN_TTL_SECONDS
+        )
       },
-      google: { enabled: typeof go.enabled === "boolean" ? go.enabled : existing.google.enabled },
-      apple: { enabled: typeof ap.enabled === "boolean" ? ap.enabled : existing.apple.enabled },
-      facebook: { enabled: typeof fb.enabled === "boolean" ? fb.enabled : existing.facebook.enabled },
-      wechat: { enabled: typeof wc.enabled === "boolean" ? wc.enabled : existing.wechat.enabled },
+      google: {
+        enabled: typeof go.enabled === "boolean" ? go.enabled : existing.google.enabled,
+        tokenTtlSeconds: resolveTokenTtl(
+          go.token_ttl_seconds,
+          existing.google.tokenTtlSeconds ?? DEFAULT_TOKEN_TTL_SECONDS
+        )
+      },
+      apple: {
+        enabled: typeof ap.enabled === "boolean" ? ap.enabled : existing.apple.enabled,
+        tokenTtlSeconds: resolveTokenTtl(
+          ap.token_ttl_seconds,
+          existing.apple.tokenTtlSeconds ?? DEFAULT_TOKEN_TTL_SECONDS
+        )
+      },
+      facebook: {
+        enabled: typeof fb.enabled === "boolean" ? fb.enabled : existing.facebook.enabled,
+        tokenTtlSeconds: resolveTokenTtl(
+          fb.token_ttl_seconds,
+          existing.facebook.tokenTtlSeconds ?? DEFAULT_TOKEN_TTL_SECONDS
+        )
+      },
+      wechat: {
+        enabled: typeof wc.enabled === "boolean" ? wc.enabled : existing.wechat.enabled,
+        tokenTtlSeconds: resolveTokenTtl(
+          wc.token_ttl_seconds,
+          existing.wechat.tokenTtlSeconds ?? DEFAULT_TOKEN_TTL_SECONDS
+        )
+      },
       mfaRequired: typeof body.mfa_required === "boolean" ? body.mfa_required : existing.mfaRequired
     };
 
@@ -3212,18 +3332,9 @@ export const createApp = (options: AppOptions) => {
           tokenHash
         });
         // Create default all-disabled auth method policy
-        await clientAuthMethodPolicyRepository.create({
-          clientId: result.client.id,
-          tenantId: result.client.tenantId,
-          password: { enabled: false, allowRegistration: false },
-          emailMagicLink: { enabled: false, allowRegistration: false },
-          passkey: { enabled: false, allowRegistration: false },
-          google: { enabled: false },
-          apple: { enabled: false },
-          facebook: { enabled: false },
-          wechat: { enabled: false },
-          mfaRequired: false
-        });
+        await clientAuthMethodPolicyRepository.create(
+          createDefaultClientAuthMethodPolicy(result.client.id, result.client.tenantId)
+        );
         await auditRepository.record({
           id: crypto.randomUUID(),
           actorType: "admin_user",

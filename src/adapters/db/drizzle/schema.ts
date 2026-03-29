@@ -266,14 +266,21 @@ export const clientAuthMethodPolicies = sqliteTable(
       .references(() => tenants.id, { onDelete: "cascade" }),
     passwordEnabled: integer("password_enabled", { mode: "boolean" }).notNull().default(false),
     passwordAllowRegistration: integer("password_allow_registration", { mode: "boolean" }).notNull().default(false),
+    passwordTokenTtlSeconds: integer("password_token_ttl_seconds").notNull().default(3600),
     magicLinkEnabled: integer("magic_link_enabled", { mode: "boolean" }).notNull().default(false),
     magicLinkAllowRegistration: integer("magic_link_allow_registration", { mode: "boolean" }).notNull().default(false),
+    magicLinkTokenTtlSeconds: integer("magic_link_token_ttl_seconds").notNull().default(3600),
     passkeyEnabled: integer("passkey_enabled", { mode: "boolean" }).notNull().default(false),
     passkeyAllowRegistration: integer("passkey_allow_registration", { mode: "boolean" }).notNull().default(false),
+    passkeyTokenTtlSeconds: integer("passkey_token_ttl_seconds").notNull().default(3600),
     googleEnabled: integer("google_enabled", { mode: "boolean" }).notNull().default(false),
+    googleTokenTtlSeconds: integer("google_token_ttl_seconds").notNull().default(3600),
     appleEnabled: integer("apple_enabled", { mode: "boolean" }).notNull().default(false),
+    appleTokenTtlSeconds: integer("apple_token_ttl_seconds").notNull().default(3600),
     facebookEnabled: integer("facebook_enabled", { mode: "boolean" }).notNull().default(false),
+    facebookTokenTtlSeconds: integer("facebook_token_ttl_seconds").notNull().default(3600),
     wechatEnabled: integer("wechat_enabled", { mode: "boolean" }).notNull().default(false),
+    wechatTokenTtlSeconds: integer("wechat_token_ttl_seconds").notNull().default(3600),
     mfaRequired: integer("mfa_required", { mode: "boolean" }).notNull().default(false),
     createdAt: text("created_at").notNull(),
     updatedAt: text("updated_at").notNull()
@@ -321,6 +328,7 @@ export const loginChallenges = sqliteTable(
       .references(() => tenants.id, { onDelete: "cascade" }),
     issuer: text("issuer").notNull(),
     clientId: text("client_id").notNull(),
+    authMethod: text("auth_method"),
     redirectUri: text("redirect_uri").notNull(),
     scope: text("scope").notNull(),
     state: text("state").notNull(),
@@ -358,6 +366,7 @@ export const authorizationCodes = sqliteTable(
       .references(() => tenants.id, { onDelete: "cascade" }),
     issuer: text("issuer").notNull(),
     clientId: text("client_id").notNull(),
+    authMethod: text("auth_method"),
     userId: text("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
@@ -383,6 +392,45 @@ export const authorizationCodes = sqliteTable(
     tenantIdIdx: index("authorization_codes_tenant_id_idx").on(table.tenantId),
     userIdIdx: index("authorization_codes_user_id_idx").on(table.userId),
     tokenHashActiveUnique: uniqueIndex("authorization_codes_token_hash_active_unique")
+      .on(table.tokenHash)
+      .where(sql`${table.consumedAt} IS NULL`)
+  })
+);
+
+export const refreshTokens = sqliteTable(
+  "refresh_tokens",
+  {
+    id: text("id").primaryKey(),
+    tenantId: text("tenant_id")
+      .notNull()
+      .references(() => tenants.id, { onDelete: "cascade" }),
+    issuer: text("issuer").notNull(),
+    clientId: text("client_id").notNull(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    scope: text("scope").notNull(),
+    authMethod: text("auth_method"),
+    tokenHash: text("token_hash").notNull(),
+    absoluteExpiresAt: text("absolute_expires_at").notNull(),
+    consumedAt: text("consumed_at"),
+    parentTokenId: text("parent_token_id"),
+    replacedByTokenId: text("replaced_by_token_id"),
+    createdAt: text("created_at").notNull()
+  },
+  (table) => ({
+    tenantUserFk: foreignKey({
+      columns: [table.tenantId, table.userId],
+      foreignColumns: [users.tenantId, users.id]
+    }).onDelete("cascade"),
+    tenantClientFk: foreignKey({
+      columns: [table.tenantId, table.clientId],
+      foreignColumns: [oidcClients.tenantId, oidcClients.clientId]
+    }).onDelete("cascade"),
+    tenantIdIdx: index("refresh_tokens_tenant_id_idx").on(table.tenantId),
+    clientIdIdx: index("refresh_tokens_client_id_idx").on(table.clientId),
+    userIdIdx: index("refresh_tokens_user_id_idx").on(table.userId),
+    tokenHashActiveUnique: uniqueIndex("refresh_tokens_token_hash_active_unique")
       .on(table.tokenHash)
       .where(sql`${table.consumedAt} IS NULL`)
   })
