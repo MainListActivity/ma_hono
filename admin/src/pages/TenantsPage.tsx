@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router";
-import { createTenant, updateTenant, deleteTenant, listTenants, type TenantSummary } from "../api/client";
+import { createTenant, updateTenant, deleteTenant, listTenants, rotateTenantKey, type TenantSummary } from "../api/client";
 import { useAuth } from "../App";
 import Modal from "../components/Modal";
 
@@ -52,6 +52,11 @@ export default function TenantsPage() {
   // Delete confirm
   const [deletingTenant, setDeletingTenant] = useState<TenantSummary | null>(null);
   const [deleteSubmitting, setDeleteSubmitting] = useState(false);
+
+  // Rotate key confirm
+  const [rotatingTenant, setRotatingTenant] = useState<TenantSummary | null>(null);
+  const [rotateSubmitting, setRotateSubmitting] = useState(false);
+  const [rotateError, setRotateError] = useState<string | null>(null);
 
   const load = async () => {
     if (!token) return;
@@ -131,6 +136,20 @@ export default function TenantsPage() {
       setDeletingTenant(null);
     } finally {
       setDeleteSubmitting(false);
+    }
+  };
+
+  const handleRotate = async () => {
+    if (!rotatingTenant) return;
+    setRotateError(null);
+    setRotateSubmitting(true);
+    try {
+      await rotateTenantKey(token!, rotatingTenant.id);
+      setRotatingTenant(null);
+    } catch {
+      setRotateError("ROTATION FAILED");
+    } finally {
+      setRotateSubmitting(false);
     }
   };
 
@@ -244,7 +263,7 @@ export default function TenantsPage() {
           {/* Table header */}
           <div style={{
             display: 'grid',
-            gridTemplateColumns: '1fr 1.2fr 90px 1.8fr 120px',
+            gridTemplateColumns: '1fr 1.2fr 90px 1.8fr 180px',
             padding: '10px 16px',
             borderBottom: '1px solid var(--border)',
             background: 'var(--bg-elevated)'
@@ -266,7 +285,7 @@ export default function TenantsPage() {
               onClick={() => navigate(`/tenants/${t.id}/users`)}
               style={{
                 display: 'grid',
-                gridTemplateColumns: '1fr 1.2fr 90px 1.8fr 120px',
+                gridTemplateColumns: '1fr 1.2fr 90px 1.8fr 180px',
                 padding: '12px 16px',
                 borderBottom: i < tenants.length - 1 ? '1px solid var(--border)' : 'none',
                 cursor: 'pointer',
@@ -322,6 +341,17 @@ export default function TenantsPage() {
                   onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--accent-cyan)'; (e.currentTarget as HTMLButtonElement).style.color = 'var(--accent-cyan)'; }}
                   onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--border)'; (e.currentTarget as HTMLButtonElement).style.color = 'var(--text-muted)'; }}
                 >EDIT</button>
+                <button
+                  onClick={e => { e.stopPropagation(); setRotatingTenant(t); setRotateError(null); }}
+                  style={{
+                    background: 'transparent', border: '1px solid var(--border)',
+                    color: 'var(--text-muted)', padding: '4px 8px',
+                    fontSize: '9px', fontFamily: "'Space Mono', monospace",
+                    letterSpacing: '0.1em', cursor: 'pointer', textTransform: 'uppercase'
+                  }}
+                  onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.borderColor = '#f59e0b'; (e.currentTarget as HTMLButtonElement).style.color = '#f59e0b'; }}
+                  onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--border)'; (e.currentTarget as HTMLButtonElement).style.color = 'var(--text-muted)'; }}
+                >ROTATE</button>
                 <button
                   onClick={e => { e.stopPropagation(); setDeletingTenant(t); }}
                   style={{
@@ -395,6 +425,40 @@ export default function TenantsPage() {
             </button>
             <button onClick={handleDelete} disabled={deleteSubmitting} style={{ flex: 1, background: 'rgba(239,68,68,0.08)', border: '1px solid #ef4444', color: '#ef4444', padding: '10px', fontSize: '11px', fontFamily: "'Space Mono', monospace", letterSpacing: '0.12em', textTransform: 'uppercase', cursor: deleteSubmitting ? 'not-allowed' : 'pointer' }}>
               {deleteSubmitting ? 'DELETING...' : 'DELETE'}
+            </button>
+          </div>
+        </Modal>
+      )}
+
+      {/* Rotate key confirm modal */}
+      {rotatingTenant && (
+        <Modal title="ROTATE SIGNING KEY" onClose={() => setRotatingTenant(null)}>
+          <div style={{ marginBottom: '20px', padding: '12px', background: 'rgba(245,158,11,0.05)', border: '1px solid rgba(245,158,11,0.3)' }}>
+            <p style={{ margin: 0, fontSize: '13px', color: 'var(--text-primary)', marginBottom: '6px' }}>
+              Rotate signing key for <strong style={{ fontFamily: "'Space Mono', monospace", color: '#f59e0b' }}>{rotatingTenant.slug}</strong>?
+            </p>
+            <p style={{ margin: 0, fontSize: '12px', color: 'var(--text-muted)' }}>
+              The current active key will be immediately retired. All tokens signed with the old key will become invalid. New tokens will use the freshly generated key.
+            </p>
+          </div>
+          {rotateError && (
+            <div style={{ padding: '8px 12px', marginBottom: '16px', background: 'rgba(239,68,68,0.05)', border: '1px solid rgba(239,68,68,0.2)' }}>
+              <span className="font-display" style={{ fontSize: '10px', color: '#ef4444', letterSpacing: '0.08em' }}>✕ {rotateError}</span>
+            </div>
+          )}
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <button
+              onClick={() => setRotatingTenant(null)}
+              style={{ flex: 1, background: 'transparent', border: '1px solid var(--border)', color: 'var(--text-muted)', padding: '10px', fontSize: '11px', fontFamily: "'Space Mono', monospace", letterSpacing: '0.12em', textTransform: 'uppercase', cursor: 'pointer' }}
+            >
+              CANCEL
+            </button>
+            <button
+              onClick={handleRotate}
+              disabled={rotateSubmitting}
+              style={{ flex: 1, background: 'rgba(245,158,11,0.08)', border: '1px solid #f59e0b', color: rotateSubmitting ? 'var(--text-muted)' : '#f59e0b', padding: '10px', fontSize: '11px', fontFamily: "'Space Mono', monospace", letterSpacing: '0.12em', textTransform: 'uppercase', cursor: rotateSubmitting ? 'not-allowed' : 'pointer' }}
+            >
+              {rotateSubmitting ? 'ROTATING...' : 'ROTATE KEY'}
             </button>
           </div>
         </Modal>
