@@ -359,6 +359,13 @@ export class D1KeyRepository implements KeyRepository {
       publicJwk: row.publicJwk as SigningKey["publicJwk"]
     }));
   }
+
+  async retireActiveKeysForTenant(tenantId: string, retiredAt: string): Promise<void> {
+    await this.db
+      .update(signingKeys)
+      .set({ status: "retired", retireAt: retiredAt })
+      .where(and(eq(signingKeys.status, "active"), eq(signingKeys.tenantId, tenantId)));
+  }
 }
 
 export const rotateSigningKeysForTenants = async ({

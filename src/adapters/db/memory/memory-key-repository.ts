@@ -7,4 +7,12 @@ export class MemoryKeyRepository implements KeyRepository {
   async listActiveKeysForTenant(tenantId: string): Promise<SigningKey[]> {
     return this.keys.filter((key) => key.tenantId === tenantId && key.status === "active");
   }
+
+  async retireActiveKeysForTenant(tenantId: string, retiredAt: string): Promise<void> {
+    for (const key of this.keys) {
+      if (key.tenantId === tenantId && key.status === "active") {
+        key.status = "retired";
+      }
+    }
+  }
 }

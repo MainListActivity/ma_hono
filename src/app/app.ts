@@ -88,6 +88,9 @@ class EmptyKeyRepository implements KeyRepository {
   async listActiveKeysForTenant(): Promise<[]> {
     return [];
   }
+  async retireActiveKeysForTenant(): Promise<void> {
+    return;
+  }
 }
 
 class EmptyClientRepository implements ClientRepository {
@@ -2873,6 +2876,28 @@ export const createApp = (options: AppOptions) => {
     await tenantRepository.update(tenantId, input);
     const updated = await tenantRepository.findById(tenantId);
     return context.json(tenantToWire(updated!));
+  });
+
+  app.post("/admin/tenants/:tenantId/keys/rotate", async (context) => {
+    const session = await authenticateAdminSession({
+      adminRepository,
+      authorizationHeader: context.req.header("authorization")
+    });
+    if (session === null) {
+      return context.json({ error: "unauthorized" }, 401);
+    }
+    if (signer === undefined) {
+      return context.json({ error: "key_rotation_unavailable" }, 503);
+    }
+    const tenantId = context.req.param("tenantId");
+    const tenant = await tenantRepository.findById(tenantId);
+    if (tenant === null) {
+      return context.notFound();
+    }
+    const rotatedAt = new Date().toISOString();
+    await keyRepository.retireActiveKeysForTenant(tenantId, rotatedAt);
+    const material = await signer.ensureActiveSigningKeyMaterial(tenantId);
+    return context.json({ kid: material.key.kid, alg: material.key.alg, rotated_at: rotatedAt }, 200);
   });
 
   app.delete("/admin/tenants/:tenantId", async (context) => {

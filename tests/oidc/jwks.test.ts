@@ -185,7 +185,8 @@ describe("OIDC JWKS", () => {
     const keyRepositoryWithPrivateKey: KeyRepository = {
       async listActiveKeysForTenant(tenantId: string) {
         return tenantId === "tenant_acme" ? [tenantKey] : [];
-      }
+      },
+      async retireActiveKeysForTenant() {}
     };
     const keyMaterialStore = createMemoryKeyMaterialStore({
       "signing-keys/tenant_acme/kid-active.json": JSON.stringify(privateJwk)
@@ -214,7 +215,8 @@ describe("OIDC JWKS", () => {
       keyRepository: {
         async listActiveKeysForTenant() {
           return [];
-        }
+        },
+        async retireActiveKeysForTenant() {}
       },
       bootstrapSigningKey: async (input) => {
         bootstrapCalls.push({
@@ -350,7 +352,8 @@ describe("OIDC JWKS", () => {
       keyRepository: {
         async listActiveKeysForTenant() {
           return [];
-        }
+        },
+        async retireActiveKeysForTenant() {}
       },
       bootstrapSigningKey: async (input) => {
         capturedPrivateKeyRef = input.privateKeyRef;
