@@ -387,6 +387,31 @@ export const rotateSigningKeysForTenants = async ({
   }
 };
 
+export const rotateSigningKeyForTenant = async ({
+  db,
+  signer,
+  tenantId
+}: {
+  db: ReturnType<typeof drizzle>;
+  signer: SigningKeySigner;
+  tenantId: string;
+}): Promise<{ kid: string; alg: string; rotated_at: string }> => {
+  const retiredAt = new Date().toISOString();
+
+  await db
+    .update(signingKeys)
+    .set({ status: "retired", retireAt: retiredAt })
+    .where(and(eq(signingKeys.status, "active"), eq(signingKeys.tenantId, tenantId)));
+
+  const material = await signer.ensureActiveSigningKeyMaterial(tenantId);
+
+  return {
+    kid: material.key.kid,
+    alg: material.key.alg,
+    rotated_at: retiredAt
+  };
+};
+
 class D1ClientRepository implements ClientRepository {
   constructor(private readonly db: ReturnType<typeof drizzle>) {}
 
