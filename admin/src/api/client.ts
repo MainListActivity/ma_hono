@@ -90,6 +90,19 @@ export const deleteTenant = async (token: string, tenantId: string) => {
   );
 };
 
+export const rotateTenantKey = async (
+  token: string,
+  tenantId: string
+): Promise<{ kid: string; alg: string; rotated_at: string }> => {
+  const res = await checkOk(
+    await fetch(`${BASE_URL}/admin/tenants/${tenantId}/keys/rotate`, {
+      method: "POST",
+      headers: authHeaders(token)
+    })
+  );
+  return res.json() as Promise<{ kid: string; alg: string; rotated_at: string }>;
+};
+
 export const createTenant = async (token: string, slug: string, displayName: string) => {
   const res = await checkOk(
     await fetch(`${BASE_URL}/admin/tenants`, {
