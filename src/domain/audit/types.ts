@@ -21,6 +21,7 @@ export type AuditEventType =
   | "user.activation.succeeded"
   | "user.provision.failed"
   | "user.provisioned"
+  | "signing_key.rotated"
   | (string & {});
 
 export interface AuditEvent {

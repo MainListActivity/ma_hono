@@ -432,7 +432,7 @@ export default function TenantsPage() {
 
       {/* Rotate key confirm modal */}
       {rotatingTenant && (
-        <Modal title="ROTATE SIGNING KEY" onClose={() => setRotatingTenant(null)}>
+        <Modal title="ROTATE SIGNING KEY" onClose={() => { setRotatingTenant(null); setRotateError(null); }}>
           <div style={{ marginBottom: '20px', padding: '12px', background: 'rgba(245,158,11,0.05)', border: '1px solid rgba(245,158,11,0.3)' }}>
             <p style={{ margin: 0, fontSize: '13px', color: 'var(--text-primary)', marginBottom: '6px' }}>
               Rotate signing key for <strong style={{ fontFamily: "'Space Mono', monospace", color: '#f59e0b' }}>{rotatingTenant.slug}</strong>?
