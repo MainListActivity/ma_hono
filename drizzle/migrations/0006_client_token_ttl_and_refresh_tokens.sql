@@ -3,6 +3,8 @@ ALTER TABLE client_auth_method_policies
 
 ALTER TABLE client_auth_method_policies
   ADD COLUMN magic_link_token_ttl_seconds INTEGER NOT NULL DEFAULT 3600;
+ALTER TABLE client_auth_method_policies
+  ADD COLUMN mfa_required INTEGER NOT NULL DEFAULT 0;
 
 ALTER TABLE client_auth_method_policies
   ADD COLUMN passkey_token_ttl_seconds INTEGER NOT NULL DEFAULT 3600;
