@@ -25,7 +25,7 @@ export interface SigningKeySigner {
 
 const signingKeyPrefix = "signing-keys";
 
-const createBootstrapKeyId = (tenantId: string) => `bootstrap-${tenantId}-rs256`;
+const createBootstrapKeyId = (tenantId: string) => `bootstrap-${tenantId}-rs256-${crypto.randomUUID().slice(0, 8)}`;
 
 const createPrivateKeyRef = (tenantId: string, kid: string) =>
   `${signingKeyPrefix}/${tenantId}/${kid}.json`;

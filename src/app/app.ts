@@ -2895,8 +2895,8 @@ export const createApp = (options: AppOptions) => {
       return context.notFound();
     }
     const rotatedAt = new Date().toISOString();
-    await keyRepository.retireActiveKeysForTenant(tenantId, rotatedAt);
     try {
+      await keyRepository.retireActiveKeysForTenant(tenantId, rotatedAt);
       const material = await signer.ensureActiveSigningKeyMaterial(tenantId);
       await auditRepository.record({
         id: crypto.randomUUID(),
@@ -2911,7 +2911,7 @@ export const createApp = (options: AppOptions) => {
       });
       return context.json({ kid: material.key.kid, alg: material.key.alg, rotated_at: rotatedAt }, 200);
     } catch {
-      return context.json({ error: "key_bootstrap_failed" }, 500);
+      return context.json({ error: "key_rotation_failed" }, 500);
     }
   });
 
