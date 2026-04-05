@@ -1,4 +1,5 @@
 import { Hono, type Context } from "hono";
+import { cors } from "hono/cors";
 import { ZodError } from "zod";
 
 import { authenticateWithPassword } from "../adapters/auth/local-auth/password-auth-service";
@@ -393,6 +394,34 @@ export const createApp = (options: AppOptions) => {
   const refreshTokenRepository =
     options.refreshTokenRepository ?? new EmptyRefreshTokenRepository();
   const oidcHost = options.oidcHost;
+
+  const resolveAllowedCorsOrigin = (origin: string) => {
+    try {
+      const url = new URL(origin);
+
+      if (url.hostname === "localhost") {
+        return origin;
+      }
+
+      if (url.hostname === "maplayer.top" || url.hostname.endsWith(".maplayer.top")) {
+        return origin;
+      }
+
+      return null;
+    } catch {
+      return null;
+    }
+  };
+
+  const tokenCors = cors({
+    origin: (origin) => resolveAllowedCorsOrigin(origin),
+    allowMethods: ["POST", "OPTIONS"],
+    allowHeaders: ["Accept", "Authorization", "Content-Type"],
+    maxAge: 86400
+  });
+
+  app.use("/token", tokenCors);
+  app.use("/t/:tenant/token", tokenCors);
 
   /**
    * Resolves issuer context for login/passkey routes.
