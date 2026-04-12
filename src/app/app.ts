@@ -425,6 +425,7 @@ export const createApp = (options: AppOptions) => {
 
   app.use("/token", tokenCors);
   app.use("/t/:tenant/token", tokenCors);
+  app.use("/db/execTemplate", tokenCors);
 
   /**
    * Resolves issuer context for login/passkey routes.
