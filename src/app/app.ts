@@ -3639,6 +3639,10 @@ export const createApp = (options: AppOptions) => {
     if (templateId.length === 0) {
       return context.json({ error: "missing_template_id" }, 400);
     }
+    // Reject path traversal attempts in template id
+    if (!/^[a-zA-Z0-9_\-]+$/.test(templateId)) {
+      return context.json({ error: "invalid_template_id" }, 400);
+    }
 
     const callerParams: Record<string, unknown> =
       body.params !== null && typeof body.params === "object" && !Array.isArray(body.params)
@@ -3653,7 +3657,7 @@ export const createApp = (options: AppOptions) => {
     const templateKey = `db-templates/${templateId}.sql`;
     const templateObject = await keyMaterialBucket.get(templateKey);
     if (templateObject === null) {
-      return context.json({ error: "template_not_found" }, 404);
+      return context.json({ error: "template_not_found", template_key: templateKey }, 404);
     }
     const templateSql = await templateObject.text();
 
