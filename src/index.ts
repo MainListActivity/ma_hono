@@ -113,6 +113,7 @@ export default {
       },
       clientAuthMethodPolicyRepository: repositories.clientAuthMethodPolicyRepository,
       clientRepository: repositories.clientRepository,
+      keyMaterialBucket: runtimeConfig.keyMaterialBucket,
       keyRepository: repositories.keyRepository,
       loginChallengeLookupRepository: repositories.authenticationLoginChallengeRepository,
       loginChallengeRepository: repositories.loginChallengeRepository,

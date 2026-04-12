@@ -1,6 +1,7 @@
 import { Hono, type Context } from "hono";
 import { cors } from "hono/cors";
 import { ZodError } from "zod";
+import { createLocalJWKSet, jwtVerify } from "jose";
 
 import { authenticateWithPassword } from "../adapters/auth/local-auth/password-auth-service";
 import { consumeMagicLink, requestMagicLink } from "../adapters/auth/local-auth/magic-link-service";
@@ -340,6 +341,7 @@ export interface AppOptions {
   accessTokenClaimsRepository?: AccessTokenClaimsRepository;
   clientAuthMethodPolicyRepository?: ClientAuthMethodPolicyRepository;
   clientRepository?: ClientRepository;
+  keyMaterialBucket?: R2Bucket;
   keyRepository?: KeyRepository;
   loginChallengeLookupRepository?: AuthenticationLoginChallengeRepository;
   loginChallengeRepository?: LoginChallengeRepository;
@@ -375,6 +377,7 @@ export const createApp = (options: AppOptions) => {
   const clientAuthMethodPolicyRepository =
     options.clientAuthMethodPolicyRepository ?? new EmptyClientAuthMethodPolicyRepository();
   const clientRepository = options.clientRepository ?? new EmptyClientRepository();
+  const keyMaterialBucket = options.keyMaterialBucket ?? null;
   const keyRepository = options.keyRepository ?? new EmptyKeyRepository();
   const loginChallengeLookupRepository =
     options.loginChallengeLookupRepository ?? new EmptyAuthenticationLoginChallengeRepository();
@@ -3554,6 +3557,178 @@ export const createApp = (options: AppOptions) => {
       }
       throw error;
     }
+  });
+
+  // ---------------------------------------------------------------------------
+  // POST /db/execTemplate
+  // Reads a SQL template from R2, substitutes parameters (token context
+  // overrides caller-supplied params), and executes it against SurrealDB.
+  // ---------------------------------------------------------------------------
+  app.post("/db/execTemplate", async (context) => {
+    // 1. Resolve tenant: x-mp-tenant header (slug) or parse Bearer token
+    const tenantSlug = context.req.header("x-mp-tenant")?.trim() ?? null;
+    const authorizationHeader = context.req.header("authorization") ?? "";
+
+    let issuerContext: Awaited<ReturnType<typeof resolveIssuerContextBySlug>> | null = null;
+
+    if (tenantSlug !== null && tenantSlug.length > 0) {
+      issuerContext = await resolveIssuerContextBySlug({
+        slug: tenantSlug,
+        oidcHost,
+        tenantRepository
+      });
+    } else {
+      // Try to derive tenant from the Bearer token's issuer claim
+      const bearerMatch = authorizationHeader.match(/^Bearer\s+(.+)$/i);
+      if (bearerMatch) {
+        try {
+          // Decode header/payload without verification first to extract issuer
+          const [, payloadB64] = bearerMatch[1].split(".");
+          const payloadJson = JSON.parse(atob(payloadB64.replace(/-/g, "+").replace(/_/g, "/")));
+          const iss: string = payloadJson.iss ?? "";
+          // issuer looks like https://o.{domain}/t/{slug} — extract slug
+          const slugFromIss = iss.split("/t/")[1]?.split("/")[0] ?? null;
+          if (slugFromIss) {
+            issuerContext = await resolveIssuerContextBySlug({
+              slug: slugFromIss,
+              oidcHost,
+              tenantRepository
+            });
+          }
+        } catch {
+          // fall through — issuerContext stays null
+        }
+      }
+    }
+
+    if (issuerContext === null) {
+      return context.json({ error: "tenant_not_found" }, 404);
+    }
+
+    // 2. Validate Bearer token against tenant JWKS
+    const bearerTokenMatch = authorizationHeader.match(/^Bearer\s+(.+)$/i);
+    if (!bearerTokenMatch) {
+      return context.json({ error: "unauthorized" }, 401);
+    }
+    const rawToken = bearerTokenMatch[1];
+
+    let tokenClaims: Record<string, unknown> = {};
+    try {
+      const jwks = await buildJwks(keyRepository, issuerContext.tenant.id);
+      if (jwks.keys.length === 0) {
+        return context.json({ error: "no_signing_keys" }, 503);
+      }
+      const keySet = createLocalJWKSet(jwks as Parameters<typeof createLocalJWKSet>[0]);
+      const { payload } = await jwtVerify(rawToken, keySet, {
+        issuer: issuerContext.issuer
+      });
+      tokenClaims = payload as Record<string, unknown>;
+    } catch {
+      return context.json({ error: "invalid_token" }, 401);
+    }
+
+    // 3. Parse request body
+    let body: { id?: unknown; params?: unknown };
+    try {
+      body = await context.req.json();
+    } catch {
+      return context.json({ error: "invalid_request" }, 400);
+    }
+
+    const templateId = typeof body.id === "string" ? body.id.trim() : "";
+    if (templateId.length === 0) {
+      return context.json({ error: "missing_template_id" }, 400);
+    }
+
+    const callerParams: Record<string, unknown> =
+      body.params !== null && typeof body.params === "object" && !Array.isArray(body.params)
+        ? (body.params as Record<string, unknown>)
+        : {};
+
+    // 4. Load SQL template from R2
+    if (keyMaterialBucket === null) {
+      return context.json({ error: "storage_not_configured" }, 503);
+    }
+
+    const templateKey = `db-templates/${templateId}.sql`;
+    const templateObject = await keyMaterialBucket.get(templateKey);
+    if (templateObject === null) {
+      return context.json({ error: "template_not_found" }, 404);
+    }
+    const templateSql = await templateObject.text();
+
+    // 5. Load SurrealDB credentials from R2
+    const credsKey = "db-config/surrealdb.json";
+    const credsObject = await keyMaterialBucket.get(credsKey);
+    if (credsObject === null) {
+      return context.json({ error: "db_credentials_not_configured" }, 503);
+    }
+    let dbCreds: { url: string; username: string; password: string; ns?: string; db?: string };
+    try {
+      dbCreds = await credsObject.json<typeof dbCreds>();
+    } catch {
+      return context.json({ error: "db_credentials_invalid" }, 503);
+    }
+
+    // 6. Merge params: token context fields override caller-supplied params
+    // Map well-known JWT claims to parameter names
+    const tokenContext: Record<string, unknown> = {};
+    if (typeof tokenClaims.sub === "string") tokenContext["sub"] = tokenClaims.sub;
+    if (typeof tokenClaims.email === "string") tokenContext["email"] = tokenClaims.email;
+    // Copy any extra non-reserved claims from the token
+    const reservedClaims = new Set(["iss", "aud", "exp", "iat", "nbf", "jti", "nonce"]);
+    for (const [k, v] of Object.entries(tokenClaims)) {
+      if (!reservedClaims.has(k)) {
+        tokenContext[k] = v;
+      }
+    }
+    // Token claims override caller-provided params with the same name
+    const mergedParams: Record<string, unknown> = { ...callerParams, ...tokenContext };
+
+    // 7. Substitute $param placeholders in the SQL template
+    // Parameters in SurrealDB SQL use $name syntax — we pass them as query vars
+    // We also do a simple string substitution for non-SurrealDB contexts
+    // For SurrealDB we pass params via the query string (age=value style)
+    // Build the endpoint URL with query params for simple scalar values
+    const queryUrl = new URL(dbCreds.url);
+    for (const [k, v] of Object.entries(mergedParams)) {
+      if (typeof v === "string" || typeof v === "number" || typeof v === "boolean") {
+        queryUrl.searchParams.set(k, String(v));
+      }
+    }
+
+    // 8. Execute against SurrealDB
+    const basicCredential = btoa(`${dbCreds.username}:${dbCreds.password}`);
+    let surrealResponse: Response;
+    try {
+      surrealResponse = await fetch(queryUrl.toString(), {
+        method: "POST",
+        headers: {
+          "Authorization": `Basic ${basicCredential}`,
+          "Surreal-NS": dbCreds.ns ?? "main",
+          "Surreal-DB": dbCreds.db ?? "docs",
+          "Accept": "application/json",
+          "Content-Type": "text/plain"
+        },
+        body: templateSql
+      });
+    } catch (err) {
+      return context.json({ error: "db_request_failed" }, 502);
+    }
+
+    if (!surrealResponse.ok && surrealResponse.status >= 500) {
+      return context.json({ error: "db_error", status: surrealResponse.status }, 502);
+    }
+
+    let result: unknown;
+    try {
+      result = await surrealResponse.json();
+    } catch {
+      const text = await surrealResponse.text();
+      return context.json({ error: "db_response_invalid", body: text }, 502);
+    }
+
+    return context.json({ result }, surrealResponse.ok ? 200 : 400);
   });
 
   app.post("/activate-account", async (context) => {
