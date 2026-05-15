@@ -163,8 +163,7 @@ class EmptyLoginChallengeRepository implements LoginChallengeRepository {
 }
 
 class EmptyAuthenticationLoginChallengeRepository
-  implements AuthenticationLoginChallengeRepository
-{
+  implements AuthenticationLoginChallengeRepository {
   async consume(): Promise<false> {
     return false;
   }
@@ -1039,9 +1038,9 @@ export const createApp = (options: AppOptions) => {
         authorizationResult.errorDescription === undefined
           ? { error: authorizationResult.error }
           : {
-              error: authorizationResult.error,
-              error_description: authorizationResult.errorDescription
-            },
+            error: authorizationResult.error,
+            error_description: authorizationResult.errorDescription
+          },
         400
       );
     }
@@ -2684,9 +2683,9 @@ export const createApp = (options: AppOptions) => {
         authorizationResult.errorDescription === undefined
           ? { error: authorizationResult.error }
           : {
-              error: authorizationResult.error,
-              error_description: authorizationResult.errorDescription
-            },
+            error: authorizationResult.error,
+            error_description: authorizationResult.errorDescription
+          },
         400
       );
     }
@@ -3641,7 +3640,7 @@ export const createApp = (options: AppOptions) => {
       return context.json({ error: "missing_template_id" }, 400);
     }
     // Reject path traversal attempts in template id
-    if (!/^[a-zA-Z0-9_\-]+$/.test(templateId)) {
+    if (!/^[a-zA-Z0-9_\-\.]+$/.test(templateId)) {
       return context.json({ error: "invalid_template_id" }, 400);
     }
 
