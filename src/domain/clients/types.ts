@@ -9,7 +9,7 @@ export type ClientTrustLevel = "first_party_trusted" | "third_party";
 
 export type ClientConsentPolicy = "skip" | "require";
 
-export type ClientProfile = "spa" | "web" | "native";
+export type ClientProfile = "spa" | "web" | "native" | "db";
 
 export type ClientAuthMethodName =
   | "password"

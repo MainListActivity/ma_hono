@@ -56,6 +56,39 @@ describe("Admin Client Registration Schema", () => {
     expect(result.success).toBe(true);
   });
 
+  it("accepts a valid DB client without interactive OIDC metadata", () => {
+    const result = adminClientRegistrationSchema.safeParse({
+      client_name: "Tenant SurrealDB",
+      client_profile: "db",
+      application_type: "web",
+      token_endpoint_auth_method: "none",
+      grant_types: [],
+      response_types: [],
+      redirect_uris: [],
+      access_token_audience: "surrealdb",
+      access_token_custom_claims: [
+        { claim_name: "role", source_type: "fixed", fixed_value: "admin" }
+      ]
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects DB clients with user-field custom claims", () => {
+    const result = adminClientRegistrationSchema.safeParse({
+      client_name: "Tenant SurrealDB",
+      client_profile: "db",
+      application_type: "web",
+      token_endpoint_auth_method: "none",
+      grant_types: [],
+      response_types: [],
+      redirect_uris: [],
+      access_token_custom_claims: [
+        { claim_name: "email", source_type: "user_field", user_field: "email" }
+      ]
+    });
+    expect(result.success).toBe(false);
+  });
+
   it("rejects web client with auth method none", () => {
     const result = adminClientRegistrationSchema.safeParse({
       client_name: "My Web App",

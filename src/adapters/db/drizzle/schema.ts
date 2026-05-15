@@ -76,7 +76,10 @@ export const oidcClients = sqliteTable(
     tenantClientUnique: uniqueIndex("oidc_clients_tenant_id_client_id_unique").on(
       table.tenantId,
       table.clientId
-    )
+    ),
+    tenantDbClientUnique: uniqueIndex("oidc_clients_tenant_db_client_unique")
+      .on(table.tenantId)
+      .where(sql`${table.clientProfile} = 'db'`)
   })
 );
 

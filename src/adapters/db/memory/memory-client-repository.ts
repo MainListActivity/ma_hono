@@ -27,6 +27,14 @@ export class MemoryClientRepository implements ClientRepository {
     return this.clients.find((client) => client.clientId === clientId) ?? null;
   }
 
+  async findDbClientByTenantId(tenantId: string): Promise<Client | null> {
+    return (
+      this.clients.find(
+        (client) => client.tenantId === tenantId && client.clientProfile === "db"
+      ) ?? null
+    );
+  }
+
   listClients(): Client[] {
     return [...this.clients];
   }

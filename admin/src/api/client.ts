@@ -149,7 +149,7 @@ export interface ClientSummary {
   client_id: string;
   client_name: string;
   application_type: "web" | "native";
-  client_profile: "spa" | "web" | "native";
+  client_profile: "spa" | "web" | "native" | "db";
   access_token_audience: string | null;
   access_token_custom_claims_count?: number;
   redirect_uris: string[];
@@ -258,7 +258,7 @@ export const createClient = async (
   tenantId: string,
   payload: {
     client_name: string;
-    client_profile: "spa" | "web" | "native";
+    client_profile: "spa" | "web" | "native" | "db";
     application_type: "web" | "native";
     redirect_uris: string[];
     token_endpoint_auth_method: string;
@@ -298,9 +298,11 @@ export const updateClient = async (
   clientId: string,
   payload: {
     client_name?: string;
-    client_profile?: "spa" | "web" | "native";
+    client_profile?: "spa" | "web" | "native" | "db";
     application_type?: "web" | "native";
     redirect_uris?: string[];
+    grant_types?: string[];
+    response_types?: string[];
     token_endpoint_auth_method?: string;
     access_token_audience?: string | null;
     access_token_custom_claims?: {

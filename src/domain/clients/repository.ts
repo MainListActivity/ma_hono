@@ -4,6 +4,7 @@ export interface ClientRepository {
   create(client: Client): Promise<void>;
   update(client: Client): Promise<void>;
   deleteByClientId(clientId: string): Promise<void>;
+  findDbClientByTenantId(tenantId: string): Promise<Client | null>;
   findByClientId(clientId: string): Promise<Client | null>;
   listByTenantId(tenantId: string): Promise<Client[]>;
 }

@@ -15,6 +15,13 @@ import type { Client, RegisterClientResult } from "./types";
 
 const createRandomToken = () => crypto.randomUUID().replaceAll("-", "");
 
+export class DuplicateDbClientError extends Error {
+  constructor() {
+    super("tenant already has a DB client");
+    this.name = "DuplicateDbClientError";
+  }
+}
+
 const requiresClientSecret = (
   authMethod:
     | DynamicClientRegistrationInput["token_endpoint_auth_method"]
@@ -75,6 +82,17 @@ export const registerClientFromAdmin = async ({
   issuerContext: ResolvedIssuerContext;
 }): Promise<RegisterClientResult> => {
   const payload = adminClientRegistrationSchema.parse(input);
+
+  if (payload.client_profile === "db") {
+    const existingDbClient = await clientRepository.findDbClientByTenantId(
+      issuerContext.tenant.id
+    );
+
+    if (existingDbClient !== null) {
+      throw new DuplicateDbClientError();
+    }
+  }
+
   const clientId = crypto.randomUUID();
   const clientSecret = requiresClientSecret(payload.token_endpoint_auth_method)
     ? createRandomToken()

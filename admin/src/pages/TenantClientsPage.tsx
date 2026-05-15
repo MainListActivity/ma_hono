@@ -48,7 +48,7 @@ const monoStyle: React.CSSProperties = {
   whiteSpace: 'nowrap' as const
 };
 
-type ClientProfile = "spa" | "web" | "native";
+type ClientProfile = "spa" | "web" | "native" | "db";
 type ClaimSourceType = "fixed" | "user_field";
 type ClaimUserField = "id" | "email" | "email_verified" | "username" | "display_name";
 
@@ -69,7 +69,7 @@ const userFieldOptions: ClaimUserField[] = [
 ];
 
 const profileLabel = (profile: ClientProfile) =>
-  profile === "spa" ? "SPA" : profile === "web" ? "Web" : "Native";
+  profile === "spa" ? "SPA" : profile === "web" ? "Web" : profile === "db" ? "DB" : "Native";
 
 // Build a PKCE code_challenge from a verifier (SHA-256 / base64url)
 async function buildPkce(): Promise<{ verifier: string; challenge: string }> {
@@ -396,7 +396,7 @@ export default function TenantClientsPage() {
     const uris = redirectUris.split('\n').map(u => u.trim()).filter(Boolean);
     const trimmedAudience = accessTokenAudience.trim();
 
-    if (!clientName.trim() || uris.length === 0) {
+    if (!clientName.trim() || (clientProfile !== 'db' && uris.length === 0)) {
       setFormError("CLIENT NAME AND AT LEAST ONE REDIRECT URI REQUIRED");
       return;
     }
@@ -415,6 +415,10 @@ export default function TenantClientsPage() {
         setFormError("FIXED CLAIMS REQUIRE A VALUE");
         return;
       }
+      if (clientProfile === 'db' && claim.sourceType === 'user_field') {
+        setFormError("DB CLIENT CLAIMS MUST USE FIXED VALUES");
+        return;
+      }
     }
 
     setSubmitting(true);
@@ -423,10 +427,10 @@ export default function TenantClientsPage() {
         client_name: clientName.trim(),
         client_profile: clientProfile,
         application_type: derivedApplicationType,
-        redirect_uris: uris,
+        redirect_uris: clientProfile === 'db' ? [] : uris,
         token_endpoint_auth_method: effectiveAuthMethod,
-        grant_types: ['authorization_code'],
-        response_types: ['code'],
+        grant_types: clientProfile === 'db' ? [] : ['authorization_code'],
+        response_types: clientProfile === 'db' ? [] : ['code'],
         ...(trimmedAudience ? { access_token_audience: trimmedAudience } : {}),
         ...(customClaims.length > 0
           ? {
@@ -506,7 +510,7 @@ export default function TenantClientsPage() {
     const uris = editRedirectUris.split('\n').map(u => u.trim()).filter(Boolean);
     const trimmedAudience = editAudience.trim();
 
-    if (!editName.trim() || uris.length === 0) {
+    if (!editName.trim() || (editProfile !== 'db' && uris.length === 0)) {
       setEditError("CLIENT NAME AND AT LEAST ONE REDIRECT URI REQUIRED");
       return;
     }
@@ -525,6 +529,10 @@ export default function TenantClientsPage() {
         setEditError("FIXED CLAIMS REQUIRE A VALUE");
         return;
       }
+      if (editProfile === 'db' && claim.sourceType === 'user_field') {
+        setEditError("DB CLIENT CLAIMS MUST USE FIXED VALUES");
+        return;
+      }
     }
 
     const editDerivedAppType: "web" | "native" = editProfile === "native" ? "native" : "web";
@@ -536,7 +544,9 @@ export default function TenantClientsPage() {
         client_name: editName.trim(),
         client_profile: editProfile,
         application_type: editDerivedAppType,
-        redirect_uris: uris,
+        redirect_uris: editProfile === 'db' ? [] : uris,
+        grant_types: editProfile === 'db' ? [] : ['authorization_code'],
+        response_types: editProfile === 'db' ? [] : ['code'],
         token_endpoint_auth_method: editEffectiveAuth,
         access_token_audience: trimmedAudience || null,
         access_token_custom_claims: editClaims.map((claim) => ({
@@ -671,24 +681,28 @@ export default function TenantClientsPage() {
               <span style={{ ...monoStyle, fontSize: '11px' }}>{c.application_type}</span>
               <span style={{ ...monoStyle, fontSize: '11px' }}>{c.token_endpoint_auth_method}</span>
               <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-                <button
-                  onClick={() => handleTestLogin(c)}
-                  disabled={testingClientId === c.client_id}
-                  style={{ ...btnStyle('var(--accent-green)'), padding: '5px 10px' }}
-                  title={`Open authorize URL for ${c.client_id} in a new tab`}
-                  onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = 'rgba(0,229,128,0.08)'; }}
-                  onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = 'transparent'; }}
-                >
-                  {testingClientId === c.client_id ? '...' : '▶ TEST'}
-                </button>
-                <button
-                  onClick={() => setPolicyClient(c)}
-                  style={{ ...btnStyle('var(--accent-amber, #fbbf24)'), padding: '5px 10px' }}
-                  onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = 'rgba(251,191,36,0.08)'; }}
-                  onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = 'transparent'; }}
-                >
-                  AUTH
-                </button>
+                {c.client_profile !== 'db' && (
+                  <button
+                    onClick={() => handleTestLogin(c)}
+                    disabled={testingClientId === c.client_id}
+                    style={{ ...btnStyle('var(--accent-green)'), padding: '5px 10px' }}
+                    title={`Open authorize URL for ${c.client_id} in a new tab`}
+                    onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = 'rgba(0,229,128,0.08)'; }}
+                    onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = 'transparent'; }}
+                  >
+                    {testingClientId === c.client_id ? '...' : '▶ TEST'}
+                  </button>
+                )}
+                {c.client_profile !== 'db' && (
+                  <button
+                    onClick={() => setPolicyClient(c)}
+                    style={{ ...btnStyle('var(--accent-amber, #fbbf24)'), padding: '5px 10px' }}
+                    onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = 'rgba(251,191,36,0.08)'; }}
+                    onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = 'transparent'; }}
+                  >
+                    AUTH
+                  </button>
+                )}
                 <button
                   onClick={() => openEditModal(c)}
                   style={{ ...btnStyle('var(--accent-cyan)'), padding: '5px 10px' }}
@@ -748,12 +762,19 @@ export default function TenantClientsPage() {
                     return;
                   }
                   setAuthMethod('none');
+                  if (profile === 'db') {
+                    setRedirectUris('');
+                    setCustomClaims(current => current.map((claim) => (
+                      claim.sourceType === 'user_field' ? { ...claim, sourceType: 'fixed', fixedValue: claim.fixedValue } : claim
+                    )));
+                  }
                 }}
                 style={{ ...inputStyle, cursor: 'pointer' }}
               >
                 <option value="web">web</option>
                 <option value="spa">spa</option>
                 <option value="native">native</option>
+                <option value="db">db</option>
               </select>
             </div>
 
@@ -801,7 +822,8 @@ export default function TenantClientsPage() {
                 onChange={e => setRedirectUris(e.target.value)}
                 placeholder={"https://myapp.example.com/callback\nregex:https://.*\\.example\\.com/callback"}
                 rows={3}
-                style={{ ...inputStyle, resize: 'vertical' as const, lineHeight: '1.5' }}
+                disabled={clientProfile === 'db'}
+                style={{ ...inputStyle, resize: 'vertical' as const, lineHeight: '1.5', cursor: clientProfile === 'db' ? 'not-allowed' : 'text', opacity: clientProfile === 'db' ? 0.7 : 1 }}
                 onFocus={e => (e.target.style.borderColor = 'var(--accent-cyan)')}
                 onBlur={e => (e.target.style.borderColor = 'var(--border)')}
               />
@@ -855,7 +877,7 @@ export default function TenantClientsPage() {
                           style={{ ...inputStyle, cursor: 'pointer' }}
                         >
                           <option value="fixed">fixed value</option>
-                          <option value="user_field">user field</option>
+                          {clientProfile !== 'db' && <option value="user_field">user field</option>}
                         </select>
                         <button
                           type="button"
@@ -1008,12 +1030,19 @@ export default function TenantClientsPage() {
                     return;
                   }
                   setEditAuthMethod('none');
+                  if (profile === 'db') {
+                    setEditRedirectUris('');
+                    setEditClaims(current => current.map((claim) => (
+                      claim.sourceType === 'user_field' ? { ...claim, sourceType: 'fixed', fixedValue: claim.fixedValue } : claim
+                    )));
+                  }
                 }}
                 style={{ ...inputStyle, cursor: 'pointer' }}
               >
                 <option value="web">web</option>
                 <option value="spa">spa</option>
                 <option value="native">native</option>
+                <option value="db">db</option>
               </select>
             </div>
 
@@ -1060,7 +1089,8 @@ export default function TenantClientsPage() {
                 value={editRedirectUris}
                 onChange={e => setEditRedirectUris(e.target.value)}
                 rows={3}
-                style={{ ...inputStyle, resize: 'vertical' as const, lineHeight: '1.5' }}
+                disabled={editProfile === 'db'}
+                style={{ ...inputStyle, resize: 'vertical' as const, lineHeight: '1.5', cursor: editProfile === 'db' ? 'not-allowed' : 'text', opacity: editProfile === 'db' ? 0.7 : 1 }}
                 onFocus={e => (e.target.style.borderColor = 'var(--accent-cyan)')}
                 onBlur={e => (e.target.style.borderColor = 'var(--border)')}
               />
@@ -1114,7 +1144,7 @@ export default function TenantClientsPage() {
                           style={{ ...inputStyle, cursor: 'pointer' }}
                         >
                           <option value="fixed">fixed value</option>
-                          <option value="user_field">user field</option>
+                          {editProfile !== 'db' && <option value="user_field">user field</option>}
                         </select>
                         <button
                           type="button"

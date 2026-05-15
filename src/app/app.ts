@@ -36,6 +36,7 @@ import type { AccessTokenClaimsRepository } from "../domain/clients/access-token
 import type { RegistrationAccessTokenRepository } from "../domain/clients/registration-access-token-repository";
 import { sha256Base64Url } from "../lib/hash";
 import {
+  DuplicateDbClientError,
   registerClient,
   registerClientFromAdmin
 } from "../domain/clients/register-client";
@@ -43,6 +44,7 @@ import type { AccessTokenCustomClaim, AccessTokenClaimUserField } from "../domai
 import { adminClientUpdateSchema } from "../domain/clients/admin-registration-schema";
 import {
   DEFAULT_TOKEN_TTL_SECONDS,
+  type Client,
   type ClientAuthMethodName,
   type ClientAuthMethodPolicy
 } from "../domain/clients/types";
@@ -54,7 +56,7 @@ import type { TenantRepository } from "../domain/tenants/repository";
 import { resolveIssuerContext, resolveIssuerContextBySlug } from "../domain/tenants/issuer-resolution";
 import type { Tenant } from "../domain/tenants/types";
 import { buildDiscoveryMetadata } from "../domain/oidc/discovery";
-import { exchangeAuthorizationCode } from "../domain/tokens/token-service";
+import { exchangeAuthorizationCode, issueClientAccessToken } from "../domain/tokens/token-service";
 import type { RefreshTokenRepository } from "../domain/tokens/refresh-token-repository";
 import { activateUser } from "../domain/users/activate-user";
 import { hashPassword } from "../domain/users/passwords";
@@ -111,6 +113,10 @@ class EmptyClientRepository implements ClientRepository {
 
   async deleteByClientId(): Promise<void> {
     return;
+  }
+
+  async findDbClientByTenantId(): Promise<null> {
+    return null;
   }
 
   async findByClientId(): Promise<null> {
@@ -418,7 +424,7 @@ export const createApp = (options: AppOptions) => {
   const tokenCors = cors({
     origin: (origin) => resolveAllowedCorsOrigin(origin),
     allowMethods: ["POST", "OPTIONS"],
-    allowHeaders: ["Accept", "Authorization", "Content-Type"],
+    allowHeaders: ["Accept", "Authorization", "Content-Type", "X-MP-Tenant"],
     maxAge: 86400
   });
 
@@ -471,6 +477,60 @@ export const createApp = (options: AppOptions) => {
 
   const resolveTokenTtl = (value: unknown, fallback: number) =>
     typeof value === "number" && Number.isInteger(value) && value > 0 ? value : fallback;
+
+  const validateClientConfiguration = (client: Client): string | null => {
+    if (client.clientProfile !== "db") {
+      if (client.redirectUris.length === 0) {
+        return "interactive clients require at least one redirect uri";
+      }
+
+      if (client.grantTypes.length === 0) {
+        return "interactive clients require at least one grant type";
+      }
+
+      if (client.responseTypes.length === 0) {
+        return "interactive clients require at least one response type";
+      }
+    }
+
+    if (client.clientProfile === "spa") {
+      if (client.applicationType !== "web") {
+        return "SPA clients must have application_type web";
+      }
+
+      if (client.tokenEndpointAuthMethod !== "none") {
+        return "SPA clients must use token_endpoint_auth_method none";
+      }
+
+      if (!client.accessTokenAudience) {
+        return "SPA clients require an access_token_audience";
+      }
+    }
+
+    if (client.clientProfile === "web" && client.tokenEndpointAuthMethod === "none") {
+      return "web clients must use a confidential auth method";
+    }
+
+    if (client.clientProfile === "db") {
+      if (client.applicationType !== "web") {
+        return "DB clients must have application_type web";
+      }
+
+      if (client.tokenEndpointAuthMethod !== "none") {
+        return "DB clients must use token_endpoint_auth_method none";
+      }
+
+      if (
+        client.redirectUris.length > 0 ||
+        client.grantTypes.length > 0 ||
+        client.responseTypes.length > 0
+      ) {
+        return "DB clients must not declare interactive OIDC flow metadata";
+      }
+    }
+
+    return null;
+  };
 
   const policyToWire = (policy: ClientAuthMethodPolicy | null | undefined) =>
     policy == null ? null : {
@@ -3408,6 +3468,10 @@ export const createApp = (options: AppOptions) => {
         201
       );
     } catch (error) {
+      if (error instanceof DuplicateDbClientError) {
+        return context.json({ error: "db_client_already_exists" }, 409);
+      }
+
       if (error instanceof ZodError) {
         return context.json({ error: "invalid_client_metadata", issues: error.issues }, 400);
       }
@@ -3484,14 +3548,37 @@ export const createApp = (options: AppOptions) => {
         updated.tokenEndpointAuthMethod = parsed.token_endpoint_auth_method;
       }
       if (parsed.redirect_uris !== undefined) updated.redirectUris = parsed.redirect_uris;
+      if (parsed.grant_types !== undefined) updated.grantTypes = parsed.grant_types;
+      if (parsed.response_types !== undefined) updated.responseTypes = parsed.response_types;
       if (parsed.access_token_audience !== undefined) {
         updated.accessTokenAudience = parsed.access_token_audience;
       }
 
-      // Validate SPA audience requirement after merge
-      if (updated.clientProfile === "spa" && !updated.accessTokenAudience) {
+      const validationError = validateClientConfiguration(updated);
+      if (validationError !== null) {
         return context.json(
-          { error: "invalid_client_metadata", message: "SPA clients require an access_token_audience" },
+          { error: "invalid_client_metadata", message: validationError },
+          400
+        );
+      }
+
+      if (updated.clientProfile === "db") {
+        const existingDbClient = await clientRepository.findDbClientByTenantId(tenantId);
+
+        if (existingDbClient !== null && existingDbClient.clientId !== client.clientId) {
+          return context.json({ error: "db_client_already_exists" }, 409);
+        }
+      }
+
+      if (
+        updated.clientProfile === "db" &&
+        parsed.access_token_custom_claims?.some((c) => c.source_type === "user_field") === true
+      ) {
+        return context.json(
+          {
+            error: "invalid_client_metadata",
+            message: "DB client custom claims must use fixed values"
+          },
           400
         );
       }
@@ -3661,17 +3748,21 @@ export const createApp = (options: AppOptions) => {
     }
     const templateSql = await templateObject.text();
 
-    // 5. Load SurrealDB credentials from R2
+    // 5. Load SurrealDB connection settings from R2
     const credsKey = "db-config/surrealdb.json";
     const credsObject = await keyMaterialBucket.get(credsKey);
     if (credsObject === null) {
-      return context.json({ error: "db_credentials_not_configured" }, 503);
+      return context.json({ error: "db_config_not_configured" }, 503);
     }
-    let dbCreds: { url: string; username: string; password: string; ns?: string; db?: string };
+    let dbConfig: { url: string; ns?: string; db?: string };
     try {
-      dbCreds = await credsObject.json<typeof dbCreds>();
+      dbConfig = await credsObject.json<typeof dbConfig>();
     } catch {
-      return context.json({ error: "db_credentials_invalid" }, 503);
+      return context.json({ error: "db_config_invalid" }, 503);
+    }
+
+    if (typeof dbConfig.url !== "string" || dbConfig.url.trim().length === 0) {
+      return context.json({ error: "db_config_invalid" }, 503);
     }
 
     // 6. Merge params: token context fields override caller-supplied params
@@ -3694,23 +3785,59 @@ export const createApp = (options: AppOptions) => {
     // We also do a simple string substitution for non-SurrealDB contexts
     // For SurrealDB we pass params via the query string (age=value style)
     // Build the endpoint URL with query params for simple scalar values
-    const queryUrl = new URL(dbCreds.url);
+    let queryUrl: URL;
+    try {
+      queryUrl = new URL(dbConfig.url);
+    } catch {
+      return context.json({ error: "db_config_invalid" }, 503);
+    }
+
     for (const [k, v] of Object.entries(mergedParams)) {
       if (typeof v === "string" || typeof v === "number" || typeof v === "boolean") {
         queryUrl.searchParams.set(k, String(v));
       }
     }
 
-    // 8. Execute against SurrealDB
-    const basicCredential = btoa(`${dbCreds.username}:${dbCreds.password}`);
+    // 8. Issue a tenant DB-client token for SurrealDB and execute the query.
+    if (signer === undefined) {
+      return context.json({ error: "token_signing_unavailable" }, 503);
+    }
+
+    const dbClient = await clientRepository.findDbClientByTenantId(issuerContext.tenant.id);
+
+    if (dbClient === null) {
+      return context.json({ error: "db_client_not_configured" }, 503);
+    }
+
+    const fixedDbClaims = Object.fromEntries(
+      (
+        await accessTokenClaimsRepository.listByClientIdAndTenantId(
+          dbClient.id,
+          issuerContext.tenant.id
+        )
+      )
+        .filter((claim) => claim.sourceType === "fixed" && claim.fixedValue !== null)
+        .map((claim) => [claim.claimName, claim.fixedValue])
+    );
+    const surrealAccessToken = await issueClientAccessToken({
+      client: dbClient,
+      extraClaims: fixedDbClaims,
+      issuer: issuerContext.issuer,
+      scope: "surrealdb",
+      signer,
+      subject: "admin",
+      tenantId: issuerContext.tenant.id,
+      username: "admin"
+    });
+
     let surrealResponse: Response;
     try {
       surrealResponse = await fetch(queryUrl.toString(), {
         method: "POST",
         headers: {
-          "Authorization": `Basic ${basicCredential}`,
-          "Surreal-NS": dbCreds.ns ?? "main",
-          "Surreal-DB": dbCreds.db ?? "docs",
+          "Authorization": `Bearer ${surrealAccessToken}`,
+          "Surreal-NS": dbConfig.ns ?? "main",
+          "Surreal-DB": dbConfig.db ?? "docs",
           "Accept": "application/json",
           "Content-Type": "text/plain"
         },

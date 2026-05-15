@@ -205,10 +205,33 @@ curl -X POST {{token_endpoint}} \\
 \`\`\`
 `;
 
+const dbTemplate = `# SurrealDB Client Integration
+
+## Identity Provider
+
+- **Issuer:** \`{{issuer}}\`
+- **JWKS:** \`{{jwks_uri}}\`
+
+## Client Configuration
+
+| Field | Value |
+|---|---|
+| Client ID | \`{{client_id}}\` |
+| Profile | \`db\` |
+| Audience | \`{{audience}}\` |
+
+## Request Header
+
+\`\`\`http
+Authorization: Bearer <ma_hono-issued-db-access-token>
+\`\`\`
+`;
+
 const templates: Record<string, string> = {
   spa: spaTemplate,
   web: webTemplate,
-  native: nativeTemplate
+  native: nativeTemplate,
+  db: dbTemplate
 };
 
 function renderTemplate(

@@ -81,11 +81,11 @@ const customClaimSchema = z
 export const adminClientRegistrationSchema = z
   .object({
     client_name: z.string().min(1),
-    client_profile: z.enum(["spa", "web", "native"]),
+    client_profile: z.enum(["spa", "web", "native", "db"]),
     application_type: z.enum(["web", "native"]),
-    grant_types: z.array(z.enum(["authorization_code"])).min(1),
-    redirect_uris: z.array(redirectUriSchema).min(1),
-    response_types: z.array(z.enum(["code"])).min(1),
+    grant_types: z.array(z.enum(["authorization_code"])),
+    redirect_uris: z.array(redirectUriSchema),
+    response_types: z.array(z.enum(["code"])),
     trust_level: z.literal("first_party_trusted").default("first_party_trusted"),
     consent_policy: z.literal("skip").default("skip"),
     token_endpoint_auth_method: z.enum([
@@ -123,6 +123,74 @@ export const adminClientRegistrationSchema = z
       }
     }
 
+    if (value.client_profile !== "db") {
+      if (value.grant_types.length === 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "interactive clients require at least one grant type",
+          path: ["grant_types"]
+        });
+      }
+
+      if (value.response_types.length === 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "interactive clients require at least one response type",
+          path: ["response_types"]
+        });
+      }
+
+      if (value.redirect_uris.length === 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "interactive clients require at least one redirect uri",
+          path: ["redirect_uris"]
+        });
+      }
+    }
+
+    if (value.client_profile === "db") {
+      if (value.application_type !== "web") {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "DB clients must have application_type web",
+          path: ["application_type"]
+        });
+      }
+
+      if (value.token_endpoint_auth_method !== "none") {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "DB clients must use token_endpoint_auth_method none",
+          path: ["token_endpoint_auth_method"]
+        });
+      }
+
+      if (value.grant_types.length > 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "DB clients must not declare interactive grant types",
+          path: ["grant_types"]
+        });
+      }
+
+      if (value.response_types.length > 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "DB clients must not declare interactive response types",
+          path: ["response_types"]
+        });
+      }
+
+      if (value.redirect_uris.length > 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "DB clients must not declare redirect uris",
+          path: ["redirect_uris"]
+        });
+      }
+    }
+
     if (value.access_token_custom_claims) {
       const names = value.access_token_custom_claims.map((c) => c.claim_name);
       const duplicates = names.filter(
@@ -135,6 +203,18 @@ export const adminClientRegistrationSchema = z
           message: `duplicate claim name "${dup}"`,
           path: ["access_token_custom_claims"]
         });
+      }
+
+      if (value.client_profile === "db") {
+        for (const [index, claim] of value.access_token_custom_claims.entries()) {
+          if (claim.source_type === "user_field") {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              message: "DB client custom claims must use fixed values",
+              path: ["access_token_custom_claims", index, "source_type"]
+            });
+          }
+        }
       }
     }
 
@@ -156,12 +236,14 @@ export type AdminClientRegistrationInput = z.infer<
 export const adminClientUpdateSchema = z
   .object({
     client_name: z.string().min(1).optional(),
-    client_profile: z.enum(["spa", "web", "native"]).optional(),
+    client_profile: z.enum(["spa", "web", "native", "db"]).optional(),
     application_type: z.enum(["web", "native"]).optional(),
     token_endpoint_auth_method: z
       .enum(["client_secret_basic", "client_secret_post", "none"])
       .optional(),
-    redirect_uris: z.array(redirectUriSchema).min(1).optional(),
+    redirect_uris: z.array(redirectUriSchema).optional(),
+    grant_types: z.array(z.enum(["authorization_code"])).optional(),
+    response_types: z.array(z.enum(["code"])).optional(),
     access_token_audience: z.string().min(1).nullable().optional(),
     access_token_custom_claims: z.array(customClaimSchema).max(20).optional()
   })
@@ -198,6 +280,51 @@ export const adminClientUpdateSchema = z
       }
     }
 
+    if (profile === "db") {
+      if (value.application_type !== undefined && value.application_type !== "web") {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "DB clients must have application_type web",
+          path: ["application_type"]
+        });
+      }
+
+      if (
+        value.token_endpoint_auth_method !== undefined &&
+        value.token_endpoint_auth_method !== "none"
+      ) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "DB clients must use token_endpoint_auth_method none",
+          path: ["token_endpoint_auth_method"]
+        });
+      }
+
+      if (value.grant_types !== undefined && value.grant_types.length > 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "DB clients must not declare interactive grant types",
+          path: ["grant_types"]
+        });
+      }
+
+      if (value.response_types !== undefined && value.response_types.length > 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "DB clients must not declare interactive response types",
+          path: ["response_types"]
+        });
+      }
+
+      if (value.redirect_uris !== undefined && value.redirect_uris.length > 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "DB clients must not declare redirect uris",
+          path: ["redirect_uris"]
+        });
+      }
+    }
+
     if (value.access_token_custom_claims) {
       const names = value.access_token_custom_claims.map((c) => c.claim_name);
       const duplicates = names.filter(
@@ -209,6 +336,18 @@ export const adminClientUpdateSchema = z
           message: `duplicate claim name "${dup}"`,
           path: ["access_token_custom_claims"]
         });
+      }
+
+      if (profile === "db") {
+        for (const [index, claim] of value.access_token_custom_claims.entries()) {
+          if (claim.source_type === "user_field") {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              message: "DB client custom claims must use fixed values",
+              path: ["access_token_custom_claims", index, "source_type"]
+            });
+          }
+        }
       }
     }
   });

@@ -423,6 +423,25 @@ export const ensureTenantSigningKeys = async ({
 class D1ClientRepository implements ClientRepository {
   constructor(private readonly db: ReturnType<typeof drizzle>) {}
 
+  private rowToClient(row: typeof oidcClients.$inferSelect): Client {
+    return {
+      id: row.id,
+      tenantId: row.tenantId,
+      clientId: row.clientId,
+      clientSecretHash: row.clientSecretHash,
+      clientName: row.clientName,
+      applicationType: row.applicationType as Client["applicationType"],
+      grantTypes: row.grantTypes as Client["grantTypes"],
+      redirectUris: row.redirectUris as Client["redirectUris"],
+      responseTypes: row.responseTypes as Client["responseTypes"],
+      tokenEndpointAuthMethod: row.tokenEndpointAuthMethod as Client["tokenEndpointAuthMethod"],
+      trustLevel: row.trustLevel as Client["trustLevel"],
+      consentPolicy: row.consentPolicy as Client["consentPolicy"],
+      clientProfile: row.clientProfile as Client["clientProfile"],
+      accessTokenAudience: row.accessTokenAudience
+    };
+  }
+
   async create(client: Client): Promise<void> {
     const now = new Date().toISOString();
 
@@ -476,24 +495,22 @@ class D1ClientRepository implements ClientRepository {
       .where(eq(oidcClients.clientId, clientId))
       .limit(1);
 
-    return row === undefined
-      ? null
-      : {
-          id: row.id,
-          tenantId: row.tenantId,
-          clientId: row.clientId,
-          clientSecretHash: row.clientSecretHash,
-          clientName: row.clientName,
-          applicationType: row.applicationType as Client["applicationType"],
-          grantTypes: row.grantTypes as Client["grantTypes"],
-          redirectUris: row.redirectUris as Client["redirectUris"],
-          responseTypes: row.responseTypes as Client["responseTypes"],
-          tokenEndpointAuthMethod: row.tokenEndpointAuthMethod as Client["tokenEndpointAuthMethod"],
-          trustLevel: row.trustLevel as Client["trustLevel"],
-          consentPolicy: row.consentPolicy as Client["consentPolicy"],
-          clientProfile: row.clientProfile as Client["clientProfile"],
-          accessTokenAudience: row.accessTokenAudience
-        };
+    return row === undefined ? null : this.rowToClient(row);
+  }
+
+  async findDbClientByTenantId(tenantId: string): Promise<Client | null> {
+    const [row] = await this.db
+      .select()
+      .from(oidcClients)
+      .where(
+        and(
+          eq(oidcClients.tenantId, tenantId),
+          eq(oidcClients.clientProfile, "db")
+        )
+      )
+      .limit(1);
+
+    return row === undefined ? null : this.rowToClient(row);
   }
 
   async listByTenantId(tenantId: string): Promise<Client[]> {
@@ -502,22 +519,7 @@ class D1ClientRepository implements ClientRepository {
       .from(oidcClients)
       .where(eq(oidcClients.tenantId, tenantId));
 
-    return rows.map((row) => ({
-      id: row.id,
-      tenantId: row.tenantId,
-      clientId: row.clientId,
-      clientSecretHash: row.clientSecretHash,
-      clientName: row.clientName,
-      applicationType: row.applicationType as Client["applicationType"],
-      grantTypes: row.grantTypes as Client["grantTypes"],
-      redirectUris: row.redirectUris as Client["redirectUris"],
-      responseTypes: row.responseTypes as Client["responseTypes"],
-      tokenEndpointAuthMethod: row.tokenEndpointAuthMethod as Client["tokenEndpointAuthMethod"],
-      trustLevel: row.trustLevel as Client["trustLevel"],
-      consentPolicy: row.consentPolicy as Client["consentPolicy"],
-      clientProfile: row.clientProfile as Client["clientProfile"],
-      accessTokenAudience: row.accessTokenAudience
-    }));
+    return rows.map((row) => this.rowToClient(row));
   }
 }
 

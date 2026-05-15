@@ -245,6 +245,53 @@ const createSignedJwt = async ({
     .sign(privateKey);
 };
 
+export const issueClientAccessToken = async ({
+  client,
+  extraClaims = {},
+  issuer,
+  now = new Date(),
+  scope,
+  signer,
+  subject,
+  tenantId,
+  ttlSeconds = DEFAULT_TOKEN_TTL_SECONDS,
+  username
+}: {
+  client: Client;
+  extraClaims?: Record<string, unknown>;
+  issuer: string;
+  now?: Date;
+  scope: string;
+  signer: SigningKeySigner;
+  subject: string;
+  tenantId: string;
+  ttlSeconds?: number;
+  username?: string;
+}): Promise<string> => {
+  const nowSeconds = Math.floor(now.getTime() / 1000);
+  const resolvedAudience = client.accessTokenAudience ?? client.clientId;
+  const accessTokenClaims = buildAccessTokenClaims({
+    audience: resolvedAudience,
+    clientId: client.clientId,
+    extraClaims: {
+      ...extraClaims,
+      ...(username === undefined ? {} : { username })
+    },
+    issuer,
+    nowSeconds,
+    scope,
+    tokenId: crypto.randomUUID(),
+    ttlSeconds,
+    userId: subject
+  });
+
+  return await createSignedJwt({
+    claims: accessTokenClaims,
+    signer,
+    tenantId
+  });
+};
+
 const resolveTokenTtlSeconds = async ({
   authMethod,
   client,
