@@ -430,6 +430,8 @@ export const createApp = (options: AppOptions) => {
 
   app.use("/token", tokenCors);
   app.use("/t/:tenant/token", tokenCors);
+  app.use("/t/:tenant/.well-known/openid-configuration", tokenCors);
+  app.use("/t/:tenant/jwks.json", tokenCors);
   app.use("/db/execTemplate", tokenCors);
 
   /**
