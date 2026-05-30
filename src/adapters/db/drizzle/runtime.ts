@@ -438,7 +438,10 @@ class D1ClientRepository implements ClientRepository {
       trustLevel: row.trustLevel as Client["trustLevel"],
       consentPolicy: row.consentPolicy as Client["consentPolicy"],
       clientProfile: row.clientProfile as Client["clientProfile"],
-      accessTokenAudience: row.accessTokenAudience
+      accessTokenAudience: row.accessTokenAudience,
+      claimHookUrl: row.claimHookUrl,
+      claimHookAuthHeaderName: row.claimHookAuthHeaderName,
+      claimHookAuthHeaderValue: row.claimHookAuthHeaderValue
     };
   }
 
@@ -456,6 +459,9 @@ class D1ClientRepository implements ClientRepository {
       consentPolicy: client.consentPolicy,
       clientProfile: client.clientProfile,
       accessTokenAudience: client.accessTokenAudience,
+      claimHookUrl: client.claimHookUrl ?? null,
+      claimHookAuthHeaderName: client.claimHookAuthHeaderName ?? null,
+      claimHookAuthHeaderValue: client.claimHookAuthHeaderValue ?? null,
       tokenEndpointAuthMethod: client.tokenEndpointAuthMethod,
       redirectUris: client.redirectUris,
       grantTypes: client.grantTypes,
@@ -479,6 +485,9 @@ class D1ClientRepository implements ClientRepository {
         grantTypes: client.grantTypes,
         responseTypes: client.responseTypes,
         accessTokenAudience: client.accessTokenAudience,
+        claimHookUrl: client.claimHookUrl ?? null,
+        claimHookAuthHeaderName: client.claimHookAuthHeaderName ?? null,
+        claimHookAuthHeaderValue: client.claimHookAuthHeaderValue ?? null,
         updatedAt: now
       })
       .where(eq(oidcClients.clientId, client.clientId));
@@ -540,6 +549,7 @@ class D1AccessTokenClaimsRepository implements AccessTokenClaimsRepository {
         sourceType: claim.sourceType,
         fixedValue: claim.fixedValue,
         userField: claim.userField,
+        hookField: claim.hookField,
         createdAt: claim.createdAt,
         updatedAt: claim.updatedAt
       }))
@@ -568,6 +578,7 @@ class D1AccessTokenClaimsRepository implements AccessTokenClaimsRepository {
         sourceType: claim.sourceType,
         fixedValue: claim.fixedValue,
         userField: claim.userField,
+        hookField: claim.hookField,
         createdAt: claim.createdAt,
         updatedAt: claim.updatedAt
       }))
@@ -590,6 +601,7 @@ class D1AccessTokenClaimsRepository implements AccessTokenClaimsRepository {
       sourceType: row.sourceType as AccessTokenCustomClaim["sourceType"],
       fixedValue: row.fixedValue,
       userField: row.userField as AccessTokenCustomClaim["userField"],
+      hookField: row.hookField,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt
     }));
@@ -617,6 +629,7 @@ class D1AccessTokenClaimsRepository implements AccessTokenClaimsRepository {
       sourceType: row.sourceType as AccessTokenCustomClaim["sourceType"],
       fixedValue: row.fixedValue,
       userField: row.userField as AccessTokenCustomClaim["userField"],
+      hookField: row.hookField,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt
     }));

@@ -49,7 +49,7 @@ const monoStyle: React.CSSProperties = {
 };
 
 type ClientProfile = "spa" | "web" | "native" | "db";
-type ClaimSourceType = "fixed" | "user_field";
+type ClaimSourceType = "fixed" | "user_field" | "hook";
 type ClaimUserField = "id" | "email" | "email_verified" | "username" | "display_name";
 
 interface ClaimEditorRow {
@@ -58,6 +58,7 @@ interface ClaimEditorRow {
   sourceType: ClaimSourceType;
   fixedValue: string;
   userField: ClaimUserField;
+  hookField: string;
 }
 
 const userFieldOptions: ClaimUserField[] = [
@@ -67,6 +68,48 @@ const userFieldOptions: ClaimUserField[] = [
   "username",
   "display_name"
 ];
+
+const validateClaimHookInputs = (
+  claims: ClaimEditorRow[],
+  url: string,
+  authHeaderName: string,
+  authHeaderValue: string,
+  allowMissingAuthHeaderValue = false
+) => {
+  const hasHookClaims = claims.some((claim) => claim.sourceType === 'hook');
+  const trimmedUrl = url.trim();
+  const trimmedHeaderName = authHeaderName.trim();
+  const trimmedHeaderValue = authHeaderValue.trim();
+
+  if (hasHookClaims && trimmedUrl.length === 0) {
+    return "HOOK CLAIMS REQUIRE A CLAIM HOOK URL";
+  }
+
+  if (trimmedUrl.length > 0) {
+    try {
+      const parsedUrl = new URL(trimmedUrl);
+      if (parsedUrl.protocol !== 'https:' && parsedUrl.protocol !== 'http:') {
+        return "CLAIM HOOK URL MUST USE HTTP OR HTTPS";
+      }
+    } catch {
+      return "CLAIM HOOK URL MUST BE VALID";
+    }
+  }
+
+  if (
+    trimmedHeaderName.length > 0 &&
+    trimmedHeaderValue.length === 0 &&
+    allowMissingAuthHeaderValue
+  ) {
+    return null;
+  }
+
+  if ((trimmedHeaderName.length === 0) !== (trimmedHeaderValue.length === 0)) {
+    return "CLAIM HOOK AUTH HEADER REQUIRES NAME AND VALUE";
+  }
+
+  return null;
+};
 
 const profileLabel = (profile: ClientProfile) =>
   profile === "spa" ? "SPA" : profile === "web" ? "Web" : profile === "db" ? "DB" : "Native";
@@ -325,6 +368,9 @@ export default function TenantClientsPage() {
   const [redirectUris, setRedirectUris] = useState('');
   const [authMethod, setAuthMethod] = useState('client_secret_basic');
   const [accessTokenAudience, setAccessTokenAudience] = useState('');
+  const [claimHookUrl, setClaimHookUrl] = useState('');
+  const [claimHookAuthHeaderName, setClaimHookAuthHeaderName] = useState('');
+  const [claimHookAuthHeaderValue, setClaimHookAuthHeaderValue] = useState('');
   const [customClaims, setCustomClaims] = useState<ClaimEditorRow[]>([]);
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -343,6 +389,9 @@ export default function TenantClientsPage() {
   const [editRedirectUris, setEditRedirectUris] = useState('');
   const [editAuthMethod, setEditAuthMethod] = useState('');
   const [editAudience, setEditAudience] = useState('');
+  const [editClaimHookUrl, setEditClaimHookUrl] = useState('');
+  const [editClaimHookAuthHeaderName, setEditClaimHookAuthHeaderName] = useState('');
+  const [editClaimHookAuthHeaderValue, setEditClaimHookAuthHeaderValue] = useState('');
   const [editClaims, setEditClaims] = useState<ClaimEditorRow[]>([]);
   const [editError, setEditError] = useState<string | null>(null);
   const [editSubmitting, setEditSubmitting] = useState(false);
@@ -366,6 +415,9 @@ export default function TenantClientsPage() {
     setRedirectUris('');
     setAuthMethod('client_secret_basic');
     setAccessTokenAudience('');
+    setClaimHookUrl('');
+    setClaimHookAuthHeaderName('');
+    setClaimHookAuthHeaderValue('');
     setCustomClaims([]);
     setFormError(null);
   };
@@ -406,6 +458,17 @@ export default function TenantClientsPage() {
       return;
     }
 
+    const claimHookError = validateClaimHookInputs(
+      customClaims,
+      claimHookUrl,
+      claimHookAuthHeaderName,
+      claimHookAuthHeaderValue
+    );
+    if (claimHookError) {
+      setFormError(claimHookError);
+      return;
+    }
+
     for (const claim of customClaims) {
       if (!claim.claimName.trim()) {
         setFormError("EVERY CUSTOM CLAIM REQUIRES A CLAIM NAME");
@@ -415,7 +478,11 @@ export default function TenantClientsPage() {
         setFormError("FIXED CLAIMS REQUIRE A VALUE");
         return;
       }
-      if (clientProfile === 'db' && claim.sourceType === 'user_field') {
+      if (claim.sourceType === 'hook' && !claim.hookField.trim()) {
+        setFormError("HOOK CLAIMS REQUIRE A HOOK FIELD");
+        return;
+      }
+      if (clientProfile === 'db' && claim.sourceType !== 'fixed') {
         setFormError("DB CLIENT CLAIMS MUST USE FIXED VALUES");
         return;
       }
@@ -432,6 +499,15 @@ export default function TenantClientsPage() {
         grant_types: clientProfile === 'db' ? [] : ['authorization_code'],
         response_types: clientProfile === 'db' ? [] : ['code'],
         ...(trimmedAudience ? { access_token_audience: trimmedAudience } : {}),
+        ...(claimHookUrl.trim()
+          ? { claim_hook_url: claimHookUrl.trim() }
+          : {}),
+        ...(claimHookAuthHeaderName.trim() && claimHookAuthHeaderValue.trim()
+          ? {
+              claim_hook_auth_header_name: claimHookAuthHeaderName.trim(),
+              claim_hook_auth_header_value: claimHookAuthHeaderValue.trim()
+            }
+          : {}),
         ...(customClaims.length > 0
           ? {
               access_token_custom_claims: customClaims.map((claim) => ({
@@ -439,7 +515,9 @@ export default function TenantClientsPage() {
                 source_type: claim.sourceType,
                 ...(claim.sourceType === 'fixed'
                   ? { fixed_value: claim.fixedValue.trim() }
-                  : { user_field: claim.userField })
+                  : claim.sourceType === 'hook'
+                    ? { hook_field: claim.hookField.trim() }
+                    : { user_field: claim.userField })
               }))
             }
           : {})
@@ -484,17 +562,24 @@ export default function TenantClientsPage() {
     setEditRedirectUris(c.redirect_uris.join('\n'));
     setEditAuthMethod(c.token_endpoint_auth_method);
     setEditAudience(c.access_token_audience ?? '');
+    setEditClaimHookUrl(c.claim_hook_url ?? '');
+    setEditClaimHookAuthHeaderName(c.claim_hook_auth_header_name ?? '');
+    setEditClaimHookAuthHeaderValue('');
     setEditError(null);
     setEditSubmitting(false);
     try {
       const detail = await getClient(token!, tenantId!, c.client_id);
+      setEditClaimHookUrl(detail.claim_hook_url ?? '');
+      setEditClaimHookAuthHeaderName(detail.claim_hook_auth_header_name ?? '');
+      setEditClaimHookAuthHeaderValue('');
       setEditClaims(
         (detail.access_token_custom_claims ?? []).map((claim) => ({
           id: crypto.randomUUID(),
           claimName: claim.claim_name,
           sourceType: claim.source_type as ClaimSourceType,
           fixedValue: claim.fixed_value ?? '',
-          userField: (claim.user_field ?? 'email') as ClaimUserField
+          userField: (claim.user_field ?? 'email') as ClaimUserField,
+          hookField: claim.hook_field ?? ''
         }))
       );
     } catch {
@@ -520,6 +605,18 @@ export default function TenantClientsPage() {
       return;
     }
 
+    const claimHookError = validateClaimHookInputs(
+      editClaims,
+      editClaimHookUrl,
+      editClaimHookAuthHeaderName,
+      editClaimHookAuthHeaderValue,
+      editClient.claim_hook_auth_header_name !== null
+    );
+    if (claimHookError) {
+      setEditError(claimHookError);
+      return;
+    }
+
     for (const claim of editClaims) {
       if (!claim.claimName.trim()) {
         setEditError("EVERY CUSTOM CLAIM REQUIRES A CLAIM NAME");
@@ -529,7 +626,11 @@ export default function TenantClientsPage() {
         setEditError("FIXED CLAIMS REQUIRE A VALUE");
         return;
       }
-      if (editProfile === 'db' && claim.sourceType === 'user_field') {
+      if (claim.sourceType === 'hook' && !claim.hookField.trim()) {
+        setEditError("HOOK CLAIMS REQUIRE A HOOK FIELD");
+        return;
+      }
+      if (editProfile === 'db' && claim.sourceType !== 'fixed') {
         setEditError("DB CLIENT CLAIMS MUST USE FIXED VALUES");
         return;
       }
@@ -540,6 +641,8 @@ export default function TenantClientsPage() {
 
     setEditSubmitting(true);
     try {
+      const trimmedHookHeaderName = editClaimHookAuthHeaderName.trim();
+      const trimmedHookHeaderValue = editClaimHookAuthHeaderValue.trim();
       await updateClient(token!, tenantId!, editClient.client_id, {
         client_name: editName.trim(),
         client_profile: editProfile,
@@ -549,12 +652,21 @@ export default function TenantClientsPage() {
         response_types: editProfile === 'db' ? [] : ['code'],
         token_endpoint_auth_method: editEffectiveAuth,
         access_token_audience: trimmedAudience || null,
+        claim_hook_url: editClaimHookUrl.trim() || null,
+        claim_hook_auth_header_name: trimmedHookHeaderName || null,
+        ...(trimmedHookHeaderName.length === 0
+          ? { claim_hook_auth_header_value: null }
+          : trimmedHookHeaderValue.length > 0
+            ? { claim_hook_auth_header_value: trimmedHookHeaderValue }
+            : {}),
         access_token_custom_claims: editClaims.map((claim) => ({
           claim_name: claim.claimName.trim(),
           source_type: claim.sourceType,
           ...(claim.sourceType === 'fixed'
             ? { fixed_value: claim.fixedValue.trim() }
-            : { user_field: claim.userField })
+            : claim.sourceType === 'hook'
+              ? { hook_field: claim.hookField.trim() }
+              : { user_field: claim.userField })
         }))
       });
       setEditClient(null);
@@ -668,6 +780,11 @@ export default function TenantClientsPage() {
                     AUD {c.access_token_audience}
                   </div>
                 )}
+                {c.claim_hook_url && (
+                  <div style={{ fontSize: '10px', color: 'var(--accent-green)', fontFamily: "'Space Mono', monospace", marginTop: '4px' }}>
+                    HOOK {c.claim_hook_auth_header_name ? c.claim_hook_auth_header_name : 'NO AUTH HEADER'}
+                  </div>
+                )}
               </div>
               <span style={{ ...monoStyle, color: 'var(--accent-cyan)', fontSize: '11px' }}>{c.client_id}</span>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -765,7 +882,7 @@ export default function TenantClientsPage() {
                   if (profile === 'db') {
                     setRedirectUris('');
                     setCustomClaims(current => current.map((claim) => (
-                      claim.sourceType === 'user_field' ? { ...claim, sourceType: 'fixed', fixedValue: claim.fixedValue } : claim
+                      claim.sourceType !== 'fixed' ? { ...claim, sourceType: 'fixed', fixedValue: claim.fixedValue } : claim
                     )));
                   }
                 }}
@@ -830,11 +947,44 @@ export default function TenantClientsPage() {
             </div>
 
             <div style={{ marginBottom: '20px', padding: '14px', border: '1px solid var(--border)', background: 'var(--bg-surface)' }}>
+              <label style={labelStyle}>CLAIM HOOK CALLBACK</label>
+              <div style={{ marginBottom: '10px' }}>
+                <input
+                  type="url"
+                  value={claimHookUrl}
+                  onChange={e => setClaimHookUrl(e.target.value)}
+                  placeholder="https://app.example.com/api/idp/claims"
+                  style={inputStyle}
+                  onFocus={e => (e.target.style.borderColor = 'var(--accent-cyan)')}
+                  onBlur={e => (e.target.style.borderColor = 'var(--border)')}
+                />
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                <input
+                  type="text"
+                  value={claimHookAuthHeaderName}
+                  onChange={e => setClaimHookAuthHeaderName(e.target.value)}
+                  placeholder="auth header name"
+                  style={inputStyle}
+                  autoComplete="off"
+                />
+                <input
+                  type="password"
+                  value={claimHookAuthHeaderValue}
+                  onChange={e => setClaimHookAuthHeaderValue(e.target.value)}
+                  placeholder="auth header value"
+                  style={inputStyle}
+                  autoComplete="off"
+                />
+              </div>
+            </div>
+
+            <div style={{ marginBottom: '20px', padding: '14px', border: '1px solid var(--border)', background: 'var(--bg-surface)' }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
                 <div>
                   <label style={labelStyle}>CUSTOM ACCESS TOKEN CLAIMS</label>
                   <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
-                    Fixed values or user field mappings appended to the access token.
+                    Fixed values, user fields, or hook response fields appended to the access token.
                   </div>
                 </div>
                 <button
@@ -846,7 +996,8 @@ export default function TenantClientsPage() {
                       claimName: '',
                       sourceType: 'fixed',
                       fixedValue: '',
-                      userField: 'email'
+                      userField: 'email',
+                      hookField: ''
                     }
                   ])}
                   style={{ ...btnStyle('var(--accent-amber, #fbbf24)'), padding: '5px 10px' }}
@@ -878,6 +1029,7 @@ export default function TenantClientsPage() {
                         >
                           <option value="fixed">fixed value</option>
                           {clientProfile !== 'db' && <option value="user_field">user field</option>}
+                          {clientProfile !== 'db' && <option value="hook">hook field</option>}
                         </select>
                         <button
                           type="button"
@@ -894,6 +1046,14 @@ export default function TenantClientsPage() {
                           value={claim.fixedValue}
                           onChange={e => setCustomClaims((current) => current.map((row) => row.id === claim.id ? { ...row, fixedValue: e.target.value } : row))}
                           placeholder="fixed value"
+                          style={inputStyle}
+                        />
+                      ) : claim.sourceType === 'hook' ? (
+                        <input
+                          type="text"
+                          value={claim.hookField}
+                          onChange={e => setCustomClaims((current) => current.map((row) => row.id === claim.id ? { ...row, hookField: e.target.value } : row))}
+                          placeholder="hook field (key in hook response)"
                           style={inputStyle}
                         />
                       ) : (
@@ -1033,7 +1193,7 @@ export default function TenantClientsPage() {
                   if (profile === 'db') {
                     setEditRedirectUris('');
                     setEditClaims(current => current.map((claim) => (
-                      claim.sourceType === 'user_field' ? { ...claim, sourceType: 'fixed', fixedValue: claim.fixedValue } : claim
+                      claim.sourceType !== 'fixed' ? { ...claim, sourceType: 'fixed', fixedValue: claim.fixedValue } : claim
                     )));
                   }
                 }}
@@ -1097,11 +1257,44 @@ export default function TenantClientsPage() {
             </div>
 
             <div style={{ marginBottom: '20px', padding: '14px', border: '1px solid var(--border)', background: 'var(--bg-surface)' }}>
+              <label style={labelStyle}>CLAIM HOOK CALLBACK</label>
+              <div style={{ marginBottom: '10px' }}>
+                <input
+                  type="url"
+                  value={editClaimHookUrl}
+                  onChange={e => setEditClaimHookUrl(e.target.value)}
+                  placeholder="https://app.example.com/api/idp/claims"
+                  style={inputStyle}
+                  onFocus={e => (e.target.style.borderColor = 'var(--accent-cyan)')}
+                  onBlur={e => (e.target.style.borderColor = 'var(--border)')}
+                />
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                <input
+                  type="text"
+                  value={editClaimHookAuthHeaderName}
+                  onChange={e => setEditClaimHookAuthHeaderName(e.target.value)}
+                  placeholder="auth header name"
+                  style={inputStyle}
+                  autoComplete="off"
+                />
+                <input
+                  type="password"
+                  value={editClaimHookAuthHeaderValue}
+                  onChange={e => setEditClaimHookAuthHeaderValue(e.target.value)}
+                  placeholder={editClient.claim_hook_auth_header_name ? "auth header value (leave blank to keep)" : "auth header value"}
+                  style={inputStyle}
+                  autoComplete="off"
+                />
+              </div>
+            </div>
+
+            <div style={{ marginBottom: '20px', padding: '14px', border: '1px solid var(--border)', background: 'var(--bg-surface)' }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
                 <div>
                   <label style={labelStyle}>CUSTOM ACCESS TOKEN CLAIMS</label>
                   <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
-                    Fixed values or user field mappings appended to the access token.
+                    Fixed values, user fields, or hook response fields appended to the access token.
                   </div>
                 </div>
                 <button
@@ -1113,7 +1306,8 @@ export default function TenantClientsPage() {
                       claimName: '',
                       sourceType: 'fixed',
                       fixedValue: '',
-                      userField: 'email'
+                      userField: 'email',
+                      hookField: ''
                     }
                   ])}
                   style={{ ...btnStyle('var(--accent-amber, #fbbf24)'), padding: '5px 10px' }}
@@ -1145,6 +1339,7 @@ export default function TenantClientsPage() {
                         >
                           <option value="fixed">fixed value</option>
                           {editProfile !== 'db' && <option value="user_field">user field</option>}
+                          {editProfile !== 'db' && <option value="hook">hook field</option>}
                         </select>
                         <button
                           type="button"
@@ -1161,6 +1356,14 @@ export default function TenantClientsPage() {
                           value={claim.fixedValue}
                           onChange={e => setEditClaims((current) => current.map((row) => row.id === claim.id ? { ...row, fixedValue: e.target.value } : row))}
                           placeholder="fixed value"
+                          style={inputStyle}
+                        />
+                      ) : claim.sourceType === 'hook' ? (
+                        <input
+                          type="text"
+                          value={claim.hookField}
+                          onChange={e => setEditClaims((current) => current.map((row) => row.id === claim.id ? { ...row, hookField: e.target.value } : row))}
+                          placeholder="hook field (key in hook response)"
                           style={inputStyle}
                         />
                       ) : (

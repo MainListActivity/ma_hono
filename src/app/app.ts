@@ -41,6 +41,7 @@ import {
   registerClientFromAdmin
 } from "../domain/clients/register-client";
 import type { AccessTokenCustomClaim, AccessTokenClaimUserField } from "../domain/clients/access-token-claims-types";
+import type { ClaimHookFetcher } from "../domain/clients/claim-hook-client";
 import { adminClientUpdateSchema } from "../domain/clients/admin-registration-schema";
 import {
   DEFAULT_TOKEN_TTL_SECONDS,
@@ -356,6 +357,8 @@ export interface AppOptions {
   passkeyRepository?: PasskeyRepository;
   totpRepository: TotpRepository;
   totpEncryptionKey: Uint8Array;
+  /** Optional test override for `hook`-source custom claim fetches. */
+  claimHookFetcher?: ClaimHookFetcher;
   /** OIDC protocol hostname, e.g. "o.maplayer.top". Used to resolve issuer context and build issuer URLs. */
   oidcHost: string;
   registrationAccessTokenRepository?: RegistrationAccessTokenRepository;
@@ -396,6 +399,7 @@ export const createApp = (options: AppOptions) => {
   const totpEncryptionKey = options.totpEncryptionKey;
   const tenantRepository = options.tenantRepository ?? new EmptyTenantRepository();
   const userRepository = options.userRepository ?? new EmptyUserRepository();
+  const claimHookFetcher = options.claimHookFetcher;
   const signer = options.signer;
   const registrationAccessTokenRepository =
     options.registrationAccessTokenRepository ?? new EmptyRegistrationAccessTokenRepository();
@@ -529,6 +533,32 @@ export const createApp = (options: AppOptions) => {
       ) {
         return "DB clients must not declare interactive OIDC flow metadata";
       }
+    }
+
+    return null;
+  };
+
+  const validateClaimHookConfiguration = (
+    client: Client,
+    claims: AccessTokenCustomClaim[]
+  ): string | null => {
+    const hasHookClaims = claims.some((claim) => claim.sourceType === "hook");
+
+    if (hasHookClaims && !client.claimHookUrl) {
+      return "hook custom claims require a claim_hook_url";
+    }
+
+    const hasAuthHeaderName =
+      client.claimHookAuthHeaderName !== undefined &&
+      client.claimHookAuthHeaderName !== null &&
+      client.claimHookAuthHeaderName !== "";
+    const hasAuthHeaderValue =
+      client.claimHookAuthHeaderValue !== undefined &&
+      client.claimHookAuthHeaderValue !== null &&
+      client.claimHookAuthHeaderValue !== "";
+
+    if (hasAuthHeaderName !== hasAuthHeaderValue) {
+      return "claim hook auth header requires both name and value";
     }
 
     return null;
@@ -2319,7 +2349,8 @@ export const createApp = (options: AppOptions) => {
         requestedClientSecret: formData.get("client_secret")?.toString() ?? null
       },
       signer,
-      userRepository
+      userRepository,
+      claimHookFetcher
     });
 
     if (result.kind === "error") {
@@ -3197,6 +3228,9 @@ export const createApp = (options: AppOptions) => {
         application_type: c.applicationType,
         client_profile: c.clientProfile,
         access_token_audience: c.accessTokenAudience,
+        claim_hook_url: c.claimHookUrl ?? null,
+        claim_hook_auth_header_name: c.claimHookAuthHeaderName ?? null,
+        claim_hook_auth_header_value: null,
         access_token_custom_claims_count: claimLists[i]?.length ?? 0,
         redirect_uris: c.redirectUris,
         grant_types: c.grantTypes,
@@ -3240,12 +3274,16 @@ export const createApp = (options: AppOptions) => {
       application_type: client.applicationType,
       client_profile: client.clientProfile,
       access_token_audience: client.accessTokenAudience,
+      claim_hook_url: client.claimHookUrl ?? null,
+      claim_hook_auth_header_name: client.claimHookAuthHeaderName ?? null,
+      claim_hook_auth_header_value: null,
       access_token_custom_claims_count: claims.length,
       access_token_custom_claims: claims.map((c) => ({
         claim_name: c.claimName,
         source_type: c.sourceType,
         fixed_value: c.fixedValue,
-        user_field: c.userField
+        user_field: c.userField,
+        hook_field: c.hookField
       })),
       redirect_uris: client.redirectUris,
       grant_types: client.grantTypes,
@@ -3441,7 +3479,9 @@ export const createApp = (options: AppOptions) => {
             application_type: result.client.applicationType,
             client_name: result.client.clientName,
             client_profile: result.client.clientProfile,
-            access_token_audience: result.client.accessTokenAudience
+            access_token_audience: result.client.accessTokenAudience,
+            claim_hook_url: result.client.claimHookUrl ?? null,
+            claim_hook_auth_header_name: result.client.claimHookAuthHeaderName ?? null
           },
           occurredAt: new Date().toISOString()
         });
@@ -3465,7 +3505,10 @@ export const createApp = (options: AppOptions) => {
           trust_level: result.client.trustLevel,
           consent_policy: result.client.consentPolicy,
           client_profile: result.client.clientProfile,
-          access_token_audience: result.client.accessTokenAudience
+          access_token_audience: result.client.accessTokenAudience,
+          claim_hook_url: result.client.claimHookUrl ?? null,
+          claim_hook_auth_header_name: result.client.claimHookAuthHeaderName ?? null,
+          claim_hook_auth_header_value: null
         },
         201
       );
@@ -3555,6 +3598,13 @@ export const createApp = (options: AppOptions) => {
       if (parsed.access_token_audience !== undefined) {
         updated.accessTokenAudience = parsed.access_token_audience;
       }
+      if (parsed.claim_hook_url !== undefined) updated.claimHookUrl = parsed.claim_hook_url;
+      if (parsed.claim_hook_auth_header_name !== undefined) {
+        updated.claimHookAuthHeaderName = parsed.claim_hook_auth_header_name;
+      }
+      if (parsed.claim_hook_auth_header_value !== undefined) {
+        updated.claimHookAuthHeaderValue = parsed.claim_hook_auth_header_value;
+      }
 
       const validationError = validateClientConfiguration(updated);
       if (validationError !== null) {
@@ -3574,7 +3624,7 @@ export const createApp = (options: AppOptions) => {
 
       if (
         updated.clientProfile === "db" &&
-        parsed.access_token_custom_claims?.some((c) => c.source_type === "user_field") === true
+        parsed.access_token_custom_claims?.some((c) => c.source_type !== "fixed") === true
       ) {
         return context.json(
           {
@@ -3585,28 +3635,39 @@ export const createApp = (options: AppOptions) => {
         );
       }
 
+      const claimUpdatedAt = new Date().toISOString();
+      const nextClaims: AccessTokenCustomClaim[] =
+        parsed.access_token_custom_claims === undefined
+          ? await accessTokenClaimsRepository.listByClientId(client.id)
+          : parsed.access_token_custom_claims.map((c) => ({
+              id: crypto.randomUUID(),
+              clientId: client.id,
+              tenantId,
+              claimName: c.claim_name,
+              sourceType: c.source_type,
+              fixedValue: c.source_type === "fixed" ? (c.fixed_value ?? null) : null,
+              userField:
+                c.source_type === "user_field"
+                  ? ((c.user_field ?? null) as AccessTokenClaimUserField | null)
+                  : null,
+              hookField: c.source_type === "hook" ? (c.hook_field ?? null) : null,
+              createdAt: claimUpdatedAt,
+              updatedAt: claimUpdatedAt
+            }));
+
+      const claimHookValidationError = validateClaimHookConfiguration(updated, nextClaims);
+      if (claimHookValidationError !== null) {
+        return context.json(
+          { error: "invalid_client_metadata", message: claimHookValidationError },
+          400
+        );
+      }
+
       await clientRepository.update(updated);
 
       // Replace custom claims if provided
       if (parsed.access_token_custom_claims !== undefined) {
-        const now = new Date().toISOString();
-        const newClaims: AccessTokenCustomClaim[] = parsed.access_token_custom_claims.map(
-          (c) => ({
-            id: crypto.randomUUID(),
-            clientId: client.id,
-            tenantId,
-            claimName: c.claim_name,
-            sourceType: c.source_type,
-            fixedValue: c.source_type === "fixed" ? (c.fixed_value ?? null) : null,
-            userField:
-              c.source_type === "user_field"
-                ? ((c.user_field ?? null) as AccessTokenClaimUserField | null)
-                : null,
-            createdAt: now,
-            updatedAt: now
-          })
-        );
-        await accessTokenClaimsRepository.replaceAllForClient(client.id, newClaims);
+        await accessTokenClaimsRepository.replaceAllForClient(client.id, nextClaims);
       }
 
       const claims = await accessTokenClaimsRepository.listByClientId(client.id);
@@ -3631,6 +3692,9 @@ export const createApp = (options: AppOptions) => {
         application_type: updated.applicationType,
         client_profile: updated.clientProfile,
         access_token_audience: updated.accessTokenAudience,
+        claim_hook_url: updated.claimHookUrl ?? null,
+        claim_hook_auth_header_name: updated.claimHookAuthHeaderName ?? null,
+        claim_hook_auth_header_value: null,
         access_token_custom_claims_count: claims.length,
         redirect_uris: updated.redirectUris,
         grant_types: updated.grantTypes,

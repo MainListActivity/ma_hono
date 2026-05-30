@@ -148,4 +148,61 @@ describe("Admin Client Registration Schema", () => {
     });
     expect(result.success).toBe(false);
   });
+
+  it("accepts hook claims with a hook_field", () => {
+    const result = adminClientRegistrationSchema.safeParse({
+      ...baseSpa,
+      claim_hook_url: "https://app.example.test/api/idp/claims",
+      claim_hook_auth_header_name: "x-idp-secret",
+      claim_hook_auth_header_value: "tenant-secret",
+      access_token_custom_claims: [
+        { claim_name: "https://surrealdb.com/db", source_type: "hook", hook_field: "db" },
+        { claim_name: "can_create_workspace", source_type: "hook", hook_field: "can_create_workspace" }
+      ]
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects hook claims without a claim hook url", () => {
+    const result = adminClientRegistrationSchema.safeParse({
+      ...baseSpa,
+      access_token_custom_claims: [
+        { claim_name: "https://surrealdb.com/db", source_type: "hook", hook_field: "db" }
+      ]
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects partial claim hook auth header config", () => {
+    const result = adminClientRegistrationSchema.safeParse({
+      ...baseSpa,
+      claim_hook_url: "https://app.example.test/api/idp/claims",
+      claim_hook_auth_header_name: "x-idp-secret"
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects hook claims without hook_field", () => {
+    const result = adminClientRegistrationSchema.safeParse({
+      ...baseSpa,
+      access_token_custom_claims: [{ claim_name: "scope_db", source_type: "hook" }]
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects DB clients with hook custom claims", () => {
+    const result = adminClientRegistrationSchema.safeParse({
+      client_name: "Tenant SurrealDB",
+      client_profile: "db",
+      application_type: "web",
+      token_endpoint_auth_method: "none",
+      grant_types: [],
+      response_types: [],
+      redirect_uris: [],
+      access_token_custom_claims: [
+        { claim_name: "db_scope", source_type: "hook", hook_field: "db" }
+      ]
+    });
+    expect(result.success).toBe(false);
+  });
 });

@@ -58,7 +58,10 @@ export const registerClient = async ({
     trustLevel: payload.trust_level,
     consentPolicy: payload.consent_policy,
     clientProfile: "web",
-    accessTokenAudience: null
+    accessTokenAudience: null,
+    claimHookUrl: null,
+    claimHookAuthHeaderName: null,
+    claimHookAuthHeaderValue: null
   };
 
   await clientRepository.create(client);
@@ -115,7 +118,10 @@ export const registerClientFromAdmin = async ({
     trustLevel: payload.trust_level,
     consentPolicy: payload.consent_policy,
     clientProfile: payload.client_profile,
-    accessTokenAudience: payload.access_token_audience ?? null
+    accessTokenAudience: payload.access_token_audience ?? null,
+    claimHookUrl: payload.claim_hook_url ?? null,
+    claimHookAuthHeaderName: payload.claim_hook_auth_header_name ?? null,
+    claimHookAuthHeaderValue: payload.claim_hook_auth_header_value ?? null
   };
 
   await clientRepository.create(client);
@@ -135,6 +141,8 @@ export const registerClientFromAdmin = async ({
         claim.source_type === "user_field"
           ? ((claim.user_field ?? null) as AccessTokenCustomClaim["userField"])
           : null,
+      hookField:
+        claim.source_type === "hook" ? (claim.hook_field ?? null) : null,
       createdAt: now,
       updatedAt: now
     }));

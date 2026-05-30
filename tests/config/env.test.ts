@@ -143,6 +143,9 @@ describe("drizzle schema", () => {
 
     expect(columns).toHaveProperty("trustLevel");
     expect(columns).toHaveProperty("consentPolicy");
+    expect(columns).toHaveProperty("claimHookUrl");
+    expect(columns).toHaveProperty("claimHookAuthHeaderName");
+    expect(columns).toHaveProperty("claimHookAuthHeaderValue");
     expect(hasUniqueIndex(oidcClients, ["tenant_id", "client_id"])).toBe(true);
   });
 

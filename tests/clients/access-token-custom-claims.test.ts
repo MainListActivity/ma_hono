@@ -13,6 +13,7 @@ import { createApp } from "../../src/app/app";
 import type { AuthorizationCode } from "../../src/domain/authorization/types";
 import type { AccessTokenCustomClaim } from "../../src/domain/clients/access-token-claims-types";
 import { resolveCustomClaims } from "../../src/domain/clients/resolve-custom-claims";
+import type { ClaimHookConfig, ClaimHookFetcher } from "../../src/domain/clients/claim-hook-client";
 import type { SigningKeySigner } from "../../src/domain/keys/signer";
 import type { SigningKeyMaterial } from "../../src/domain/keys/types";
 import type { Client } from "../../src/domain/clients/types";
@@ -41,33 +42,34 @@ const makeClaim = (
   sourceType: "fixed",
   fixedValue: null,
   userField: null,
+  hookField: null,
   createdAt: "2026-01-01T00:00:00Z",
   updatedAt: "2026-01-01T00:00:00Z",
   ...overrides
 });
 
 describe("resolveCustomClaims", () => {
-  it("resolves fixed claims", () => {
+  it("resolves fixed claims", async () => {
     const claims = [
       makeClaim({ claimName: "ns", sourceType: "fixed", fixedValue: "my_ns" })
     ];
 
-    const result = resolveCustomClaims(claims, baseUser);
+    const result = await resolveCustomClaims(claims, baseUser);
 
     expect(result).toEqual({ ns: "my_ns" });
   });
 
-  it("resolves user_field id", () => {
+  it("resolves user_field id", async () => {
     const claims = [
       makeClaim({ claimName: "uid", sourceType: "user_field", userField: "id" })
     ];
 
-    const result = resolveCustomClaims(claims, baseUser);
+    const result = await resolveCustomClaims(claims, baseUser);
 
     expect(result).toEqual({ uid: "user_1" });
   });
 
-  it("resolves user_field email", () => {
+  it("resolves user_field email", async () => {
     const claims = [
       makeClaim({
         claimName: "user_email",
@@ -76,12 +78,12 @@ describe("resolveCustomClaims", () => {
       })
     ];
 
-    const result = resolveCustomClaims(claims, baseUser);
+    const result = await resolveCustomClaims(claims, baseUser);
 
     expect(result).toEqual({ user_email: "alice@example.com" });
   });
 
-  it("resolves user_field email_verified", () => {
+  it("resolves user_field email_verified", async () => {
     const claims = [
       makeClaim({
         claimName: "ev",
@@ -90,12 +92,12 @@ describe("resolveCustomClaims", () => {
       })
     ];
 
-    const result = resolveCustomClaims(claims, baseUser);
+    const result = await resolveCustomClaims(claims, baseUser);
 
     expect(result).toEqual({ ev: true });
   });
 
-  it("resolves user_field username", () => {
+  it("resolves user_field username", async () => {
     const claims = [
       makeClaim({
         claimName: "uname",
@@ -104,12 +106,12 @@ describe("resolveCustomClaims", () => {
       })
     ];
 
-    const result = resolveCustomClaims(claims, baseUser);
+    const result = await resolveCustomClaims(claims, baseUser);
 
     expect(result).toEqual({ uname: "alice" });
   });
 
-  it("resolves user_field display_name", () => {
+  it("resolves user_field display_name", async () => {
     const claims = [
       makeClaim({
         claimName: "name",
@@ -118,12 +120,12 @@ describe("resolveCustomClaims", () => {
       })
     ];
 
-    const result = resolveCustomClaims(claims, baseUser);
+    const result = await resolveCustomClaims(claims, baseUser);
 
     expect(result).toEqual({ name: "Alice Smith" });
   });
 
-  it("omits user_field claim when value is null", () => {
+  it("omits user_field claim when value is null", async () => {
     const user = { ...baseUser, username: null };
     const claims = [
       makeClaim({
@@ -133,12 +135,12 @@ describe("resolveCustomClaims", () => {
       })
     ];
 
-    const result = resolveCustomClaims(claims, user);
+    const result = await resolveCustomClaims(claims, user);
 
     expect(result).toEqual({});
   });
 
-  it("resolves multiple claims", () => {
+  it("resolves multiple claims", async () => {
     const claims = [
       makeClaim({
         id: "c1",
@@ -154,15 +156,97 @@ describe("resolveCustomClaims", () => {
       })
     ];
 
-    const result = resolveCustomClaims(claims, baseUser);
+    const result = await resolveCustomClaims(claims, baseUser);
 
     expect(result).toEqual({ ns: "my_ns", user_email: "alice@example.com" });
   });
 
-  it("returns empty object when no claims", () => {
-    const result = resolveCustomClaims([], baseUser);
+  it("returns empty object when no claims", async () => {
+    const result = await resolveCustomClaims([], baseUser);
 
     expect(result).toEqual({});
+  });
+
+  const hookConfig: ClaimHookConfig = {
+    url: "https://hook.example.test/scope",
+    authHeaderName: "authorization",
+    authHeaderValue: "Bearer s3cret"
+  };
+
+  it("maps hook fields onto claims from a single hook response", async () => {
+    const claims = [
+      makeClaim({ id: "c1", claimName: "https://surrealdb.com/db", sourceType: "hook", hookField: "db" }),
+      makeClaim({ id: "c2", claimName: "https://surrealdb.com/ac", sourceType: "hook", hookField: "ac" }),
+      makeClaim({ id: "c3", claimName: "can_create_workspace", sourceType: "hook", hookField: "can_create_workspace" })
+    ];
+    const fetcher = async () => ({ db: "ws_abc", ac: "admin", can_create_workspace: true });
+
+    const result = await resolveCustomClaims(claims, baseUser, { config: hookConfig, fetcher });
+
+    expect(result).toEqual({
+      "https://surrealdb.com/db": "ws_abc",
+      "https://surrealdb.com/ac": "admin",
+      can_create_workspace: true
+    });
+  });
+
+  it("calls the hook at most once for multiple hook claims", async () => {
+    let calls = 0;
+    const fetcher = async () => {
+      calls += 1;
+      return { db: "ws_abc", ac: "admin" };
+    };
+    const claims = [
+      makeClaim({ id: "c1", claimName: "db_claim", sourceType: "hook", hookField: "db" }),
+      makeClaim({ id: "c2", claimName: "ac_claim", sourceType: "hook", hookField: "ac" })
+    ];
+
+    await resolveCustomClaims(claims, baseUser, { config: hookConfig, fetcher });
+
+    expect(calls).toBe(1);
+  });
+
+  it("passes subject and email to the hook fetcher", async () => {
+    let received: { subject: string; email: string | null } | null = null;
+    const fetcher = async (_config: ClaimHookConfig, ctx: { subject: string; email: string | null }) => {
+      received = ctx;
+      return { db: "ws_abc" };
+    };
+    const claims = [makeClaim({ claimName: "db_claim", sourceType: "hook", hookField: "db" })];
+
+    await resolveCustomClaims(claims, baseUser, { config: hookConfig, fetcher });
+
+    expect(received).toEqual({ subject: "user_1", email: "alice@example.com" });
+  });
+
+  it("omits a hook claim when its field is missing from the response", async () => {
+    const fetcher = async () => ({ db: "ws_abc" });
+    const claims = [
+      makeClaim({ id: "c1", claimName: "db_claim", sourceType: "hook", hookField: "db" }),
+      makeClaim({ id: "c2", claimName: "missing_claim", sourceType: "hook", hookField: "not_there" })
+    ];
+
+    const result = await resolveCustomClaims(claims, baseUser, { config: hookConfig, fetcher });
+
+    expect(result).toEqual({ db_claim: "ws_abc" });
+  });
+
+  it("omits hook claims and does not call the hook when hookDeps is absent", async () => {
+    let calls = 0;
+    const fetcher = async () => {
+      calls += 1;
+      return { db: "ws_abc" };
+    };
+    const claims = [
+      makeClaim({ id: "c1", claimName: "ns", sourceType: "fixed", fixedValue: "my_ns" }),
+      makeClaim({ id: "c2", claimName: "db_claim", sourceType: "hook", hookField: "db" })
+    ];
+
+    // hookDeps omitted entirely; fetcher above is never wired in
+    const result = await resolveCustomClaims(claims, baseUser);
+
+    expect(result).toEqual({ ns: "my_ns" });
+    expect(calls).toBe(0);
   });
 });
 
@@ -233,11 +317,17 @@ const createClient = async ({
   accessTokenAudience,
   clientId,
   internalId = `record_${clientId}`,
+  claimHookUrl = null,
+  claimHookAuthHeaderName = null,
+  claimHookAuthHeaderValue = null,
   tokenEndpointAuthMethod = "none"
 }: {
   accessTokenAudience: string | null;
   clientId: string;
   internalId?: string;
+  claimHookUrl?: string | null;
+  claimHookAuthHeaderName?: string | null;
+  claimHookAuthHeaderValue?: string | null;
   tokenEndpointAuthMethod?: Client["tokenEndpointAuthMethod"];
 }): Promise<Client> => ({
   id: internalId,
@@ -253,7 +343,10 @@ const createClient = async ({
   trustLevel: "first_party_trusted",
   consentPolicy: "skip",
   clientProfile: "spa",
-  accessTokenAudience
+  accessTokenAudience,
+  claimHookUrl,
+  claimHookAuthHeaderName,
+  claimHookAuthHeaderValue
 });
 
 const seedAuthorizationCode = async ({
@@ -315,10 +408,12 @@ const exchangeCode = async ({
 
 const createTokenTestApp = async ({
   client,
+  claimHookFetcher,
   claims = [],
   user = baseUser
 }: {
   client: Client;
+  claimHookFetcher?: ClaimHookFetcher;
   claims?: AccessTokenCustomClaim[];
   user?: User;
 }) => {
@@ -346,7 +441,8 @@ const createTokenTestApp = async ({
       totpRepository: new MemoryTotpRepository(),
       mfaPasskeyChallengeRepository: new MemoryMfaPasskeyChallengeRepository(),
       totpEncryptionKey: new Uint8Array(32).fill(0),
-      userRepository: new MemoryUserRepository({ users: [user] })
+      userRepository: new MemoryUserRepository({ users: [user] }),
+      claimHookFetcher
     }),
     authorizationCodeRepository
   };
@@ -471,6 +567,60 @@ describe("Token endpoint with custom claims", () => {
 
     expect(accessToken.user_email).toBe(baseUser.email);
     expect(accessToken.email_verified_flag).toBe(true);
+  });
+
+  it("resolves hook claims with the current client's hook config", async () => {
+    const client = await createClient({
+      clientId: "spa_client_hook",
+      accessTokenAudience: "https://api.example.com",
+      claimHookUrl: "https://app.example.test/api/idp/claims",
+      claimHookAuthHeaderName: "x-idp-secret",
+      claimHookAuthHeaderValue: "tenant-secret"
+    });
+    let receivedConfig: ClaimHookConfig | null = null;
+    const { app, authorizationCodeRepository } = await createTokenTestApp({
+      client,
+      claimHookFetcher: async (config) => {
+        receivedConfig = config;
+        return { db: "workspace_1" };
+      },
+      claims: [
+        makeClaim({
+          id: "claim_hook_db",
+          clientId: client.id,
+          tenantId: client.tenantId,
+          claimName: "db_claim",
+          sourceType: "hook",
+          hookField: "db"
+        })
+      ]
+    });
+
+    await seedAuthorizationCode({
+      clientId: client.clientId,
+      code: "code-hook-claim",
+      codeRepository: authorizationCodeRepository,
+      userId: baseUser.id
+    });
+
+    const response = await exchangeCode({
+      app,
+      clientId: client.clientId,
+      code: "code-hook-claim"
+    });
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      access_token: string;
+    };
+    const accessToken = decodeJwt(body.access_token);
+
+    expect(accessToken.db_claim).toBe("workspace_1");
+    expect(receivedConfig).toEqual({
+      url: "https://app.example.test/api/idp/claims",
+      authHeaderName: "x-idp-secret",
+      authHeaderValue: "tenant-secret"
+    });
   });
 
   it("does NOT include custom claims in ID token", async () => {

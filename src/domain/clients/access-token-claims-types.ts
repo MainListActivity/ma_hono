@@ -1,4 +1,4 @@
-export type AccessTokenClaimSourceType = "fixed" | "user_field";
+export type AccessTokenClaimSourceType = "fixed" | "user_field" | "hook";
 
 export type AccessTokenClaimUserField =
   | "id"
@@ -36,6 +36,7 @@ export interface AccessTokenCustomClaim {
   sourceType: AccessTokenClaimSourceType;
   fixedValue: string | null;
   userField: AccessTokenClaimUserField | null;
+  hookField: string | null;
   createdAt: string;
   updatedAt: string;
 }

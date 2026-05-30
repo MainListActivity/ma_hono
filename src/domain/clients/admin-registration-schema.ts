@@ -45,12 +45,64 @@ const redirectUriSchema = z.string().superRefine((value, ctx) => {
   }
 });
 
+const httpHeaderNamePattern = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
+
+const claimHookUrlSchema = z.string().trim().min(1).superRefine((value, ctx) => {
+  try {
+    const url = new URL(value);
+
+    if (url.protocol !== "https:" && url.protocol !== "http:") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "claim hook url must use http or https"
+      });
+    }
+  } catch {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "claim hook url must be a valid absolute url"
+    });
+  }
+});
+
+const claimHookHeaderNameSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .regex(httpHeaderNamePattern, "claim hook auth header name must be a valid HTTP header name");
+
+const claimHookHeaderValueSchema = z.string().trim().min(1);
+
+const validateClaimHookHeaderPair = (
+  value: {
+    claim_hook_auth_header_name?: string | null;
+    claim_hook_auth_header_value?: string | null;
+  },
+  ctx: z.RefinementCtx
+) => {
+  const hasHeaderName =
+    value.claim_hook_auth_header_name !== undefined &&
+    value.claim_hook_auth_header_name !== null;
+  const hasHeaderValue =
+    value.claim_hook_auth_header_value !== undefined &&
+    value.claim_hook_auth_header_value !== null;
+
+  if (hasHeaderName !== hasHeaderValue) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "claim hook auth header requires both name and value",
+      path: ["claim_hook_auth_header_name"]
+    });
+  }
+};
+
 const customClaimSchema = z
   .object({
     claim_name: z.string().min(1),
-    source_type: z.enum(["fixed", "user_field"]),
+    source_type: z.enum(["fixed", "user_field", "hook"]),
     fixed_value: z.string().min(1).optional(),
-    user_field: z.enum(ALLOWED_USER_FIELDS as [string, ...string[]]).optional()
+    user_field: z.enum(ALLOWED_USER_FIELDS as [string, ...string[]]).optional(),
+    hook_field: z.string().min(1).optional()
   })
   .superRefine((value, ctx) => {
     if (RESERVED_CLAIM_NAMES.has(value.claim_name)) {
@@ -76,6 +128,14 @@ const customClaimSchema = z
         path: ["user_field"]
       });
     }
+
+    if (value.source_type === "hook" && value.hook_field === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "hook claims require a non-empty hook_field",
+        path: ["hook_field"]
+      });
+    }
   });
 
 export const adminClientRegistrationSchema = z
@@ -94,9 +154,14 @@ export const adminClientRegistrationSchema = z
       "none"
     ]),
     access_token_audience: z.string().min(1).optional(),
+    claim_hook_url: claimHookUrlSchema.optional(),
+    claim_hook_auth_header_name: claimHookHeaderNameSchema.optional(),
+    claim_hook_auth_header_value: claimHookHeaderValueSchema.optional(),
     access_token_custom_claims: z.array(customClaimSchema).max(20).optional()
   })
   .superRefine((value, ctx) => {
+    validateClaimHookHeaderPair(value, ctx);
+
     if (value.client_profile === "spa") {
       if (value.application_type !== "web") {
         ctx.addIssue({
@@ -207,7 +272,7 @@ export const adminClientRegistrationSchema = z
 
       if (value.client_profile === "db") {
         for (const [index, claim] of value.access_token_custom_claims.entries()) {
-          if (claim.source_type === "user_field") {
+          if (claim.source_type !== "fixed") {
             ctx.addIssue({
               code: z.ZodIssueCode.custom,
               message: "DB client custom claims must use fixed values",
@@ -215,6 +280,17 @@ export const adminClientRegistrationSchema = z
             });
           }
         }
+      }
+
+      if (
+        value.access_token_custom_claims.some((claim) => claim.source_type === "hook") &&
+        value.claim_hook_url === undefined
+      ) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "hook custom claims require claim_hook_url",
+          path: ["claim_hook_url"]
+        });
       }
     }
 
@@ -245,6 +321,9 @@ export const adminClientUpdateSchema = z
     grant_types: z.array(z.enum(["authorization_code"])).optional(),
     response_types: z.array(z.enum(["code"])).optional(),
     access_token_audience: z.string().min(1).nullable().optional(),
+    claim_hook_url: claimHookUrlSchema.nullable().optional(),
+    claim_hook_auth_header_name: claimHookHeaderNameSchema.nullable().optional(),
+    claim_hook_auth_header_value: claimHookHeaderValueSchema.nullable().optional(),
     access_token_custom_claims: z.array(customClaimSchema).max(20).optional()
   })
   .superRefine((value, ctx) => {
@@ -340,7 +419,7 @@ export const adminClientUpdateSchema = z
 
       if (profile === "db") {
         for (const [index, claim] of value.access_token_custom_claims.entries()) {
-          if (claim.source_type === "user_field") {
+          if (claim.source_type !== "fixed") {
             ctx.addIssue({
               code: z.ZodIssueCode.custom,
               message: "DB client custom claims must use fixed values",

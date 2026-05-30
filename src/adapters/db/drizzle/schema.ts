@@ -62,6 +62,9 @@ export const oidcClients = sqliteTable(
     consentPolicy: text("consent_policy").notNull().default("skip"),
     clientProfile: text("client_profile").notNull().default("web"),
     accessTokenAudience: text("access_token_audience"),
+    claimHookUrl: text("claim_hook_url"),
+    claimHookAuthHeaderName: text("claim_hook_auth_header_name"),
+    claimHookAuthHeaderValue: text("claim_hook_auth_header_value"),
     tokenEndpointAuthMethod: text("token_endpoint_auth_method").notNull(),
     redirectUris: text("redirect_uris", { mode: "json" }).$type<string[]>().notNull(),
     grantTypes: text("grant_types", { mode: "json" }).$type<string[]>().notNull(),
@@ -97,6 +100,7 @@ export const clientAccessTokenClaims = sqliteTable(
     sourceType: text("source_type").notNull(),
     fixedValue: text("fixed_value"),
     userField: text("user_field"),
+    hookField: text("hook_field"),
     createdAt: text("created_at").notNull(),
     updatedAt: text("updated_at").notNull()
   },

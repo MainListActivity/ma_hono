@@ -3,7 +3,11 @@ import { importJWK, SignJWT } from "jose";
 import type { AuthorizationCodeRepository } from "../authorization/repository";
 import { verifyPkce } from "../authorization/pkce";
 import type { AccessTokenClaimsRepository } from "../clients/access-token-claims-repository";
-import { resolveCustomClaims } from "../clients/resolve-custom-claims";
+import {
+  resolveCustomClaims,
+  type ResolveCustomClaimsHookDeps
+} from "../clients/resolve-custom-claims";
+import type { ClaimHookFetcher } from "../clients/claim-hook-client";
 import type {
   ClientAuthMethodPolicyRepository,
   ClientRepository
@@ -388,7 +392,8 @@ const issueTokenSet = async ({
   authMethod,
   nonce,
   now,
-  userRepository
+  userRepository,
+  claimHookFetcher
 }: {
   accessTokenClaimsRepository: AccessTokenClaimsRepository;
   client: Client;
@@ -403,6 +408,7 @@ const issueTokenSet = async ({
   nonce: string | null;
   now: Date;
   userRepository: UserRepository;
+  claimHookFetcher?: ClaimHookFetcher;
 }): Promise<OidcTokenSuccessResponse | null> => {
   const customClaimConfigs = await accessTokenClaimsRepository.listByClientIdAndTenantId(
     client.id,
@@ -417,7 +423,21 @@ const issueTokenSet = async ({
       return null;
     }
 
-    extraClaims = resolveCustomClaims(customClaimConfigs, user);
+    const claimHook: ResolveCustomClaimsHookDeps | undefined =
+      client.claimHookUrl !== undefined &&
+      client.claimHookUrl !== null &&
+      client.claimHookUrl !== ""
+        ? {
+            config: {
+              url: client.claimHookUrl,
+              authHeaderName: client.claimHookAuthHeaderName ?? null,
+              authHeaderValue: client.claimHookAuthHeaderValue ?? null
+            },
+            ...(claimHookFetcher === undefined ? {} : { fetcher: claimHookFetcher })
+          }
+        : undefined;
+
+    extraClaims = await resolveCustomClaims(customClaimConfigs, user, claimHook);
   }
 
   const ttlSeconds = await resolveTokenTtlSeconds({
@@ -490,7 +510,8 @@ export const exchangeAuthorizationCode = async ({
   refreshTokenRepository,
   request,
   signer,
-  userRepository
+  userRepository,
+  claimHookFetcher
 }: {
   authorizationCodeRepository: AuthorizationCodeRepository;
   accessTokenClaimsRepository: AccessTokenClaimsRepository;
@@ -501,6 +522,7 @@ export const exchangeAuthorizationCode = async ({
   request: TokenExchangeRequest;
   signer: SigningKeySigner | undefined;
   userRepository: UserRepository;
+  claimHookFetcher?: ClaimHookFetcher;
 }): Promise<TokenExchangeResult> => {
   const authenticatedClient = await authenticateClient({
     authorizationHeader: request.authorizationHeader,
@@ -572,7 +594,8 @@ export const exchangeAuthorizationCode = async ({
         authMethod: refreshTokenRecord.authMethod,
         nonce: null,
         now,
-        userRepository
+        userRepository,
+        claimHookFetcher
       });
 
       if (tokenSet === null) {
@@ -718,7 +741,8 @@ export const exchangeAuthorizationCode = async ({
       authMethod: codeRecord.authMethod ?? null,
       nonce: codeRecord.nonce,
       now,
-      userRepository
+      userRepository,
+      claimHookFetcher
     });
 
     if (response === null) {

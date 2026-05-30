@@ -1,5 +1,10 @@
 import type { User } from "../users/types";
 import type { AccessTokenCustomClaim } from "./access-token-claims-types";
+import {
+  fetchClaimHook,
+  type ClaimHookConfig,
+  type ClaimHookFetcher
+} from "./claim-hook-client";
 
 const resolveUserField = (
   user: User,
@@ -21,11 +26,38 @@ const resolveUserField = (
   }
 };
 
-export const resolveCustomClaims = (
+export interface ResolveCustomClaimsHookDeps {
+  config: ClaimHookConfig;
+  /** Override for tests; defaults to the network fetcher. */
+  fetcher?: ClaimHookFetcher;
+}
+
+/**
+ * Resolve a client's custom claim configs into a flat claim map.
+ *
+ * - `fixed` / `user_field` sources resolve synchronously off the user record.
+ * - `hook` sources call the external hook **at most once** (deduped here), then
+ *   map `hookField` → `claimName` off the single returned object. If the hook is
+ *   unconfigured (no `hookDeps`) or returns no value for a field, that claim is
+ *   simply omitted.
+ */
+export const resolveCustomClaims = async (
   claims: AccessTokenCustomClaim[],
-  user: User
-): Record<string, unknown> => {
+  user: User,
+  hookDeps?: ResolveCustomClaimsHookDeps
+): Promise<Record<string, unknown>> => {
   const result: Record<string, unknown> = {};
+
+  const hasHookClaim = claims.some((claim) => claim.sourceType === "hook");
+  let hookResult: Record<string, unknown> | null = null;
+
+  if (hasHookClaim && hookDeps !== undefined) {
+    const fetcher = hookDeps.fetcher ?? fetchClaimHook;
+    hookResult = await fetcher(hookDeps.config, {
+      subject: user.id,
+      email: user.email
+    });
+  }
 
   for (const claim of claims) {
     if (claim.sourceType === "fixed") {
@@ -39,6 +71,15 @@ export const resolveCustomClaims = (
       const value = resolveUserField(user, claim.userField);
 
       if (value !== null && value !== "") {
+        result[claim.claimName] = value;
+      }
+      continue;
+    }
+
+    if (claim.sourceType === "hook" && claim.hookField !== null && hookResult !== null) {
+      const value = hookResult[claim.hookField];
+
+      if (value !== undefined && value !== null && value !== "") {
         result[claim.claimName] = value;
       }
     }
