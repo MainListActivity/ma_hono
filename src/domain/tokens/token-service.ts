@@ -1,4 +1,4 @@
-import { importJWK, SignJWT } from "jose";
+import { importJWK, jwtVerify, SignJWT } from "jose";
 
 import type { AuthorizationCodeRepository } from "../authorization/repository";
 import { verifyPkce } from "../authorization/pkce";
@@ -20,6 +20,7 @@ import {
 import type { SigningKeySigner } from "../keys/signer";
 import type { ResolvedIssuerContext } from "../tenants/types";
 import type { UserRepository } from "../users/repository";
+import type { User } from "../users/types";
 import { sha256Base64Url } from "../../lib/hash";
 import { buildAccessTokenClaims, buildIdTokenClaims } from "./claims";
 import type { OidcTokenErrorResponse, OidcTokenSuccessResponse } from "../oidc/token-response";
@@ -29,6 +30,40 @@ import type {
 } from "./refresh-token-repository";
 
 type TokenErrorCode = OidcTokenErrorResponse["error"];
+
+export interface ScopeTokenSuccessResponse {
+  access_token: string;
+  expires_in: number;
+  scope: string;
+  token_type: "Bearer";
+}
+
+export interface ScopeTokenRequest {
+  authorizationHeader: string | undefined;
+  claims: unknown;
+  requestedClientId: string | null;
+  requestedClientSecret: string | null;
+  subjectToken: string;
+}
+
+type ScopeTokenErrorResult = {
+  kind: "error";
+  clientId: string | null;
+  error: "invalid_client" | "invalid_grant" | "invalid_request" | "server_error";
+  status: 400 | 401 | 503;
+  tenantId: string | null;
+  userId: string | null;
+};
+
+type ScopeTokenSuccessResult = {
+  kind: "success";
+  clientId: string;
+  response: ScopeTokenSuccessResponse;
+  tenantId: string;
+  userId: string;
+};
+
+export type ScopeTokenResult = ScopeTokenErrorResult | ScopeTokenSuccessResult;
 
 type ClientCredentials =
   | { kind: "basic"; clientId: string; clientSecret: string }
@@ -106,12 +141,14 @@ const authenticateClient = async ({
   authorizationHeader,
   clientRepository,
   issuerContext,
+  requireClientSecret = false,
   requestedClientId,
   requestedClientSecret
 }: {
   authorizationHeader: string | undefined;
   clientRepository: ClientRepository;
   issuerContext: ResolvedIssuerContext;
+  requireClientSecret?: boolean;
   requestedClientId: string | null;
   requestedClientSecret: string | null;
 }): Promise<
@@ -171,6 +208,15 @@ const authenticateClient = async ({
   }
 
   if (client.tokenEndpointAuthMethod === "none") {
+    if (requireClientSecret) {
+      return {
+        ok: false,
+        clientId: credentials.clientId,
+        error: "invalid_client",
+        status: 401
+      };
+    }
+
     if (credentials.kind !== "post" || credentials.clientSecret !== null) {
       return {
         ok: false,
@@ -247,6 +293,104 @@ const createSignedJwt = async ({
       typ: "JWT"
     })
     .sign(privateKey);
+};
+
+const mutableScopeClaimNames = new Set([
+  "https://surrealdb.com/db",
+  "https://surrealdb.com/ac"
+]);
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  value !== null && typeof value === "object" && !Array.isArray(value);
+
+const normalizeScopeClaims = (
+  input: unknown
+): { ok: true; claims: Record<string, unknown> } | { ok: false } => {
+  if (!isRecord(input)) {
+    return { ok: false };
+  }
+
+  const claims: Record<string, unknown> = {};
+
+  for (const [claimName, value] of Object.entries(input)) {
+    if (!mutableScopeClaimNames.has(claimName)) {
+      return { ok: false };
+    }
+
+    if (claimName === "https://surrealdb.com/db") {
+      if (
+        typeof value !== "string" ||
+        !/^[A-Za-z0-9_-]{1,128}$/.test(value)
+      ) {
+        return { ok: false };
+      }
+
+      claims[claimName] = value;
+      continue;
+    }
+
+    if (claimName === "https://surrealdb.com/ac") {
+      if (value !== "admin" && value !== "participant") {
+        return { ok: false };
+      }
+
+      claims[claimName] = value;
+      continue;
+    }
+
+    return { ok: false };
+  }
+
+  return Object.keys(claims).length === 0 ? { ok: false } : { ok: true, claims };
+};
+
+const resolveConfiguredAccessTokenClaims = async ({
+  accessTokenClaimsRepository,
+  claimHookFetcher,
+  client,
+  tenantId,
+  user,
+  userRepository,
+  userId
+}: {
+  accessTokenClaimsRepository: AccessTokenClaimsRepository;
+  claimHookFetcher?: ClaimHookFetcher;
+  client: Client;
+  tenantId: string;
+  user?: User;
+  userRepository: UserRepository;
+  userId: string;
+}): Promise<Record<string, unknown> | null> => {
+  const customClaimConfigs = await accessTokenClaimsRepository.listByClientIdAndTenantId(
+    client.id,
+    tenantId
+  );
+
+  if (customClaimConfigs.length === 0) {
+    return {};
+  }
+
+  const resolvedUser = user ?? (await userRepository.findUserById(tenantId, userId));
+
+  if (resolvedUser === null) {
+    return null;
+  }
+
+  const claimHook: ResolveCustomClaimsHookDeps | undefined =
+    client.claimHookUrl !== undefined &&
+    client.claimHookUrl !== null &&
+    client.claimHookUrl !== ""
+      ? {
+          config: {
+            url: client.claimHookUrl,
+            authHeaderName: client.claimHookAuthHeaderName ?? null,
+            authHeaderValue: client.claimHookAuthHeaderValue ?? null
+          },
+          ...(claimHookFetcher === undefined ? {} : { fetcher: claimHookFetcher })
+        }
+      : undefined;
+
+  return await resolveCustomClaims(customClaimConfigs, resolvedUser, claimHook);
 };
 
 export const issueClientAccessToken = async ({
@@ -410,34 +554,17 @@ const issueTokenSet = async ({
   userRepository: UserRepository;
   claimHookFetcher?: ClaimHookFetcher;
 }): Promise<OidcTokenSuccessResponse | null> => {
-  const customClaimConfigs = await accessTokenClaimsRepository.listByClientIdAndTenantId(
-    client.id,
-    tenantId
-  );
-  let extraClaims: Record<string, unknown> = {};
+  const extraClaims = await resolveConfiguredAccessTokenClaims({
+    accessTokenClaimsRepository,
+    client,
+    tenantId,
+    userRepository,
+    userId,
+    claimHookFetcher
+  });
 
-  if (customClaimConfigs.length > 0) {
-    const user = await userRepository.findUserById(tenantId, userId);
-
-    if (user === null) {
-      return null;
-    }
-
-    const claimHook: ResolveCustomClaimsHookDeps | undefined =
-      client.claimHookUrl !== undefined &&
-      client.claimHookUrl !== null &&
-      client.claimHookUrl !== ""
-        ? {
-            config: {
-              url: client.claimHookUrl,
-              authHeaderName: client.claimHookAuthHeaderName ?? null,
-              authHeaderValue: client.claimHookAuthHeaderValue ?? null
-            },
-            ...(claimHookFetcher === undefined ? {} : { fetcher: claimHookFetcher })
-          }
-        : undefined;
-
-    extraClaims = await resolveCustomClaims(customClaimConfigs, user, claimHook);
+  if (extraClaims === null) {
+    return null;
   }
 
   const ttlSeconds = await resolveTokenTtlSeconds({
@@ -499,6 +626,214 @@ const issueTokenSet = async ({
     refresh_token: refresh.refreshToken,
     scope
   };
+};
+
+export const issueScopeToken = async ({
+  accessTokenClaimsRepository,
+  clientRepository,
+  issuerContext,
+  request,
+  signer,
+  userRepository,
+  claimHookFetcher
+}: {
+  accessTokenClaimsRepository: AccessTokenClaimsRepository;
+  clientRepository: ClientRepository;
+  issuerContext: ResolvedIssuerContext;
+  request: ScopeTokenRequest;
+  signer: SigningKeySigner | undefined;
+  userRepository: UserRepository;
+  claimHookFetcher?: ClaimHookFetcher;
+}): Promise<ScopeTokenResult> => {
+  const mutableClaims = normalizeScopeClaims(request.claims);
+
+  if (!mutableClaims.ok || request.subjectToken.trim().length === 0) {
+    return {
+      kind: "error",
+      clientId: null,
+      error: "invalid_request",
+      status: 400,
+      tenantId: issuerContext.tenant.id,
+      userId: null
+    };
+  }
+
+  const authenticatedClient = await authenticateClient({
+    authorizationHeader: request.authorizationHeader,
+    clientRepository,
+    issuerContext,
+    requestedClientId: request.requestedClientId,
+    requestedClientSecret: request.requestedClientSecret,
+    requireClientSecret: true
+  });
+
+  if (!authenticatedClient.ok) {
+    return {
+      kind: "error",
+      clientId: authenticatedClient.clientId,
+      error: "invalid_client",
+      status: 401,
+      tenantId: issuerContext.tenant.id,
+      userId: null
+    };
+  }
+
+  if (signer === undefined) {
+    return {
+      kind: "error",
+      clientId: authenticatedClient.client.clientId,
+      error: "server_error",
+      status: 503,
+      tenantId: issuerContext.tenant.id,
+      userId: null
+    };
+  }
+
+  const signingKeyMaterial = await signer.loadActiveSigningKeyMaterial(issuerContext.tenant.id);
+
+  if (signingKeyMaterial === null) {
+    return {
+      kind: "error",
+      clientId: authenticatedClient.client.clientId,
+      error: "server_error",
+      status: 503,
+      tenantId: issuerContext.tenant.id,
+      userId: null
+    };
+  }
+
+  let payload: Record<string, unknown>;
+  try {
+    const publicKey = await importJWK(
+      signingKeyMaterial.key.publicJwk,
+      signingKeyMaterial.key.alg
+    );
+    const verification = await jwtVerify(request.subjectToken, publicKey, {
+      issuer: issuerContext.issuer
+    });
+    payload = verification.payload as Record<string, unknown>;
+  } catch {
+    return {
+      kind: "error",
+      clientId: authenticatedClient.client.clientId,
+      error: "invalid_grant",
+      status: 400,
+      tenantId: issuerContext.tenant.id,
+      userId: null
+    };
+  }
+
+  const clientId = typeof payload.client_id === "string" ? payload.client_id : null;
+  const userId = typeof payload.sub === "string" ? payload.sub : null;
+  const scope = typeof payload.scope === "string" ? payload.scope : null;
+  const expiresAt = typeof payload.exp === "number" ? payload.exp : null;
+
+  if (
+    clientId === null ||
+    clientId !== authenticatedClient.client.clientId ||
+    userId === null ||
+    scope === null ||
+    expiresAt === null
+  ) {
+    return {
+      kind: "error",
+      clientId: authenticatedClient.client.clientId,
+      error: "invalid_grant",
+      status: 400,
+      tenantId: issuerContext.tenant.id,
+      userId
+    };
+  }
+
+  const client = authenticatedClient.client;
+
+  const user = await userRepository.findUserById(issuerContext.tenant.id, userId);
+
+  if (user === null || user.status !== "active") {
+    return {
+      kind: "error",
+      clientId,
+      error: "invalid_grant",
+      status: 400,
+      tenantId: issuerContext.tenant.id,
+      userId
+    };
+  }
+
+  const configuredClaims = await resolveConfiguredAccessTokenClaims({
+    accessTokenClaimsRepository,
+    client,
+    tenantId: issuerContext.tenant.id,
+    user,
+    userRepository,
+    userId,
+    claimHookFetcher
+  });
+
+  if (configuredClaims === null) {
+    return {
+      kind: "error",
+      clientId,
+      error: "server_error",
+      status: 503,
+      tenantId: issuerContext.tenant.id,
+      userId
+    };
+  }
+
+  const now = new Date();
+  const nowSeconds = Math.floor(now.getTime() / 1000);
+  const ttlSeconds = expiresAt - nowSeconds;
+
+  if (ttlSeconds <= 0) {
+    return {
+      kind: "error",
+      clientId,
+      error: "invalid_grant",
+      status: 400,
+      tenantId: issuerContext.tenant.id,
+      userId
+    };
+  }
+
+  try {
+    const accessToken = await issueClientAccessToken({
+      client,
+      extraClaims: {
+        ...configuredClaims,
+        ...mutableClaims.claims
+      },
+      issuer: issuerContext.issuer,
+      now,
+      scope,
+      signer,
+      subject: userId,
+      tenantId: issuerContext.tenant.id,
+      ttlSeconds
+    });
+
+    return {
+      kind: "success",
+      clientId,
+      tenantId: issuerContext.tenant.id,
+      userId,
+      response: {
+        access_token: accessToken,
+        expires_in: ttlSeconds,
+        scope,
+        token_type: "Bearer"
+      }
+    };
+  } catch {
+    return {
+      kind: "error",
+      clientId,
+      error: "server_error",
+      status: 503,
+      tenantId: issuerContext.tenant.id,
+      userId
+    };
+  }
 };
 
 export const exchangeAuthorizationCode = async ({

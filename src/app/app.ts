@@ -36,6 +36,8 @@ import type { AccessTokenClaimsRepository } from "../domain/clients/access-token
 import type { RegistrationAccessTokenRepository } from "../domain/clients/registration-access-token-repository";
 import { sha256Base64Url } from "../lib/hash";
 import {
+  clientAuthMethodRequiresSecret,
+  createOpaqueToken,
   DuplicateDbClientError,
   registerClient,
   registerClientFromAdmin
@@ -57,7 +59,11 @@ import type { TenantRepository } from "../domain/tenants/repository";
 import { resolveIssuerContext, resolveIssuerContextBySlug } from "../domain/tenants/issuer-resolution";
 import type { Tenant } from "../domain/tenants/types";
 import { buildDiscoveryMetadata } from "../domain/oidc/discovery";
-import { exchangeAuthorizationCode, issueClientAccessToken } from "../domain/tokens/token-service";
+import {
+  exchangeAuthorizationCode,
+  issueClientAccessToken,
+  issueScopeToken
+} from "../domain/tokens/token-service";
 import type { RefreshTokenRepository } from "../domain/tokens/refresh-token-repository";
 import { activateUser } from "../domain/users/activate-user";
 import { hashPassword } from "../domain/users/passwords";
@@ -2398,6 +2404,108 @@ export const createApp = (options: AppOptions) => {
     return context.json(result.response, 200);
   };
 
+  const handleScope = async (context: Context) => {
+    context.header("Cache-Control", "no-store");
+    context.header("Pragma", "no-cache");
+
+    const issuerContext = await resolveIssuerContext({
+      requestUrl: context.req.url,
+      oidcHost,
+      tenantRepository
+    });
+
+    if (issuerContext === null) {
+      return context.notFound();
+    }
+
+    let body: unknown;
+    try {
+      body = await context.req.json();
+    } catch {
+      await recordAuditEventBestEffort({
+        actorType: "oidc_client",
+        actorId: null,
+        tenantId: issuerContext.tenant.id,
+        eventType: "oidc.scope.switch.failed",
+        targetType: "oidc_client",
+        targetId: null,
+        payload: {
+          reason: "invalid_request"
+        }
+      });
+
+      return context.json({ error: "invalid_request" }, 400);
+    }
+
+    const bodyRecord =
+      body !== null && typeof body === "object" && !Array.isArray(body)
+        ? (body as Record<string, unknown>)
+        : {};
+    const result = await issueScopeToken({
+      accessTokenClaimsRepository,
+      clientRepository,
+      issuerContext,
+      request: {
+        authorizationHeader: context.req.header("authorization"),
+        subjectToken:
+          typeof bodyRecord.subject_token === "string" ? bodyRecord.subject_token : "",
+        requestedClientId:
+          typeof bodyRecord.client_id === "string" ? bodyRecord.client_id : null,
+        requestedClientSecret:
+          typeof bodyRecord.client_secret === "string" ? bodyRecord.client_secret : null,
+        claims: bodyRecord.claims
+      },
+      signer,
+      userRepository,
+      claimHookFetcher
+    });
+
+    if (result.kind === "error") {
+      await recordAuditEventBestEffort({
+        actorType: "oidc_client",
+        actorId: result.clientId,
+        tenantId: result.tenantId ?? issuerContext.tenant.id,
+        eventType: "oidc.scope.switch.failed",
+        targetType: "oidc_client",
+        targetId: result.clientId,
+        payload: {
+          reason: result.error,
+          user_id: result.userId
+        }
+      });
+
+      const attemptedBasicAuthentication = context.req
+        .header("authorization")
+        ?.match(/^basic\s+/iu) !== null;
+
+      if (result.error === "invalid_client" && attemptedBasicAuthentication === true) {
+        context.header("WWW-Authenticate", 'Basic realm="scope", error="invalid_client"');
+      }
+
+      return context.json({ error: result.error }, result.status);
+    }
+
+    await recordAuditEventBestEffort({
+      actorType: "oidc_client",
+      actorId: result.clientId,
+      tenantId: result.tenantId,
+      eventType: "oidc.scope.switch.succeeded",
+      targetType: "oidc_client",
+      targetId: result.clientId,
+      payload: {
+        claim_names:
+          bodyRecord.claims !== null &&
+          typeof bodyRecord.claims === "object" &&
+          !Array.isArray(bodyRecord.claims)
+            ? Object.keys(bodyRecord.claims as Record<string, unknown>)
+            : [],
+        user_id: result.userId
+      }
+    });
+
+    return context.json(result.response, 200);
+  };
+
   app.get("/.well-known/openid-configuration", async (context) => {
     const metadata = await handleDiscovery(context.req.url);
 
@@ -2481,6 +2589,8 @@ export const createApp = (options: AppOptions) => {
   app.get("/t/:tenant/authorize", handleAuthorize);
   app.post("/token", handleToken);
   app.post("/t/:tenant/token", handleToken);
+  app.post("/scope", handleScope);
+  app.post("/t/:tenant/scope", handleScope);
 
   const handleDynamicClientRegistration = async (
     authorizationHeader: string | undefined,
@@ -3663,6 +3773,16 @@ export const createApp = (options: AppOptions) => {
         );
       }
 
+      let generatedClientSecret: string | null = null;
+      if (clientAuthMethodRequiresSecret(updated.tokenEndpointAuthMethod)) {
+        if (updated.clientSecretHash === null) {
+          generatedClientSecret = createOpaqueToken();
+          updated.clientSecretHash = await sha256Base64Url(generatedClientSecret);
+        }
+      } else {
+        updated.clientSecretHash = null;
+      }
+
       await clientRepository.update(updated);
 
       // Replace custom claims if provided
@@ -3700,6 +3820,7 @@ export const createApp = (options: AppOptions) => {
         grant_types: updated.grantTypes,
         response_types: updated.responseTypes,
         token_endpoint_auth_method: updated.tokenEndpointAuthMethod,
+        client_secret: generatedClientSecret,
         trust_level: updated.trustLevel,
         consent_policy: updated.consentPolicy,
         auth_method_policy: policyToWire(policy)

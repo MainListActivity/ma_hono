@@ -2,18 +2,12 @@ import type { ResolvedIssuerContext } from "../tenants/types";
 import { sha256Base64Url } from "../../lib/hash";
 import type { AccessTokenClaimsRepository } from "./access-token-claims-repository";
 import type { AccessTokenCustomClaim } from "./access-token-claims-types";
-import {
-  adminClientRegistrationSchema,
-  type AdminClientRegistrationInput
-} from "./admin-registration-schema";
+import { adminClientRegistrationSchema } from "./admin-registration-schema";
 import type { ClientRepository } from "./repository";
-import {
-  dynamicClientRegistrationSchema,
-  type DynamicClientRegistrationInput
-} from "./registration-schema";
-import type { Client, RegisterClientResult } from "./types";
+import { dynamicClientRegistrationSchema } from "./registration-schema";
+import type { Client, ClientTokenEndpointAuthMethod, RegisterClientResult } from "./types";
 
-const createRandomToken = () => crypto.randomUUID().replaceAll("-", "");
+export const createOpaqueToken = () => crypto.randomUUID().replaceAll("-", "");
 
 export class DuplicateDbClientError extends Error {
   constructor() {
@@ -22,10 +16,8 @@ export class DuplicateDbClientError extends Error {
   }
 }
 
-const requiresClientSecret = (
-  authMethod:
-    | DynamicClientRegistrationInput["token_endpoint_auth_method"]
-    | AdminClientRegistrationInput["token_endpoint_auth_method"]
+export const clientAuthMethodRequiresSecret = (
+  authMethod: ClientTokenEndpointAuthMethod
 ) => authMethod !== "none";
 
 export const registerClient = async ({
@@ -39,10 +31,10 @@ export const registerClient = async ({
 }): Promise<RegisterClientResult> => {
   const payload = dynamicClientRegistrationSchema.parse(input);
   const clientId = crypto.randomUUID();
-  const clientSecret = requiresClientSecret(payload.token_endpoint_auth_method)
-    ? createRandomToken()
+  const clientSecret = clientAuthMethodRequiresSecret(payload.token_endpoint_auth_method)
+    ? createOpaqueToken()
     : null;
-  const registrationAccessToken = createRandomToken();
+  const registrationAccessToken = createOpaqueToken();
 
   const client: Client = {
     id: crypto.randomUUID(),
@@ -97,10 +89,10 @@ export const registerClientFromAdmin = async ({
   }
 
   const clientId = crypto.randomUUID();
-  const clientSecret = requiresClientSecret(payload.token_endpoint_auth_method)
-    ? createRandomToken()
+  const clientSecret = clientAuthMethodRequiresSecret(payload.token_endpoint_auth_method)
+    ? createOpaqueToken()
     : null;
-  const registrationAccessToken = createRandomToken();
+  const registrationAccessToken = createOpaqueToken();
   const internalId = crypto.randomUUID();
   const now = new Date().toISOString();
 

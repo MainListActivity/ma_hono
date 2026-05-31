@@ -481,6 +481,7 @@ class D1ClientRepository implements ClientRepository {
         applicationType: client.applicationType,
         clientProfile: client.clientProfile,
         tokenEndpointAuthMethod: client.tokenEndpointAuthMethod,
+        clientSecretHash: client.clientSecretHash,
         redirectUris: client.redirectUris,
         grantTypes: client.grantTypes,
         responseTypes: client.responseTypes,

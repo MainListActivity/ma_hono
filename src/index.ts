@@ -133,8 +133,12 @@ export default {
     // auth.{domain}/api/* receives all API traffic; the Cloudflare route
     // delivers the full path so we strip the /api prefix here.
     const requestHost = new URL(request.url).hostname;
+    const customDomainTenant =
+      requestHost === oidcHost || requestHost === authDomain
+        ? null
+        : await repositories.tenantRepository.findByCustomDomain(requestHost);
     const root =
-      requestHost === oidcHost
+      requestHost === oidcHost || customDomainTenant?.status === "active"
         ? app
         : new Hono().route("/api", app);
 

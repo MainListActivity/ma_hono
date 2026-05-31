@@ -332,7 +332,7 @@ export const updateClient = async (
       body: JSON.stringify(payload)
     })
   );
-  return res.json() as Promise<ClientSummary>;
+  return res.json() as Promise<ClientSummary & { client_secret?: string | null }>;
 };
 
 // ─── Tenant login API ────────────────────────────────────────────────────────

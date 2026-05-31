@@ -643,7 +643,7 @@ export default function TenantClientsPage() {
     try {
       const trimmedHookHeaderName = editClaimHookAuthHeaderName.trim();
       const trimmedHookHeaderValue = editClaimHookAuthHeaderValue.trim();
-      await updateClient(token!, tenantId!, editClient.client_id, {
+      const result = await updateClient(token!, tenantId!, editClient.client_id, {
         client_name: editName.trim(),
         client_profile: editProfile,
         application_type: editDerivedAppType,
@@ -670,6 +670,9 @@ export default function TenantClientsPage() {
         }))
       });
       setEditClient(null);
+      if (result.client_secret) {
+        setCreatedSecret({ clientId: result.client_id, secret: result.client_secret });
+      }
       await load();
     } catch {
       setEditError("FAILED TO UPDATE CLIENT");
