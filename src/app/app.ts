@@ -3668,6 +3668,54 @@ export const createApp = (options: AppOptions) => {
     return context.json({ deleted: true });
   });
 
+  app.post("/admin/tenants/:tenantId/clients/:clientId/secret/reset", async (context) => {
+    const session = await authenticateAdminSession({
+      adminRepository,
+      authorizationHeader: context.req.header("authorization")
+    });
+    if (session === null) {
+      return context.json({ error: "unauthorized" }, 401);
+    }
+    const tenantId = context.req.param("tenantId");
+    const clientId = context.req.param("clientId");
+    const tenant = await tenantRepository.findById(tenantId);
+    if (tenant === null) return context.notFound();
+
+    const client = await clientRepository.findByClientId(clientId);
+    if (client === null || client.tenantId !== tenantId) return context.notFound();
+
+    if (!clientAuthMethodRequiresSecret(client.tokenEndpointAuthMethod)) {
+      return context.json({ error: "client_secret_not_supported" }, 400);
+    }
+
+    const clientSecret = createOpaqueToken();
+    const updated: Client = {
+      ...client,
+      clientSecretHash: await sha256Base64Url(clientSecret)
+    };
+
+    await clientRepository.update(updated);
+
+    await auditRepository.record({
+      id: crypto.randomUUID(),
+      actorType: "admin_user",
+      actorId: session.adminUserId,
+      tenantId,
+      eventType: "oidc.client.secret.reset",
+      targetType: "oidc_client",
+      targetId: clientId,
+      payload: {
+        token_endpoint_auth_method: client.tokenEndpointAuthMethod
+      },
+      occurredAt: new Date().toISOString()
+    });
+
+    return context.json({
+      client_id: client.clientId,
+      client_secret: clientSecret
+    });
+  });
+
   app.patch("/admin/tenants/:tenantId/clients/:clientId", async (context) => {
     const session = await authenticateAdminSession({
       adminRepository,

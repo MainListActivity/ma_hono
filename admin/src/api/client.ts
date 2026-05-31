@@ -300,6 +300,20 @@ export const deleteClient = async (token: string, tenantId: string, clientId: st
   );
 };
 
+export const resetClientSecret = async (
+  token: string,
+  tenantId: string,
+  clientId: string
+) => {
+  const res = await checkOk(
+    await fetch(`${BASE_URL}/admin/tenants/${tenantId}/clients/${clientId}/secret/reset`, {
+      method: "POST",
+      headers: authHeaders(token)
+    })
+  );
+  return res.json() as Promise<{ client_id: string; client_secret: string }>;
+};
+
 export const updateClient = async (
   token: string,
   tenantId: string,

@@ -5,6 +5,7 @@ import {
   listClients,
   createClient,
   deleteClient,
+  resetClientSecret,
   updateClient,
   getClient,
   updateClientAuthMethodPolicy,
@@ -402,11 +403,17 @@ export default function TenantClientsPage() {
   // Delete state
   const [deletingClientId, setDeletingClientId] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<ClientSummary | null>(null);
+  const [resettingClientId, setResettingClientId] = useState<string | null>(null);
+  const [confirmReset, setConfirmReset] = useState<ClientSummary | null>(null);
+  const [resetError, setResetError] = useState<string | null>(null);
 
   const derivedApplicationType: "web" | "native" =
     clientProfile === "native" ? "native" : "web";
   const effectiveAuthMethod =
     clientProfile === "web" ? authMethod : "none";
+  const supportsClientSecret = (client: ClientSummary) =>
+    client.token_endpoint_auth_method === "client_secret_basic" ||
+    client.token_endpoint_auth_method === "client_secret_post";
 
   const resetCreateForm = () => {
     setShowCreate(false);
@@ -694,6 +701,21 @@ export default function TenantClientsPage() {
     }
   };
 
+  const handleResetSecret = async (c: ClientSummary) => {
+    setResettingClientId(c.client_id);
+    setResetError(null);
+    try {
+      const result = await resetClientSecret(token!, tenantId!, c.client_id);
+      setConfirmReset(null);
+      setCreatedSecret({ clientId: result.client_id, secret: result.client_secret });
+      await load();
+    } catch {
+      setResetError("FAILED TO RESET SECRET");
+    } finally {
+      setResettingClientId(null);
+    }
+  };
+
   const btnStyle = (accent = 'var(--accent-cyan)'): React.CSSProperties => ({
     background: 'transparent',
     border: `1px solid ${accent}`,
@@ -821,6 +843,19 @@ export default function TenantClientsPage() {
                     onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = 'transparent'; }}
                   >
                     AUTH
+                  </button>
+                )}
+                {supportsClientSecret(c) && (
+                  <button
+                    onClick={() => {
+                      setResetError(null);
+                      setConfirmReset(c);
+                    }}
+                    style={{ ...btnStyle('#f59e0b'), padding: '5px 10px' }}
+                    onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = 'rgba(245,158,11,0.08)'; }}
+                    onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = 'transparent'; }}
+                  >
+                    SECRET
                   </button>
                 )}
                 <button
@@ -1095,7 +1130,7 @@ export default function TenantClientsPage() {
 
       {/* Created secret modal */}
       {createdSecret && (
-        <Modal title="CLIENT CREATED" onClose={() => setCreatedSecret(null)}>
+        <Modal title="CLIENT SECRET" onClose={() => setCreatedSecret(null)}>
           <div style={{ marginBottom: '16px', padding: '10px 14px', background: 'rgba(251,191,36,0.06)', border: '1px solid rgba(251,191,36,0.3)' }}>
             <span className="font-display" style={{ fontSize: '9px', letterSpacing: '0.12em', color: '#fbbf24' }}>
               COPY THE SECRET NOW — IT WILL NOT BE SHOWN AGAIN
@@ -1118,6 +1153,46 @@ export default function TenantClientsPage() {
           <button onClick={() => setCreatedSecret(null)} style={{ width: '100%', background: 'transparent', border: '1px solid var(--accent-cyan)', color: 'var(--accent-cyan)', padding: '10px', fontSize: '11px', fontFamily: "'Space Mono', monospace", letterSpacing: '0.15em', textTransform: 'uppercase', cursor: 'pointer' }}>
             I HAVE SAVED THE SECRET
           </button>
+        </Modal>
+      )}
+
+      {/* Reset secret confirmation modal */}
+      {confirmReset && (
+        <Modal title="RESET CLIENT SECRET" onClose={() => setConfirmReset(null)}>
+          <div style={{ marginBottom: '16px', padding: '10px 14px', background: 'rgba(245,158,11,0.06)', border: '1px solid rgba(245,158,11,0.3)' }}>
+            <span className="font-display" style={{ fontSize: '9px', letterSpacing: '0.12em', color: '#f59e0b' }}>
+              CURRENT SECRET WILL STOP WORKING IMMEDIATELY
+            </span>
+          </div>
+          {resetError && (
+            <div style={{ padding: '8px 12px', marginBottom: '16px', background: 'rgba(239,68,68,0.05)', border: '1px solid rgba(239,68,68,0.2)' }}>
+              <span className="font-display" style={{ fontSize: '10px', color: '#ef4444', letterSpacing: '0.08em' }}>✕ {resetError}</span>
+            </div>
+          )}
+          <div style={{ marginBottom: '16px', fontSize: '13px', color: 'var(--text-secondary)' }}>
+            Reset secret for <strong style={{ color: 'var(--text-primary)' }}>{confirmReset.client_name}</strong>?
+          </div>
+          <div style={{ marginBottom: '20px' }}>
+            <label style={labelStyle}>CLIENT ID</label>
+            <div style={{ ...monoStyle, color: 'var(--accent-cyan)', fontSize: '12px', padding: '8px 12px', background: 'var(--bg-base)', border: '1px solid var(--border)' }}>
+              {confirmReset.client_id}
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: '10px' }}>
+            <button
+              onClick={() => setConfirmReset(null)}
+              style={{ flex: 1, background: 'transparent', border: '1px solid var(--border)', color: 'var(--text-muted)', padding: '10px', fontSize: '11px', fontFamily: "'Space Mono', monospace", letterSpacing: '0.15em', textTransform: 'uppercase', cursor: 'pointer' }}
+            >
+              CANCEL
+            </button>
+            <button
+              onClick={() => handleResetSecret(confirmReset)}
+              disabled={resettingClientId === confirmReset.client_id}
+              style={{ flex: 1, background: 'rgba(245,158,11,0.1)', border: '1px solid #f59e0b', color: '#f59e0b', padding: '10px', fontSize: '11px', fontFamily: "'Space Mono', monospace", letterSpacing: '0.15em', textTransform: 'uppercase', cursor: resettingClientId === confirmReset.client_id ? 'not-allowed' : 'pointer' }}
+            >
+              {resettingClientId === confirmReset.client_id ? 'RESETTING...' : 'RESET SECRET'}
+            </button>
+          </div>
         </Modal>
       )}
 

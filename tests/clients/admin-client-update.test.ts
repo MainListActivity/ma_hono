@@ -116,3 +116,91 @@ describe("PATCH /admin/tenants/:tenantId/clients/:clientId", () => {
     expect(stored?.clientSecretHash).not.toBe(body.client_secret);
   });
 });
+
+describe("POST /admin/tenants/:tenantId/clients/:clientId/secret/reset", () => {
+  it("resets a confidential client secret and stores only the new hash", async () => {
+    const { app, clientRepository } = makeApp();
+    const token = await loginAsAdmin(app);
+    const oldSecretHash = await sha256Base64Url("old-secret");
+
+    await clientRepository.create({
+      id: "client_web",
+      tenantId: "tenant_acme",
+      clientId: "web-client",
+      clientName: "Web Client",
+      applicationType: "web",
+      grantTypes: ["authorization_code"],
+      redirectUris: ["https://app.example.test/callback"],
+      responseTypes: ["code"],
+      tokenEndpointAuthMethod: "client_secret_basic",
+      clientSecretHash: oldSecretHash,
+      trustLevel: "first_party_trusted",
+      consentPolicy: "skip",
+      clientProfile: "web",
+      accessTokenAudience: null
+    });
+
+    const response = await app.request(
+      "https://idp.example.test/admin/tenants/tenant_acme/clients/web-client/secret/reset",
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${token}`
+        }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      client_id: string;
+      client_secret: string;
+    };
+    expect(body.client_id).toBe("web-client");
+    expect(body.client_secret).toBeTypeOf("string");
+
+    const stored = await clientRepository.findByClientId("web-client");
+    expect(stored?.clientSecretHash).toBe(await sha256Base64Url(body.client_secret));
+    expect(stored?.clientSecretHash).not.toBe(oldSecretHash);
+    expect(stored?.clientSecretHash).not.toBe(body.client_secret);
+  });
+
+  it("rejects resetting the secret for a public client", async () => {
+    const { app, clientRepository } = makeApp();
+    const token = await loginAsAdmin(app);
+
+    await clientRepository.create({
+      id: "client_spa",
+      tenantId: "tenant_acme",
+      clientId: "spa-client",
+      clientName: "SPA Client",
+      applicationType: "web",
+      grantTypes: ["authorization_code"],
+      redirectUris: ["https://app.example.test/callback"],
+      responseTypes: ["code"],
+      tokenEndpointAuthMethod: "none",
+      clientSecretHash: null,
+      trustLevel: "first_party_trusted",
+      consentPolicy: "skip",
+      clientProfile: "spa",
+      accessTokenAudience: "https://api.example.test"
+    });
+
+    const response = await app.request(
+      "https://idp.example.test/admin/tenants/tenant_acme/clients/spa-client/secret/reset",
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${token}`
+        }
+      }
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      error: "client_secret_not_supported"
+    });
+
+    const stored = await clientRepository.findByClientId("spa-client");
+    expect(stored?.clientSecretHash).toBeNull();
+  });
+});
