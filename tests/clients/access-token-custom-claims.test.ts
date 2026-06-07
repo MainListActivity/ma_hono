@@ -83,6 +83,37 @@ describe("resolveCustomClaims", () => {
     expect(result).toEqual({ user_email: "alice@example.com" });
   });
 
+  it("normalizes SurrealDB claim aliases", async () => {
+    const claims = [
+      makeClaim({
+        id: "c1",
+        claimName: "https://surrealdb.com/db",
+        sourceType: "fixed",
+        fixedValue: "ws_abc"
+      }),
+      makeClaim({
+        id: "c2",
+        claimName: "https://surrealdb.com/ac",
+        sourceType: "fixed",
+        fixedValue: "admin"
+      }),
+      makeClaim({
+        id: "c3",
+        claimName: "https://surrealdb.com/email",
+        sourceType: "user_field",
+        userField: "email"
+      })
+    ];
+
+    const result = await resolveCustomClaims(claims, baseUser);
+
+    expect(result).toEqual({
+      ac: "admin",
+      db: "ws_abc",
+      email: "alice@example.com"
+    });
+  });
+
   it("resolves user_field email_verified", async () => {
     const claims = [
       makeClaim({
@@ -184,8 +215,8 @@ describe("resolveCustomClaims", () => {
     const result = await resolveCustomClaims(claims, baseUser, { config: hookConfig, fetcher });
 
     expect(result).toEqual({
-      "https://surrealdb.com/db": "ws_abc",
-      "https://surrealdb.com/ac": "admin",
+      db: "ws_abc",
+      ac: "admin",
       can_create_workspace: true
     });
   });
@@ -542,6 +573,14 @@ describe("Token endpoint with custom claims", () => {
           claimName: "email_verified_flag",
           sourceType: "user_field",
           userField: "email_verified"
+        }),
+        makeClaim({
+          id: "claim_surreal_email",
+          clientId: client.id,
+          tenantId: client.tenantId,
+          claimName: "https://surrealdb.com/email",
+          sourceType: "user_field",
+          userField: "email"
         })
       ]
     });
@@ -567,6 +606,8 @@ describe("Token endpoint with custom claims", () => {
 
     expect(accessToken.user_email).toBe(baseUser.email);
     expect(accessToken.email_verified_flag).toBe(true);
+    expect(accessToken.email).toBe(baseUser.email);
+    expect(accessToken["https://surrealdb.com/email"]).toBeUndefined();
   });
 
   it("resolves hook claims with the current client's hook config", async () => {

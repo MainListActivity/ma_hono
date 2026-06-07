@@ -23,8 +23,10 @@ This is a project-specific extension, not an OIDC standard endpoint. Standard OI
 
 The initial mutable claim allowlist is:
 
-- `https://surrealdb.com/db`
-- `https://surrealdb.com/ac`
+- `db`
+- `ac`
+- `email`
+- `RL`
 
 `can_create_workspace` is deprecated and must not be mutable through this endpoint.
 
@@ -36,9 +38,9 @@ The success response should return a fresh token response directly from `/scope`
 
 - [ ] `POST /t/:tenant/scope` accepts an authenticated client request and returns a freshly signed token response containing updated allowlisted claims.
 - [ ] Custom-domain issuer requests support `POST /scope` with the same behavior and issuer-correct token signing.
-- [ ] The implementation rejects invalid auth, unknown tenant, invalid subject token, tenant/client mismatch, unsupported claim names, invalid `https://surrealdb.com/ac` values, and malformed claim values with JSON errors.
+- [ ] The implementation rejects invalid auth, unknown tenant, invalid subject token, tenant/client mismatch, unsupported claim names, invalid `ac` values, and malformed claim values with JSON errors.
 - [ ] Only the allowlisted mutable claims can be changed; reserved JWT/OIDC claims and arbitrary custom claims cannot be overwritten through this endpoint.
-- [ ] The returned access token contains the updated `https://surrealdb.com/db` and/or `https://surrealdb.com/ac` values and validates against the tenant's JWKS.
+- [ ] The returned access token contains the updated `db` and/or `ac` values and validates against the tenant's JWKS.
 - [ ] Existing `/authorize`, `/token`, refresh-token rotation, discovery metadata, and configured access-token custom claim behavior continue to pass existing tests.
 - [ ] Audit events are recorded for successful and failed scope switches without logging access tokens, subject tokens, or client secrets.
 - [ ] Tests cover successful db/ac switch, custom-domain issuer signing, invalid client authentication, forbidden claim name, invalid `ac`, cross-tenant isolation, invalid subject token, and returned-token validation.

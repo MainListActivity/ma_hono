@@ -6,6 +6,12 @@ import {
   type ClaimHookFetcher
 } from "./claim-hook-client";
 
+const customClaimNameAliases = new Map([
+  ["https://surrealdb.com/db", "db"],
+  ["https://surrealdb.com/ac", "ac"],
+  ["https://surrealdb.com/email", "email"]
+]);
+
 const resolveUserField = (
   user: User,
   field: string
@@ -25,6 +31,9 @@ const resolveUserField = (
       return null;
   }
 };
+
+const normalizeCustomClaimName = (claimName: string): string =>
+  customClaimNameAliases.get(claimName) ?? claimName;
 
 export interface ResolveCustomClaimsHookDeps {
   config: ClaimHookConfig;
@@ -60,9 +69,11 @@ export const resolveCustomClaims = async (
   }
 
   for (const claim of claims) {
+    const claimName = normalizeCustomClaimName(claim.claimName);
+
     if (claim.sourceType === "fixed") {
       if (claim.fixedValue !== null) {
-        result[claim.claimName] = claim.fixedValue;
+        result[claimName] = claim.fixedValue;
       }
       continue;
     }
@@ -71,7 +82,7 @@ export const resolveCustomClaims = async (
       const value = resolveUserField(user, claim.userField);
 
       if (value !== null && value !== "") {
-        result[claim.claimName] = value;
+        result[claimName] = value;
       }
       continue;
     }
@@ -80,7 +91,7 @@ export const resolveCustomClaims = async (
       const value = hookResult[claim.hookField];
 
       if (value !== undefined && value !== null && value !== "") {
-        result[claim.claimName] = value;
+        result[claimName] = value;
       }
     }
   }

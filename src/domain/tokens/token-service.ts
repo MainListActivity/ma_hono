@@ -295,13 +295,41 @@ const createSignedJwt = async ({
     .sign(privateKey);
 };
 
-const mutableScopeClaimNames = new Set([
-  "https://surrealdb.com/db",
-  "https://surrealdb.com/ac"
+const mutableScopeClaimNames = new Map([
+  ["db", "db"],
+  ["ac", "ac"],
+  ["email", "email"],
+  ["RL", "RL"]
 ]);
+
+const surrealDbRoleClaimValues = new Set(["Viewer", "Editor", "Owner"]);
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === "object" && !Array.isArray(value);
+
+const normalizeSurrealDbRoleClaims = (value: unknown): string[] | null => {
+  if (!Array.isArray(value) || value.length === 0 || value.length > surrealDbRoleClaimValues.size) {
+    return null;
+  }
+
+  const roles: string[] = [];
+  const seen = new Set<string>();
+
+  for (const role of value) {
+    if (
+      typeof role !== "string" ||
+      !surrealDbRoleClaimValues.has(role) ||
+      seen.has(role)
+    ) {
+      return null;
+    }
+
+    roles.push(role);
+    seen.add(role);
+  }
+
+  return roles;
+};
 
 const normalizeScopeClaims = (
   input: unknown
@@ -313,11 +341,13 @@ const normalizeScopeClaims = (
   const claims: Record<string, unknown> = {};
 
   for (const [claimName, value] of Object.entries(input)) {
-    if (!mutableScopeClaimNames.has(claimName)) {
+    const normalizedClaimName = mutableScopeClaimNames.get(claimName);
+
+    if (normalizedClaimName === undefined || normalizedClaimName in claims) {
       return { ok: false };
     }
 
-    if (claimName === "https://surrealdb.com/db") {
+    if (normalizedClaimName === "db") {
       if (
         typeof value !== "string" ||
         !/^[A-Za-z0-9_-]{1,128}$/.test(value)
@@ -325,16 +355,40 @@ const normalizeScopeClaims = (
         return { ok: false };
       }
 
-      claims[claimName] = value;
+      claims[normalizedClaimName] = value;
       continue;
     }
 
-    if (claimName === "https://surrealdb.com/ac") {
+    if (normalizedClaimName === "ac") {
       if (value !== "admin" && value !== "participant") {
         return { ok: false };
       }
 
-      claims[claimName] = value;
+      claims[normalizedClaimName] = value;
+      continue;
+    }
+
+    if (normalizedClaimName === "email") {
+      if (
+        typeof value !== "string" ||
+        value.length > 320 ||
+        !/^[^\s@]+@[^\s@]+$/.test(value)
+      ) {
+        return { ok: false };
+      }
+
+      claims[normalizedClaimName] = value;
+      continue;
+    }
+
+    if (normalizedClaimName === "RL") {
+      const roles = normalizeSurrealDbRoleClaims(value);
+
+      if (roles === null) {
+        return { ok: false };
+      }
+
+      claims[normalizedClaimName] = roles;
       continue;
     }
 
@@ -754,6 +808,20 @@ export const issueScopeToken = async ({
       kind: "error",
       clientId,
       error: "invalid_grant",
+      status: 400,
+      tenantId: issuerContext.tenant.id,
+      userId
+    };
+  }
+
+  if (
+    typeof mutableClaims.claims.email === "string" &&
+    mutableClaims.claims.email !== user.email
+  ) {
+    return {
+      kind: "error",
+      clientId,
+      error: "invalid_request",
       status: 400,
       tenantId: issuerContext.tenant.id,
       userId

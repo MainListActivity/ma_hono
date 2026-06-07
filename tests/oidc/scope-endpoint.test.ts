@@ -285,7 +285,7 @@ const createScopeTestApp = async ({
 };
 
 describe("Scope endpoint", () => {
-  it("returns a fresh access token with updated SurrealDB db/ac claims", async () => {
+  it("returns a fresh access token with updated SurrealDB claims", async () => {
     const client = createClient();
     const { app, auditRepository, authorizationCodeRepository, material } =
       await createScopeTestApp({ clients: [client] });
@@ -306,8 +306,10 @@ describe("Scope endpoint", () => {
       app,
       subjectToken: tokenBody.access_token,
       claims: {
-        "https://surrealdb.com/db": "ws_alpha",
-        "https://surrealdb.com/ac": "admin"
+        db: "ws_alpha",
+        ac: "admin",
+        email: baseUser.email,
+        RL: ["Viewer", "Editor"]
       }
     });
 
@@ -331,8 +333,13 @@ describe("Scope endpoint", () => {
 
     expect(payload.sub).toBe(baseUser.id);
     expect(payload.client_id).toBe(client.clientId);
-    expect(payload["https://surrealdb.com/db"]).toBe("ws_alpha");
-    expect(payload["https://surrealdb.com/ac"]).toBe("admin");
+    expect(payload.db).toBe("ws_alpha");
+    expect(payload.ac).toBe("admin");
+    expect(payload.email).toBe(baseUser.email);
+    expect(payload["https://surrealdb.com/db"]).toBeUndefined();
+    expect(payload["https://surrealdb.com/ac"]).toBeUndefined();
+    expect(payload["https://surrealdb.com/email"]).toBeUndefined();
+    expect(payload.RL).toEqual(["Viewer", "Editor"]);
     expect(auditRepository.listEvents().some((event) => event.eventType === "oidc.scope.switch.succeeded")).toBe(true);
   });
 
@@ -359,8 +366,8 @@ describe("Scope endpoint", () => {
       requestUrl: "https://login.acme.test/scope",
       subjectToken: tokenBody.access_token,
       claims: {
-        "https://surrealdb.com/db": "ws_custom",
-        "https://surrealdb.com/ac": "participant"
+        db: "ws_custom",
+        ac: "participant"
       }
     });
 
@@ -372,8 +379,8 @@ describe("Scope endpoint", () => {
     });
 
     expect(payload.iss).toBe("https://login.acme.test");
-    expect(payload["https://surrealdb.com/db"]).toBe("ws_custom");
-    expect(payload["https://surrealdb.com/ac"]).toBe("participant");
+    expect(payload.db).toBe("ws_custom");
+    expect(payload.ac).toBe("participant");
   });
 
   it("rejects invalid client secret authentication", async () => {
@@ -397,7 +404,7 @@ describe("Scope endpoint", () => {
       clientSecret: "wrong-secret",
       subjectToken: tokenBody.access_token,
       claims: {
-        "https://surrealdb.com/db": "ws_alpha"
+        db: "ws_alpha"
       }
     });
 
@@ -433,6 +440,34 @@ describe("Scope endpoint", () => {
     expect(await response.json()).toEqual({ error: "invalid_request" });
   });
 
+  it("rejects prefixed SurrealDB claim names", async () => {
+    const client = createClient();
+    const { app, authorizationCodeRepository } = await createScopeTestApp({ clients: [client] });
+    await seedAuthorizationCode({
+      clientId: client.clientId,
+      code: "code-scope-prefixed-claim",
+      codeRepository: authorizationCodeRepository,
+      issuer: "https://idp.example.test/t/acme"
+    });
+    const tokenBody = await exchangeCode({
+      app,
+      clientId: client.clientId,
+      code: "code-scope-prefixed-claim",
+      requestUrl: "https://idp.example.test/t/acme/token"
+    });
+
+    const response = await callScopeEndpoint({
+      app,
+      subjectToken: tokenBody.access_token,
+      claims: {
+        "https://surrealdb.com/db": "ws_alpha"
+      }
+    });
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: "invalid_request" });
+  });
+
   it("rejects invalid SurrealDB access values", async () => {
     const client = createClient();
     const { app, authorizationCodeRepository } = await createScopeTestApp({ clients: [client] });
@@ -453,7 +488,63 @@ describe("Scope endpoint", () => {
       app,
       subjectToken: tokenBody.access_token,
       claims: {
-        "https://surrealdb.com/ac": "owner"
+        ac: "owner"
+      }
+    });
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: "invalid_request" });
+  });
+
+  it("rejects SurrealDB email claims that do not match the token subject", async () => {
+    const client = createClient();
+    const { app, authorizationCodeRepository } = await createScopeTestApp({ clients: [client] });
+    await seedAuthorizationCode({
+      clientId: client.clientId,
+      code: "code-scope-invalid-email",
+      codeRepository: authorizationCodeRepository,
+      issuer: "https://idp.example.test/t/acme"
+    });
+    const tokenBody = await exchangeCode({
+      app,
+      clientId: client.clientId,
+      code: "code-scope-invalid-email",
+      requestUrl: "https://idp.example.test/t/acme/token"
+    });
+
+    const response = await callScopeEndpoint({
+      app,
+      subjectToken: tokenBody.access_token,
+      claims: {
+        email: "mallory@example.com"
+      }
+    });
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: "invalid_request" });
+  });
+
+  it("rejects invalid SurrealDB RL values", async () => {
+    const client = createClient();
+    const { app, authorizationCodeRepository } = await createScopeTestApp({ clients: [client] });
+    await seedAuthorizationCode({
+      clientId: client.clientId,
+      code: "code-scope-invalid-rl",
+      codeRepository: authorizationCodeRepository,
+      issuer: "https://idp.example.test/t/acme"
+    });
+    const tokenBody = await exchangeCode({
+      app,
+      clientId: client.clientId,
+      code: "code-scope-invalid-rl",
+      requestUrl: "https://idp.example.test/t/acme/token"
+    });
+
+    const response = await callScopeEndpoint({
+      app,
+      subjectToken: tokenBody.access_token,
+      claims: {
+        RL: ["Owner", "Admin"]
       }
     });
 
@@ -485,7 +576,7 @@ describe("Scope endpoint", () => {
       clientId: callerClient.clientId,
       subjectToken: tokenBody.access_token,
       claims: {
-        "https://surrealdb.com/db": "ws_alpha"
+        db: "ws_alpha"
       }
     });
 
@@ -521,7 +612,7 @@ describe("Scope endpoint", () => {
       requestUrl: "https://idp.example.test/t/acme/scope",
       subjectToken: tokenBody.access_token,
       claims: {
-        "https://surrealdb.com/db": "ws_alpha"
+        db: "ws_alpha"
       }
     });
 
@@ -536,7 +627,7 @@ describe("Scope endpoint", () => {
       app,
       subjectToken: "not-a-jwt",
       claims: {
-        "https://surrealdb.com/db": "ws_alpha"
+        db: "ws_alpha"
       }
     });
 
