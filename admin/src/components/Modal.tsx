@@ -18,7 +18,7 @@ export default function Modal({ title, onClose, children }: ModalProps) {
     <div
       style={{
         position: 'fixed', inset: 0,
-        background: 'rgba(0,0,0,0.7)',
+        background: 'rgba(34,30,23,0.34)',
         backdropFilter: 'blur(4px)',
         display: 'flex', alignItems: 'center', justifyContent: 'center',
         zIndex: 50
@@ -27,9 +27,10 @@ export default function Modal({ title, onClose, children }: ModalProps) {
     >
       <div style={{
         background: 'var(--bg-surface)',
-        border: '1px solid var(--border-bright)',
+        border: '1px solid var(--border)',
+        borderRadius: '16px',
         width: '100%', maxWidth: '440px',
-        boxShadow: '0 0 40px rgba(0,229,255,0.08)',
+        boxShadow: '0 34px 80px -34px rgba(34,30,23,0.4)',
         position: 'relative',
         overflow: 'hidden'
       }}>

@@ -755,7 +755,7 @@ export default function TenantClientsPage() {
         <button
           onClick={() => { resetCreateForm(); setShowCreate(true); }}
           style={{ ...btnStyle(), padding: '8px 16px', fontSize: '11px', display: 'flex', alignItems: 'center', gap: '6px' }}
-          onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = 'rgba(0,229,255,0.08)'; }}
+          onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = 'rgba(47,122,76,0.08)'; }}
           onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = 'transparent'; }}
         >
           <span style={{ fontSize: '14px' }}>+</span> NEW CLIENT
@@ -861,7 +861,7 @@ export default function TenantClientsPage() {
                 <button
                   onClick={() => openEditModal(c)}
                   style={{ ...btnStyle('var(--accent-cyan)'), padding: '5px 10px' }}
-                  onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = 'rgba(0,229,255,0.08)'; }}
+                  onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = 'rgba(47,122,76,0.08)'; }}
                   onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = 'transparent'; }}
                 >
                   EDIT

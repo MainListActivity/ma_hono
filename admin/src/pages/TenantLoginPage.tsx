@@ -14,70 +14,116 @@ import {
   registerUser,
   requestMagicLink
 } from "../api/client";
+import {
+  AuthShell,
+  BrandPanel,
+  FieldLabel,
+  fieldWrapStyle,
+  iconSpanStyle,
+  inputStyle,
+  primaryButtonStyle
+} from "../components/auth/AuthShell";
+import {
+  LockIcon,
+  MailIcon,
+  PasskeyButtonIcon,
+  PasskeyIcon,
+  UserIcon
+} from "../components/auth/icons";
 
 type MfaState = "pending_totp" | "pending_passkey_step_up" | "pending_enrollment";
 
-// ─── Shared visual primitives ─────────────────────────────────────────────────
+// ─── Shared visual behaviour ──────────────────────────────────────────────────
 
-const inputStyle: React.CSSProperties = {
-  width: "100%",
-  background: "var(--bg-base)",
-  border: "1px solid var(--border)",
-  color: "var(--text-primary)",
-  padding: "8px 12px",
-  fontSize: "13px",
-  fontFamily: "'IBM Plex Sans', sans-serif",
-  outline: "none",
-  boxSizing: "border-box",
-  transition: "border-color 0.15s"
+function focusInput(e: React.FocusEvent<HTMLInputElement>) {
+  e.target.style.borderColor = "var(--accent-green)";
+  e.target.style.boxShadow = "0 0 0 3px rgba(47,122,76,0.14)";
+  e.target.style.background = "#fff";
+}
+function blurInput(e: React.FocusEvent<HTMLInputElement>) {
+  e.target.style.borderColor = "var(--border)";
+  e.target.style.boxShadow = "none";
+  e.target.style.background = "var(--bg-input)";
+}
+function hoverPrimary(e: React.MouseEvent<HTMLButtonElement>) {
+  if (!e.currentTarget.disabled) e.currentTarget.style.background = "var(--accent-green-deep)";
+}
+function unhoverPrimary(e: React.MouseEvent<HTMLButtonElement>) {
+  if (!e.currentTarget.disabled) e.currentTarget.style.background = "var(--accent-green)";
+}
+
+const pwToggleStyle: React.CSSProperties = {
+  position: "absolute", right: "8px", top: "50%", transform: "translateY(-50%)",
+  border: 0, background: "transparent", color: "var(--text-secondary)",
+  fontSize: "12px", fontWeight: 600, cursor: "pointer", padding: "6px 8px", borderRadius: "7px"
 };
 
-const labelStyle: React.CSSProperties = {
-  display: "block",
-  fontSize: "10px",
-  letterSpacing: "0.12em",
-  textTransform: "uppercase" as const,
-  color: "var(--text-muted)",
-  marginBottom: "6px"
+const linkStyle: React.CSSProperties = {
+  fontSize: "12px", fontWeight: 600, color: "var(--accent-green)", textDecoration: "none",
+  background: "none", border: "none", cursor: "pointer", padding: 0
 };
 
-const primaryButtonStyle = (disabled: boolean): React.CSSProperties => ({
-  width: "100%",
-  background: disabled ? "var(--bg-elevated)" : "transparent",
-  border: "1px solid var(--accent-cyan)",
-  color: disabled ? "var(--text-muted)" : "var(--accent-cyan)",
-  padding: "10px",
-  fontSize: "11px",
-  fontFamily: "'Space Mono', monospace",
-  letterSpacing: "0.15em",
-  textTransform: "uppercase" as const,
-  cursor: disabled ? "not-allowed" : "pointer",
-  transition: "all 0.15s",
-  boxShadow: disabled ? "none" : "0 0 12px rgba(0,229,255,0.1)"
-});
+function ErrorBanner({ message }: { message: string }) {
+  return (
+    <div style={{
+      marginBottom: "18px", padding: "10px 12px", borderRadius: "10px",
+      border: "1px solid rgba(204,107,58,0.35)", background: "rgba(204,107,58,0.07)"
+    }}>
+      <span style={{ fontSize: "12.5px", color: "var(--accent-orange)", fontWeight: 600 }}>✕ {message}</span>
+    </div>
+  );
+}
 
-const tabButtonStyle = (active: boolean): React.CSSProperties => ({
-  flex: 1,
-  background: active ? "rgba(0,229,255,0.08)" : "transparent",
-  border: "none",
-  borderBottom: active ? "1px solid var(--accent-cyan)" : "1px solid var(--border)",
-  color: active ? "var(--accent-cyan)" : "var(--text-muted)",
-  padding: "10px 8px",
-  fontSize: "10px",
-  fontFamily: "'Space Mono', monospace",
-  letterSpacing: "0.12em",
-  textTransform: "uppercase" as const,
-  cursor: "pointer",
-  transition: "all 0.15s"
-});
+function Eyebrow({ children }: { children: React.ReactNode }) {
+  return (
+    <div style={{ fontSize: "11px", fontWeight: 700, letterSpacing: "0.18em", textTransform: "uppercase", color: "var(--accent-orange)", marginBottom: "16px" }}>
+      {children}
+    </div>
+  );
+}
 
 // ─── Method tabs ───────────────────────────────────────────────────────────────
 
 const METHOD_LABELS: Record<string, string> = {
-  password: "Password",
-  magic_link: "Magic Link",
-  passkey: "Passkey"
+  password: "密码",
+  magic_link: "邮箱链接",
+  passkey: "通行密钥"
 };
+
+function MethodTabs({
+  methods,
+  active,
+  onSelect
+}: {
+  methods: string[];
+  active: string | null;
+  onSelect: (m: string) => void;
+}) {
+  return (
+    <div style={{ display: "flex", gap: "4px", padding: "4px", background: "#ece7db", borderRadius: "11px", marginBottom: "26px" }}>
+      {methods.map(method => {
+        const isActive = active === method;
+        return (
+          <button
+            key={method}
+            type="button"
+            onClick={() => onSelect(method)}
+            style={{
+              flex: 1, textAlign: "center", padding: "9px 8px", border: 0, borderRadius: "8px",
+              fontFamily: "inherit", fontSize: "13px", fontWeight: 600, cursor: "pointer",
+              transition: "all .15s",
+              background: isActive ? "#ffffff" : "transparent",
+              color: isActive ? "var(--text-primary)" : "var(--text-secondary)",
+              boxShadow: isActive ? "0 1px 3px rgba(34,30,23,.14)" : "none"
+            }}
+          >
+            {METHOD_LABELS[method] ?? method}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
 
 // ─── Sub-forms ─────────────────────────────────────────────────────────────────
 
@@ -101,11 +147,11 @@ function RegisterForm({
     e.preventDefault();
     setError(null);
     if (password !== confirmPassword) {
-      setError("Passwords do not match");
+      setError("两次输入的密码不一致");
       return;
     }
     if (password.length < 8) {
-      setError("Password must be at least 8 characters");
+      setError("密码至少需要 8 个字符");
       return;
     }
     setLoading(true);
@@ -119,16 +165,16 @@ function RegisterForm({
       if (!res.ok) {
         const body = await res.json().catch(() => ({})) as { error?: string };
         if (body.error === "email_already_exists") {
-          setError("An account with this email already exists. Please sign in.");
+          setError("该邮箱已注册，请直接登录。");
         } else {
-          setError(body.error ?? "Registration failed");
+          setError(body.error ?? "注册失败");
         }
         return;
       }
       const body = await res.json().catch(() => ({})) as { redirect_uri?: string };
       if (body.redirect_uri) { window.location.href = body.redirect_uri; return; }
     } catch {
-      setError("Network error — please try again");
+      setError("网络错误 — 请重试");
     } finally {
       setLoading(false);
     }
@@ -136,46 +182,37 @@ function RegisterForm({
 
   return (
     <form onSubmit={handleSubmit}>
-      {error && (
-        <div style={{ marginBottom: "16px", padding: "10px 12px", border: "1px solid rgba(239,68,68,0.3)", background: "rgba(239,68,68,0.05)" }}>
-          <span className="font-display" style={{ fontSize: "10px", color: "#ef4444", letterSpacing: "0.08em" }}>✕ {error}</span>
-        </div>
-      )}
-      <div style={{ marginBottom: "14px" }}>
-        <label className="font-display" style={labelStyle}>Email</label>
+      {error && <ErrorBanner message={error} />}
+      <FieldLabel>邮箱地址</FieldLabel>
+      <div style={{ ...fieldWrapStyle, marginBottom: "16px" }}>
+        <span style={iconSpanStyle}><MailIcon /></span>
         <input type="email" value={email} onChange={e => setEmail(e.target.value)} required autoComplete="email"
-          style={inputStyle}
-          onFocus={e => (e.target.style.borderColor = "var(--accent-cyan)")}
-          onBlur={e => (e.target.style.borderColor = "var(--border)")} />
+          placeholder="alice@example.com" style={inputStyle} onFocus={focusInput} onBlur={blurInput} />
       </div>
-      <div style={{ marginBottom: "14px" }}>
-        <label className="font-display" style={labelStyle}>Username (optional)</label>
+      <FieldLabel>用户名（可选）</FieldLabel>
+      <div style={{ ...fieldWrapStyle, marginBottom: "16px" }}>
+        <span style={iconSpanStyle}><UserIcon /></span>
         <input type="text" value={username} onChange={e => setUsername(e.target.value)} autoComplete="username"
-          style={inputStyle}
-          onFocus={e => (e.target.style.borderColor = "var(--accent-cyan)")}
-          onBlur={e => (e.target.style.borderColor = "var(--border)")} />
+          style={inputStyle} onFocus={focusInput} onBlur={blurInput} />
       </div>
-      <div style={{ marginBottom: "14px" }}>
-        <label className="font-display" style={labelStyle}>Password</label>
+      <FieldLabel>密码</FieldLabel>
+      <div style={{ ...fieldWrapStyle, marginBottom: "16px" }}>
+        <span style={iconSpanStyle}><LockIcon /></span>
         <input type="password" value={password} onChange={e => setPassword(e.target.value)} required autoComplete="new-password"
-          style={inputStyle}
-          onFocus={e => (e.target.style.borderColor = "var(--accent-cyan)")}
-          onBlur={e => (e.target.style.borderColor = "var(--border)")} />
+          placeholder="••••••••••" style={inputStyle} onFocus={focusInput} onBlur={blurInput} />
       </div>
-      <div style={{ marginBottom: "20px" }}>
-        <label className="font-display" style={labelStyle}>Confirm Password</label>
+      <FieldLabel>确认密码</FieldLabel>
+      <div style={{ ...fieldWrapStyle, marginBottom: "24px" }}>
+        <span style={iconSpanStyle}><LockIcon /></span>
         <input type="password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} required autoComplete="new-password"
-          style={inputStyle}
-          onFocus={e => (e.target.style.borderColor = "var(--accent-cyan)")}
-          onBlur={e => (e.target.style.borderColor = "var(--border)")} />
+          placeholder="••••••••••" style={inputStyle} onFocus={focusInput} onBlur={blurInput} />
       </div>
-      <button type="submit" disabled={loading} style={primaryButtonStyle(loading)}>
-        {loading ? "Creating account..." : "Create Account"}
+      <button type="submit" disabled={loading} style={primaryButtonStyle(loading)} onMouseEnter={hoverPrimary} onMouseLeave={unhoverPrimary}>
+        {loading ? "创建中…" : "创建账号"}
       </button>
       <div style={{ textAlign: "center", marginTop: "16px" }}>
-        <button type="button" onClick={onBackToSignIn}
-          style={{ background: "none", border: "none", color: "var(--text-muted)", fontSize: "12px", cursor: "pointer", textDecoration: "underline" }}>
-          Back to sign in
+        <button type="button" onClick={onBackToSignIn} style={{ ...linkStyle, color: "var(--text-muted)" }}>
+          返回登录
         </button>
       </div>
     </form>
@@ -196,6 +233,7 @@ function PasswordForm({
   const [showRegister, setShowRegister] = useState(false);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [showPw, setShowPw] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -207,7 +245,7 @@ function PasswordForm({
       const res = await loginWithPassword(tenantSlug, loginChallenge, username, password);
       if (!res.ok) {
         const body = await res.json().catch(() => ({})) as { error?: string };
-        setError(body.error ?? "Login failed");
+        setError(body.error ?? "登录失败");
         return;
       }
       const body = await res.json().catch(() => ({})) as {
@@ -226,7 +264,7 @@ function PasswordForm({
       }
       if (body.redirect_uri) window.location.href = body.redirect_uri;
     } catch {
-      setError("Network error — please try again");
+      setError("网络错误 — 请重试");
     } finally {
       setLoading(false);
     }
@@ -244,56 +282,34 @@ function PasswordForm({
 
   return (
     <form onSubmit={handleSubmit}>
-      {error && (
-        <div style={{
-          marginBottom: "16px",
-          padding: "10px 12px",
-          border: "1px solid rgba(239,68,68,0.3)",
-          background: "rgba(239,68,68,0.05)"
-        }}>
-          <span className="font-display" style={{ fontSize: "10px", color: "#ef4444", letterSpacing: "0.08em" }}>
-            ✕ {error}
-          </span>
-        </div>
-      )}
-      <div style={{ marginBottom: "16px" }}>
-        <label className="font-display" style={labelStyle}>Username or Email</label>
+      {error && <ErrorBanner message={error} />}
+      <FieldLabel>用户名或邮箱</FieldLabel>
+      <div style={{ ...fieldWrapStyle, marginBottom: "18px" }}>
+        <span style={iconSpanStyle}><UserIcon /></span>
         <input
-          type="text"
-          value={username}
-          onChange={e => setUsername(e.target.value)}
-          required
-          autoComplete="username"
-          style={inputStyle}
-          onFocus={e => (e.target.style.borderColor = "var(--accent-cyan)")}
-          onBlur={e => (e.target.style.borderColor = "var(--border)")}
+          type="text" value={username} onChange={e => setUsername(e.target.value)} required autoComplete="username"
+          placeholder="alice@example.com" style={inputStyle} onFocus={focusInput} onBlur={blurInput}
         />
       </div>
-      <div style={{ marginBottom: "24px" }}>
-        <label className="font-display" style={labelStyle}>Password</label>
-        <input
-          type="password"
-          value={password}
-          onChange={e => setPassword(e.target.value)}
-          required
-          autoComplete="current-password"
-          style={inputStyle}
-          onFocus={e => (e.target.style.borderColor = "var(--accent-cyan)")}
-          onBlur={e => (e.target.style.borderColor = "var(--border)")}
-        />
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "7px" }}>
+        <label style={{ fontSize: "12px", fontWeight: 600, color: "var(--text-secondary)" }}>密码</label>
+        <a href="#" style={linkStyle as React.CSSProperties}>忘记密码？</a>
       </div>
-      <button type="submit" disabled={loading} style={primaryButtonStyle(loading)}>
-        {loading ? "Signing in..." : "Sign In"}
+      <div style={{ ...fieldWrapStyle, marginBottom: "24px" }}>
+        <span style={iconSpanStyle}><LockIcon /></span>
+        <input
+          type={showPw ? "text" : "password"} value={password} onChange={e => setPassword(e.target.value)} required autoComplete="current-password"
+          placeholder="••••••••••" style={{ ...inputStyle, paddingRight: "64px" }} onFocus={focusInput} onBlur={blurInput}
+        />
+        <button type="button" onClick={() => setShowPw(s => !s)} style={pwToggleStyle}>{showPw ? "隐藏" : "显示"}</button>
+      </div>
+      <button type="submit" disabled={loading} style={primaryButtonStyle(loading)} onMouseEnter={hoverPrimary} onMouseLeave={unhoverPrimary}>
+        {loading ? "登录中…" : "登录"}
       </button>
       {allowRegistration && (
-        <div style={{ textAlign: "center", marginTop: "16px" }}>
-          <span style={{ fontSize: "12px", color: "var(--text-muted)" }}>
-            Don't have an account?{" "}
-            <button type="button" onClick={() => setShowRegister(true)}
-              style={{ background: "none", border: "none", color: "var(--accent-cyan)", fontSize: "12px", cursor: "pointer", textDecoration: "underline" }}>
-              Register
-            </button>
-          </span>
+        <div style={{ textAlign: "center", marginTop: "16px", fontSize: "12.5px", color: "var(--text-muted)" }}>
+          还没有账号？{" "}
+          <button type="button" onClick={() => setShowRegister(true)} style={linkStyle}>注册</button>
         </div>
       )}
     </form>
@@ -320,7 +336,7 @@ function MagicLinkForm({
       await requestMagicLink(tenantSlug, loginChallenge, email);
       setSent(true);
     } catch {
-      setError("Failed to send magic link — please try again");
+      setError("发送登录链接失败 — 请重试");
     } finally {
       setLoading(false);
     }
@@ -328,13 +344,13 @@ function MagicLinkForm({
 
   if (sent) {
     return (
-      <div style={{ textAlign: "center", padding: "24px 0" }}>
-        <div style={{ fontSize: "24px", marginBottom: "16px" }}>✉</div>
-        <p className="font-display" style={{ fontSize: "11px", color: "var(--text-muted)", letterSpacing: "0.08em" }}>
-          CHECK YOUR EMAIL
-        </p>
-        <p style={{ fontSize: "13px", color: "var(--text-secondary)", marginTop: "8px" }}>
-          A sign-in link has been sent to <strong>{email}</strong>. Click the link in the email to continue.
+      <div style={{ textAlign: "center", padding: "16px 0" }}>
+        <div style={{ display: "grid", placeItems: "center", width: "64px", height: "64px", borderRadius: "18px", background: "#e7f0e4", margin: "0 auto 18px" }}>
+          <MailIcon size={28} color="var(--accent-green)" />
+        </div>
+        <h3 className="font-serif" style={{ margin: "0 0 8px", fontWeight: 600, fontSize: "19px", color: "var(--text-primary)" }}>请查收邮箱</h3>
+        <p style={{ fontSize: "13px", lineHeight: 1.6, color: "var(--text-secondary)" }}>
+          登录链接已发送至 <strong style={{ color: "var(--text-primary)" }}>{email}</strong>，点击邮件中的链接即可完成登录。
         </p>
       </div>
     );
@@ -342,34 +358,23 @@ function MagicLinkForm({
 
   return (
     <form onSubmit={handleSubmit}>
-      {error && (
-        <div style={{
-          marginBottom: "16px",
-          padding: "10px 12px",
-          border: "1px solid rgba(239,68,68,0.3)",
-          background: "rgba(239,68,68,0.05)"
-        }}>
-          <span className="font-display" style={{ fontSize: "10px", color: "#ef4444", letterSpacing: "0.08em" }}>
-            ✕ {error}
-          </span>
-        </div>
-      )}
-      <div style={{ marginBottom: "24px" }}>
-        <label className="font-display" style={labelStyle}>Email Address</label>
+      {error && <ErrorBanner message={error} />}
+      <FieldLabel>邮箱地址</FieldLabel>
+      <div style={{ ...fieldWrapStyle, marginBottom: "18px" }}>
+        <span style={iconSpanStyle}><MailIcon /></span>
         <input
-          type="email"
-          value={email}
-          onChange={e => setEmail(e.target.value)}
-          required
-          autoComplete="email"
-          placeholder="you@example.com"
-          style={{ ...inputStyle, color: email ? "var(--text-primary)" : "var(--text-muted)" }}
-          onFocus={e => (e.target.style.borderColor = "var(--accent-cyan)")}
-          onBlur={e => (e.target.style.borderColor = "var(--border)")}
+          type="email" value={email} onChange={e => setEmail(e.target.value)} required autoComplete="email"
+          placeholder="alice@example.com" style={inputStyle} onFocus={focusInput} onBlur={blurInput}
         />
       </div>
-      <button type="submit" disabled={loading} style={primaryButtonStyle(loading)}>
-        {loading ? "Sending..." : "Send Magic Link"}
+      <div style={{ display: "flex", gap: "9px", alignItems: "flex-start", background: "var(--bg-input)", border: "1px solid var(--border)", borderRadius: "11px", padding: "13px 14px", marginBottom: "24px" }}>
+        <span style={{ flexShrink: 0, marginTop: "1px" }}><MailIcon size={17} color="var(--accent-orange)" /></span>
+        <span style={{ fontSize: "12.5px", lineHeight: 1.55, color: "var(--text-secondary)" }}>
+          我们会向你的邮箱发送一个一次性登录链接，点击即可完成登录，无需密码。
+        </span>
+      </div>
+      <button type="submit" disabled={loading} style={primaryButtonStyle(loading)} onMouseEnter={hoverPrimary} onMouseLeave={unhoverPrimary}>
+        {loading ? "发送中…" : "发送登录链接"}
       </button>
     </form>
   );
@@ -406,14 +411,14 @@ function PasskeyForm({
       }) as PublicKeyCredential | null;
 
       if (!credential) {
-        setError("No passkey was selected");
+        setError("未选择通行密钥");
         return;
       }
 
       const res = await finishPasskeyLogin(tenantSlug, startResult.assertion_session_id, credential);
       if (!res.ok) {
         const body = await res.json().catch(() => ({})) as { error?: string };
-        setError(body.error ?? "Passkey authentication failed");
+        setError(body.error ?? "通行密钥验证失败");
         return;
       }
       const body = await res.json().catch(() => ({})) as {
@@ -433,9 +438,9 @@ function PasskeyForm({
       if (body.redirect_uri) window.location.href = body.redirect_uri;
     } catch (err) {
       if (err instanceof Error && err.name === "NotAllowedError") {
-        setError("Passkey prompt was cancelled");
+        setError("通行密钥操作已取消");
       } else {
-        setError("Passkey authentication failed — please try again");
+        setError("通行密钥验证失败 — 请重试");
       }
     } finally {
       setLoading(false);
@@ -443,29 +448,22 @@ function PasskeyForm({
   };
 
   return (
-    <div>
-      {error && (
-        <div style={{
-          marginBottom: "16px",
-          padding: "10px 12px",
-          border: "1px solid rgba(239,68,68,0.3)",
-          background: "rgba(239,68,68,0.05)"
-        }}>
-          <span className="font-display" style={{ fontSize: "10px", color: "#ef4444", letterSpacing: "0.08em" }}>
-            ✕ {error}
-          </span>
-        </div>
-      )}
-      <p style={{ fontSize: "13px", color: "var(--text-secondary)", marginBottom: "24px" }}>
-        Use a passkey stored on this device or a security key to sign in.
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center", paddingTop: "6px" }}>
+      {error && <div style={{ alignSelf: "stretch" }}><ErrorBanner message={error} /></div>}
+      <div style={{ display: "grid", placeItems: "center", width: "64px", height: "64px", borderRadius: "18px", background: "#e7f0e4", marginBottom: "18px" }}>
+        <PasskeyIcon size={30} />
+      </div>
+      <h3 className="font-serif" style={{ margin: "0 0 8px", fontWeight: 600, fontSize: "19px", color: "var(--text-primary)" }}>使用通行密钥登录</h3>
+      <p style={{ margin: "0 0 24px", fontSize: "13px", lineHeight: 1.6, color: "var(--text-secondary)", maxWidth: "300px" }}>
+        通过设备的指纹、面容或屏幕锁验证你的身份，安全且免密。
       </p>
       <button
-        type="button"
-        disabled={loading}
-        onClick={handlePasskeyLogin}
-        style={primaryButtonStyle(loading)}
+        type="button" disabled={loading} onClick={handlePasskeyLogin}
+        style={{ ...primaryButtonStyle(loading), display: "flex", alignItems: "center", justifyContent: "center", gap: "9px" }}
+        onMouseEnter={hoverPrimary} onMouseLeave={unhoverPrimary}
       >
-        {loading ? "Waiting for passkey..." : "Sign In with Passkey"}
+        <PasskeyButtonIcon />
+        {loading ? "等待通行密钥…" : "验证通行密钥"}
       </button>
     </div>
   );
@@ -493,40 +491,29 @@ function MfaTotpVerifyView({
       };
       if (body.redirect_uri) { window.location.href = body.redirect_uri; return; }
       if (body.error === "challenge_invalidated") {
-        setError("Too many failed attempts. Please return to the application and try again.");
+        setError("失败次数过多，请返回应用后重试。");
       } else {
-        setError(`Invalid code${body.remaining_attempts !== undefined ? ` — ${body.remaining_attempts} attempts remaining` : ""}`);
+        setError(`验证码错误${body.remaining_attempts !== undefined ? ` — 还剩 ${body.remaining_attempts} 次机会` : ""}`);
       }
-    } catch { setError("Network error — please try again"); }
+    } catch { setError("网络错误 — 请重试"); }
     finally { setLoading(false); }
   };
 
   return (
     <form onSubmit={handleVerify}>
-      <div className="font-display" style={{ fontSize: "10px", letterSpacing: "0.12em",
-        textTransform: "uppercase", color: "var(--text-muted)", marginBottom: "16px" }}>
-        TWO-FACTOR VERIFICATION
-      </div>
-      {error && (
-        <div style={{ marginBottom: "16px", padding: "10px 12px",
-          border: "1px solid rgba(239,68,68,0.3)", background: "rgba(239,68,68,0.05)" }}>
-          <span className="font-display" style={{ fontSize: "10px", color: "#ef4444", letterSpacing: "0.08em" }}>
-            ✕ {error}
-          </span>
-        </div>
-      )}
-      <div style={{ marginBottom: "24px" }}>
-        <label className="font-display" style={labelStyle}>Authenticator Code</label>
+      <Eyebrow>两步验证</Eyebrow>
+      {error && <ErrorBanner message={error} />}
+      <FieldLabel>验证器代码</FieldLabel>
+      <div style={{ ...fieldWrapStyle, marginBottom: "24px" }}>
+        <span style={iconSpanStyle}><LockIcon /></span>
         <input type="text" inputMode="numeric" pattern="[0-9]{6}" maxLength={6}
           value={code} onChange={e => setCode(e.target.value.replace(/\D/g, ""))}
-          required autoComplete="one-time-code"
-          placeholder="000000"
-          style={inputStyle}
-          onFocus={e => (e.target.style.borderColor = "var(--accent-cyan)")}
-          onBlur={e => (e.target.style.borderColor = "var(--border)")} />
+          required autoComplete="one-time-code" placeholder="000000"
+          style={inputStyle} onFocus={focusInput} onBlur={blurInput} />
       </div>
-      <button type="submit" disabled={loading || code.length !== 6} style={primaryButtonStyle(loading || code.length !== 6)}>
-        {loading ? "Verifying..." : "Verify"}
+      <button type="submit" disabled={loading || code.length !== 6} style={primaryButtonStyle(loading || code.length !== 6)}
+        onMouseEnter={hoverPrimary} onMouseLeave={unhoverPrimary}>
+        {loading ? "验证中…" : "验证"}
       </button>
     </form>
   );
@@ -552,49 +539,45 @@ function MfaPasskeyStepUpView({
       const credential = await navigator.credentials.get({
         publicKey: { challenge: challengeBytes, timeout: 60000, userVerification: "required" }
       }) as PublicKeyCredential | null;
-      if (!credential) { setError("No passkey selected"); return; }
+      if (!credential) { setError("未选择通行密钥"); return; }
       // Pass the raw nonce; mfaPasskeyFinish will SHA-256 hash it before sending to the server
       const res = await mfaPasskeyFinish(tenantSlug, loginChallenge, startResult.challenge, credential);
       const body = await res.json().catch(() => ({})) as { error?: string; redirect_uri?: string };
       if (body.redirect_uri) { window.location.href = body.redirect_uri; return; }
       if (body.error === "challenge_invalidated") {
-        setError("Too many failed attempts. Please return to the application and try again.");
+        setError("失败次数过多，请返回应用后重试。");
       } else {
-        setError("Passkey verification failed — please try again");
+        setError("通行密钥验证失败 — 请重试");
       }
     } catch (err) {
-      if (err instanceof Error && err.name === "NotAllowedError") setError("Passkey prompt cancelled");
-      else setError("Passkey verification failed — please try again");
+      if (err instanceof Error && err.name === "NotAllowedError") setError("通行密钥操作已取消");
+      else setError("通行密钥验证失败 — 请重试");
     } finally { setLoading(false); }
   };
 
   return (
     <div>
-      <div className="font-display" style={{ fontSize: "10px", letterSpacing: "0.12em",
-        textTransform: "uppercase", color: "var(--text-muted)", marginBottom: "16px" }}>
-        PASSKEY VERIFICATION
-      </div>
-      {error && (
-        <div style={{ marginBottom: "16px", padding: "10px 12px",
-          border: "1px solid rgba(239,68,68,0.3)", background: "rgba(239,68,68,0.05)" }}>
-          <span className="font-display" style={{ fontSize: "10px", color: "#ef4444", letterSpacing: "0.08em" }}>✕ {error}</span>
+      <Eyebrow>通行密钥验证</Eyebrow>
+      {error && <ErrorBanner message={error} />}
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center" }}>
+        <div style={{ display: "grid", placeItems: "center", width: "64px", height: "64px", borderRadius: "18px", background: "#e7f0e4", marginBottom: "18px" }}>
+          <PasskeyIcon size={30} />
         </div>
-      )}
-      <p style={{ fontSize: "13px", color: "var(--text-secondary)", marginBottom: "24px" }}>
-        Use your registered passkey to complete sign-in.
-      </p>
-      <button type="button" disabled={loading} onClick={handleStepUp} style={primaryButtonStyle(loading)}>
-        {loading ? "Waiting for passkey..." : "Verify with Passkey"}
-      </button>
-      {hasTotpFallback && (
-        <div style={{ textAlign: "center", marginTop: "16px" }}>
-          <button type="button" onClick={onSwitchToTotp}
-            style={{ background: "none", border: "none", color: "var(--text-muted)",
-              fontSize: "12px", cursor: "pointer", textDecoration: "underline" }}>
-            Use authenticator app instead
+        <p style={{ margin: "0 0 24px", fontSize: "13px", lineHeight: 1.6, color: "var(--text-secondary)", maxWidth: "300px" }}>
+          使用你已注册的通行密钥完成登录。
+        </p>
+        <button type="button" disabled={loading} onClick={handleStepUp}
+          style={{ ...primaryButtonStyle(loading), display: "flex", alignItems: "center", justifyContent: "center", gap: "9px" }}
+          onMouseEnter={hoverPrimary} onMouseLeave={unhoverPrimary}>
+          <PasskeyButtonIcon />
+          {loading ? "等待通行密钥…" : "使用通行密钥验证"}
+        </button>
+        {hasTotpFallback && (
+          <button type="button" onClick={onSwitchToTotp} style={{ ...linkStyle, color: "var(--text-muted)", marginTop: "16px" }}>
+            改用验证器应用
           </button>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }
@@ -621,7 +604,7 @@ function MfaEnrollTotpView({
         setQrDataUrl(dataUrl);
         setStep("setup");
       })
-      .catch(() => setError("Failed to start enrollment — please try again"));
+      .catch(() => setError("启动绑定失败 — 请重试"));
   }, [tenantSlug, loginChallenge]);
 
   const handleConfirm = async (e: React.FormEvent) => {
@@ -632,42 +615,37 @@ function MfaEnrollTotpView({
       const body = await res.json().catch(() => ({})) as { error?: string; redirect_uri?: string };
       if (body.redirect_uri) { window.location.href = body.redirect_uri; return; }
       if (body.error === "challenge_invalidated") {
-        setError("Too many failed attempts. Please return to the application and try again.");
+        setError("失败次数过多，请返回应用后重试。");
       } else {
-        setError("Incorrect code — please try again");
+        setError("验证码错误 — 请重试");
       }
-    } catch { setError("Network error — please try again"); }
+    } catch { setError("网络错误 — 请重试"); }
     finally { setLoading(false); }
   };
 
   if (step === "loading") {
     return <div style={{ textAlign: "center", padding: "24px 0" }}>
-      <p className="font-display" style={{ fontSize: "10px", color: "var(--text-muted)", letterSpacing: "0.08em" }}>
-        SETTING UP MFA...
-      </p>
-      {error && <p style={{ color: "#ef4444", fontSize: "12px" }}>{error}</p>}
+      <p style={{ fontSize: "13px", color: "var(--text-muted)" }}>正在设置两步验证…</p>
+      {error && <p style={{ color: "var(--accent-orange)", fontSize: "12.5px" }}>{error}</p>}
     </div>;
   }
 
   if (step === "setup") {
     return (
       <div>
-        <div className="font-display" style={{ fontSize: "10px", letterSpacing: "0.12em",
-          textTransform: "uppercase", color: "var(--text-muted)", marginBottom: "16px" }}>
-          SET UP AUTHENTICATOR
-        </div>
-        <p style={{ fontSize: "13px", color: "var(--text-secondary)", marginBottom: "16px" }}>
-          Scan this QR code with your authenticator app (Google Authenticator, Authy, etc.)
+        <Eyebrow>设置验证器</Eyebrow>
+        <p style={{ fontSize: "13px", lineHeight: 1.6, color: "var(--text-secondary)", marginBottom: "16px" }}>
+          使用验证器应用（Google Authenticator、Authy 等）扫描下方二维码。
         </p>
-        {qrDataUrl && <img src={qrDataUrl} alt="TOTP QR code"
-          style={{ display: "block", margin: "0 auto 16px", width: "180px", height: "180px" }} />}
-        <div style={{ background: "var(--bg-elevated)", padding: "8px 12px", marginBottom: "24px",
-          fontFamily: "'Space Mono', monospace", fontSize: "11px", color: "var(--text-dim)",
-          wordBreak: "break-all" }}>
+        {qrDataUrl && <img src={qrDataUrl} alt="TOTP 二维码"
+          style={{ display: "block", margin: "0 auto 16px", width: "180px", height: "180px", borderRadius: "12px", border: "1px solid var(--border)" }} />}
+        <div style={{ background: "var(--bg-input)", border: "1px solid var(--border)", borderRadius: "10px", padding: "10px 12px", marginBottom: "24px",
+          fontFamily: "monospace", fontSize: "12px", color: "var(--text-secondary)", wordBreak: "break-all" }}>
           {secret}
         </div>
-        <button type="button" onClick={() => setStep("confirm")} style={primaryButtonStyle(false)}>
-          I've Scanned the Code
+        <button type="button" onClick={() => setStep("confirm")} style={primaryButtonStyle(false)}
+          onMouseEnter={hoverPrimary} onMouseLeave={unhoverPrimary}>
+          我已扫描二维码
         </button>
       </div>
     );
@@ -675,37 +653,26 @@ function MfaEnrollTotpView({
 
   return (
     <form onSubmit={handleConfirm}>
-      <div className="font-display" style={{ fontSize: "10px", letterSpacing: "0.12em",
-        textTransform: "uppercase", color: "var(--text-muted)", marginBottom: "16px" }}>
-        CONFIRM SETUP
-      </div>
-      {error && (
-        <div style={{ marginBottom: "16px", padding: "10px 12px",
-          border: "1px solid rgba(239,68,68,0.3)", background: "rgba(239,68,68,0.05)" }}>
-          <span className="font-display" style={{ fontSize: "10px", color: "#ef4444", letterSpacing: "0.08em" }}>✕ {error}</span>
-        </div>
-      )}
-      <p style={{ fontSize: "13px", color: "var(--text-secondary)", marginBottom: "16px" }}>
-        Enter the 6-digit code from your authenticator app to confirm setup.
+      <Eyebrow>确认设置</Eyebrow>
+      {error && <ErrorBanner message={error} />}
+      <p style={{ fontSize: "13px", lineHeight: 1.6, color: "var(--text-secondary)", marginBottom: "16px" }}>
+        输入验证器应用中的 6 位验证码以确认设置。
       </p>
-      <div style={{ marginBottom: "24px" }}>
-        <label className="font-display" style={labelStyle}>Confirmation Code</label>
+      <FieldLabel>确认验证码</FieldLabel>
+      <div style={{ ...fieldWrapStyle, marginBottom: "24px" }}>
+        <span style={iconSpanStyle}><LockIcon /></span>
         <input type="text" inputMode="numeric" pattern="[0-9]{6}" maxLength={6}
           value={code} onChange={e => setCode(e.target.value.replace(/\D/g, ""))}
           required autoComplete="one-time-code" placeholder="000000"
-          style={inputStyle}
-          onFocus={e => (e.target.style.borderColor = "var(--accent-cyan)")}
-          onBlur={e => (e.target.style.borderColor = "var(--border)")} />
+          style={inputStyle} onFocus={focusInput} onBlur={blurInput} />
       </div>
-      <button type="submit" disabled={loading || code.length !== 6}
-        style={primaryButtonStyle(loading || code.length !== 6)}>
-        {loading ? "Confirming..." : "Confirm and Sign In"}
+      <button type="submit" disabled={loading || code.length !== 6} style={primaryButtonStyle(loading || code.length !== 6)}
+        onMouseEnter={hoverPrimary} onMouseLeave={unhoverPrimary}>
+        {loading ? "确认中…" : "确认并登录"}
       </button>
       <div style={{ textAlign: "center", marginTop: "16px" }}>
-        <button type="button" onClick={() => setStep("setup")}
-          style={{ background: "none", border: "none", color: "var(--text-muted)",
-            fontSize: "12px", cursor: "pointer", textDecoration: "underline" }}>
-          Back to QR code
+        <button type="button" onClick={() => setStep("setup")} style={{ ...linkStyle, color: "var(--text-muted)" }}>
+          返回二维码
         </button>
       </div>
     </form>
@@ -729,18 +696,16 @@ function MagicLinkConsuming({
         const body = await res.json().catch(() => ({})) as { redirect_uri?: string };
         if (body.redirect_uri) { window.location.href = body.redirect_uri; return; }
       }
-      setError("This link has expired or has already been used.");
+      setError("此链接已失效或已被使用。");
     }).catch(() => {
-      setError("Failed to verify magic link — please request a new one.");
+      setError("验证登录链接失败 — 请重新申请。");
     });
   }, [tenantSlug, token]);
 
   if (error) {
     return (
       <div style={{ textAlign: "center", padding: "24px 0" }}>
-        <p className="font-display" style={{ fontSize: "10px", color: "#ef4444", letterSpacing: "0.08em", marginBottom: "8px" }}>
-          LINK INVALID
-        </p>
+        <h3 className="font-serif" style={{ margin: "0 0 8px", fontWeight: 600, fontSize: "18px", color: "var(--accent-orange)" }}>链接无效</h3>
         <p style={{ fontSize: "13px", color: "var(--text-secondary)" }}>{error}</p>
       </div>
     );
@@ -748,9 +713,7 @@ function MagicLinkConsuming({
 
   return (
     <div style={{ textAlign: "center", padding: "24px 0" }}>
-      <p className="font-display" style={{ fontSize: "10px", color: "var(--text-muted)", letterSpacing: "0.08em" }}>
-        VERIFYING LINK...
-      </p>
+      <p style={{ fontSize: "13px", color: "var(--text-muted)" }}>正在验证链接…</p>
     </div>
   );
 }
@@ -774,144 +737,114 @@ export default function TenantLoginPage() {
 
   useEffect(() => {
     if (!tenantSlug || !loginChallenge) {
-      setLoadError("No active login session. Please return to the application and try again.");
+      setLoadError("没有有效的登录会话，请返回应用后重试。");
       return;
     }
     getChallengeInfo(tenantSlug, loginChallenge).then(data => {
       setInfo(data);
       if (data.methods.length > 0) setActiveMethod(data.methods[0].method);
     }).catch(() => {
-      setLoadError("This login session has expired or is invalid. Please return to the application and try again.");
+      setLoadError("此登录会话已过期或无效，请返回应用后重试。");
     });
   }, [tenantSlug, loginChallenge]);
 
+  const tenantName = info?.tenant_display_name ?? tenantSlug ?? "Workspace";
+  const tenantInitial = tenantName.trim().charAt(0) || "·";
+
   return (
-    <div style={{
-      minHeight: "100vh",
-      background: "var(--bg-base)",
-      display: "flex",
-      alignItems: "center",
-      justifyContent: "center",
-      position: "relative",
-      overflow: "hidden"
-    }} className="dot-grid">
-      {/* Corner decoration */}
-      <div style={{ position: "absolute", top: "40px", left: "40px", width: "80px", height: "80px", borderTop: "1px solid var(--border-bright)", borderLeft: "1px solid var(--border-bright)" }} />
-      <div style={{ position: "absolute", bottom: "40px", right: "40px", width: "80px", height: "80px", borderBottom: "1px solid var(--border-bright)", borderRight: "1px solid var(--border-bright)" }} />
-
-      <div style={{ width: "100%", maxWidth: "400px", padding: "0 24px" }}>
-        {/* Header */}
-        <div style={{ textAlign: "center", marginBottom: "32px" }}>
-          <div style={{
-            display: "inline-flex", alignItems: "center", justifyContent: "center",
-            width: "48px", height: "48px",
-            border: "1px solid var(--accent-cyan)",
-            marginBottom: "16px", position: "relative"
-          }}>
-            <div style={{
-              width: "16px", height: "16px",
-              background: "var(--accent-cyan)",
-              transform: "rotate(45deg)",
-              boxShadow: "0 0 12px var(--accent-cyan)"
-            }} />
+    <AuthShell>
+      <BrandPanel
+        heading={<>一次登录<br />畅行工作区</>}
+        description="密码、邮箱链接或通行密钥，选择你习惯的方式安全登入。"
+        footer={
+          <div style={{ display: "flex", alignItems: "center", gap: "9px", background: "var(--bg-surface)", border: "1px solid var(--border)", borderRadius: "12px", padding: "10px 12px" }}>
+            <span className="font-serif" style={{ display: "grid", placeItems: "center", width: "30px", height: "30px", flexShrink: 0, borderRadius: "8px", background: "var(--accent-green)", color: "#fff", fontWeight: 600, fontSize: "15px" }}>
+              {tenantInitial}
+            </span>
+            <span style={{ display: "flex", flexDirection: "column", lineHeight: 1.3, minWidth: 0 }}>
+              <span style={{ fontSize: "9px", letterSpacing: "0.16em", textTransform: "uppercase", color: "var(--text-muted)" }}>继续登录到</span>
+              <span style={{ fontSize: "13px", fontWeight: 600, color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{tenantName}</span>
+            </span>
           </div>
-          <div className="font-display" style={{ fontSize: "16px", letterSpacing: "0.05em", color: "var(--text-primary)", marginBottom: "4px" }}>
-            {info?.tenant_display_name ?? tenantSlug ?? "Sign In"}
+        }
+      />
+
+      {/* Form panel */}
+      <div style={{ flex: 1, padding: "44px 44px", display: "flex", flexDirection: "column", background: "#ffffff", minWidth: 0 }}>
+        {loadError ? (
+          <div style={{ margin: "auto 0", textAlign: "center" }}>
+            <h1 className="font-serif" style={{ margin: "0 0 10px", fontWeight: 600, fontSize: "22px", color: "var(--accent-orange)" }}>会话错误</h1>
+            <p style={{ fontSize: "13.5px", lineHeight: 1.6, color: "var(--text-secondary)" }}>{loadError}</p>
           </div>
-          <div className="font-display" style={{ fontSize: "10px", letterSpacing: "0.15em", textTransform: "uppercase", color: "var(--text-muted)" }}>
-            SECURE SIGN-IN
+        ) : !info ? (
+          <div style={{ margin: "auto 0", textAlign: "center", color: "var(--text-muted)", fontSize: "13px" }}>加载中…</div>
+        ) : magicLinkToken ? (
+          <div style={{ margin: "auto 0" }}>
+            <MagicLinkConsuming tenantSlug={tenantSlug!} token={magicLinkToken} />
           </div>
-        </div>
+        ) : mfaContext !== null ? (
+          <div>
+            <div style={{ fontSize: "11px", fontWeight: 700, letterSpacing: "0.18em", textTransform: "uppercase", color: "var(--accent-orange)", marginBottom: "10px" }}>Verify</div>
+            <h1 className="font-serif" style={{ margin: "0 0 24px", fontWeight: 600, fontSize: "26px", color: "var(--text-primary)" }}>安全验证</h1>
+            {mfaContext.mfaState === "pending_totp" && (
+              <MfaTotpVerifyView tenantSlug={tenantSlug!} loginChallenge={mfaContext.loginChallenge} />
+            )}
+            {mfaContext.mfaState === "pending_passkey_step_up" && (
+              <MfaPasskeyStepUpView
+                tenantSlug={tenantSlug!}
+                loginChallenge={mfaContext.loginChallenge}
+                hasTotpFallback={mfaContext.hasTotpFallback}
+                onSwitchToTotp={async () => {
+                  await mfaSwitchToTotp(tenantSlug!, mfaContext.loginChallenge);
+                  setMfaContext(prev => prev ? { ...prev, mfaState: "pending_totp" } : null);
+                }}
+              />
+            )}
+            {mfaContext.mfaState === "pending_enrollment" && (
+              <MfaEnrollTotpView tenantSlug={tenantSlug!} loginChallenge={mfaContext.loginChallenge} />
+            )}
+          </div>
+        ) : (
+          <>
+            <div style={{ fontSize: "11px", fontWeight: 700, letterSpacing: "0.18em", textTransform: "uppercase", color: "var(--accent-orange)", marginBottom: "10px" }}>Sign in</div>
+            <h1 className="font-serif" style={{ margin: "0 0 8px", fontWeight: 600, fontSize: "30px", color: "var(--text-primary)", letterSpacing: "0.2px" }}>欢迎回来</h1>
+            <p style={{ margin: "0 0 24px", fontSize: "13.5px", lineHeight: 1.6, color: "var(--text-secondary)" }}>选择一种方式登录以继续。</p>
 
-        {/* Card */}
-        <div style={{ background: "var(--bg-surface)", border: "1px solid var(--border)" }}>
-          <div style={{ height: "2px", background: "linear-gradient(90deg, var(--accent-cyan), var(--accent-blue))" }} />
+            {info.methods.length > 1 && (
+              <MethodTabs
+                methods={info.methods.map(m => m.method)}
+                active={activeMethod}
+                onSelect={setActiveMethod}
+              />
+            )}
 
-          {loadError ? (
-            <div style={{ padding: "32px 24px", textAlign: "center" }}>
-              <p className="font-display" style={{ fontSize: "10px", color: "#ef4444", letterSpacing: "0.08em", marginBottom: "8px" }}>SESSION ERROR</p>
-              <p style={{ fontSize: "13px", color: "var(--text-secondary)" }}>{loadError}</p>
-            </div>
-          ) : !info ? (
-            <div style={{ padding: "32px 24px", textAlign: "center" }}>
-              <p className="font-display" style={{ fontSize: "10px", color: "var(--text-muted)", letterSpacing: "0.08em" }}>LOADING...</p>
-            </div>
-          ) : magicLinkToken ? (
-            <div style={{ padding: "24px" }}>
-              <MagicLinkConsuming tenantSlug={tenantSlug!} token={magicLinkToken} />
-            </div>
-          ) : mfaContext !== null ? (
-            <div style={{ padding: "24px" }}>
-              {mfaContext.mfaState === "pending_totp" && (
-                <MfaTotpVerifyView
-                  tenantSlug={tenantSlug!}
-                  loginChallenge={mfaContext.loginChallenge}
-                />
-              )}
-              {mfaContext.mfaState === "pending_passkey_step_up" && (
-                <MfaPasskeyStepUpView
-                  tenantSlug={tenantSlug!}
-                  loginChallenge={mfaContext.loginChallenge}
-                  hasTotpFallback={mfaContext.hasTotpFallback}
-                  onSwitchToTotp={async () => {
-                    await mfaSwitchToTotp(tenantSlug!, mfaContext.loginChallenge);
-                    setMfaContext(prev => prev ? { ...prev, mfaState: "pending_totp" } : null);
-                  }}
-                />
-              )}
-              {mfaContext.mfaState === "pending_enrollment" && (
-                <MfaEnrollTotpView
-                  tenantSlug={tenantSlug!}
-                  loginChallenge={mfaContext.loginChallenge}
-                />
-              )}
-            </div>
-          ) : (
-            <>
-              {/* Method tabs — only shown when multiple methods available */}
-              {info.methods.length > 1 && (
-                <div style={{ display: "flex", borderBottom: "1px solid var(--border)" }}>
-                  {info.methods.map(({ method }) => (
-                    <button
-                      key={method}
-                      type="button"
-                      onClick={() => setActiveMethod(method)}
-                      style={tabButtonStyle(activeMethod === method)}
-                    >
-                      {METHOD_LABELS[method] ?? method}
-                    </button>
-                  ))}
-                </div>
-              )}
+            {info.methods.length === 0 ? (
+              <p style={{ fontSize: "13px", color: "var(--text-secondary)", textAlign: "center" }}>
+                当前没有可用的登录方式，请联系管理员。
+              </p>
+            ) : activeMethod === "password" ? (
+              <PasswordForm
+                tenantSlug={tenantSlug!}
+                loginChallenge={loginChallenge}
+                allowRegistration={info.methods.find((m) => m.method === "password")?.allow_registration ?? false}
+                onMfaRequired={(ctx) => setMfaContext(ctx)}
+              />
+            ) : activeMethod === "magic_link" ? (
+              <MagicLinkForm tenantSlug={tenantSlug!} loginChallenge={loginChallenge} />
+            ) : activeMethod === "passkey" ? (
+              <PasskeyForm
+                tenantSlug={tenantSlug!}
+                loginChallenge={loginChallenge}
+                onMfaRequired={(ctx) => setMfaContext(ctx)}
+              />
+            ) : null}
 
-              <div style={{ padding: "24px" }}>
-                {info.methods.length === 0 ? (
-                  <p style={{ fontSize: "13px", color: "var(--text-secondary)", textAlign: "center" }}>
-                    No login methods are currently available. Please contact your administrator.
-                  </p>
-                ) : activeMethod === "password" ? (
-                  <PasswordForm
-                    tenantSlug={tenantSlug!}
-                    loginChallenge={loginChallenge}
-                    allowRegistration={
-                      info.methods.find((m) => m.method === "password")?.allow_registration ?? false
-                    }
-                    onMfaRequired={(ctx) => setMfaContext(ctx)}
-                  />
-                ) : activeMethod === "magic_link" ? (
-                  <MagicLinkForm tenantSlug={tenantSlug!} loginChallenge={loginChallenge} />
-                ) : activeMethod === "passkey" ? (
-                  <PasskeyForm
-                    tenantSlug={tenantSlug!}
-                    loginChallenge={loginChallenge}
-                    onMfaRequired={(ctx) => setMfaContext(ctx)}
-                  />
-                ) : null}
-              </div>
-            </>
-          )}
-        </div>
+            <div style={{ marginTop: "auto", paddingTop: "26px", textAlign: "center", fontSize: "12.5px", color: "var(--text-muted)" }}>
+              还没有账号？<a href="#" style={{ color: "var(--accent-green)", fontWeight: 600, textDecoration: "none" }}>联系管理员邀请</a>
+            </div>
+          </>
+        )}
       </div>
-    </div>
+    </AuthShell>
   );
 }

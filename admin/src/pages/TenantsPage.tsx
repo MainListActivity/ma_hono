@@ -212,8 +212,8 @@ export default function TenantsPage() {
           }}
           onMouseEnter={e => {
             const el = e.currentTarget;
-            el.style.background = 'rgba(0,229,255,0.08)';
-            el.style.boxShadow = '0 0 16px rgba(0,229,255,0.15)';
+            el.style.background = 'rgba(47,122,76,0.08)';
+            el.style.boxShadow = '0 0 16px rgba(47,122,76,0.15)';
           }}
           onMouseLeave={e => {
             const el = e.currentTarget;

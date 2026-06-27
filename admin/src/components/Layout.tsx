@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { Link, useNavigate } from "react-router";
 import { useAuth } from "../App";
+import { BrandMark } from "./auth/icons";
 
 export default function Layout({ children }: { children: ReactNode }) {
   const { setToken } = useAuth();
@@ -23,29 +24,26 @@ export default function Layout({ children }: { children: ReactNode }) {
         alignItems: 'center',
         justifyContent: 'space-between'
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
           {/* Logo mark */}
           <div style={{
-            width: '28px', height: '28px',
-            border: '1px solid var(--accent-cyan)',
+            width: '30px', height: '30px',
+            borderRadius: '9px',
+            background: '#fff',
+            border: '1px solid var(--border)',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-            position: 'relative',
-            overflow: 'hidden'
+            boxShadow: '0 1px 4px rgba(34,30,23,.08)'
           }}>
-            <div style={{
-              width: '10px', height: '10px',
-              background: 'var(--accent-cyan)',
-              transform: 'rotate(45deg)'
-            }} />
+            <BrandMark size={18} />
           </div>
-          <Link to="/tenants" className="font-display" style={{
+          <Link to="/tenants" className="font-serif" style={{
             color: 'var(--text-primary)',
             textDecoration: 'none',
-            fontSize: '13px',
-            letterSpacing: '0.08em',
-            textTransform: 'uppercase'
+            fontSize: '16px',
+            fontWeight: 600,
+            letterSpacing: '0.2px'
           }}>
-            MA / ADMIN
+            ma_hono
           </Link>
         </div>
 

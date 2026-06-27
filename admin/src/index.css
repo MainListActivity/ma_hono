@@ -3,32 +3,72 @@
 @tailwind utilities;
 
 :root {
-  --bg-base: #0a0e17;
-  --bg-surface: #0f1623;
-  --bg-elevated: #161e2e;
-  --border: #1e2d42;
-  --border-bright: #2a3f5f;
-  --accent-cyan: #00e5ff;
-  --accent-blue: #3b82f6;
-  --accent-green: #10b981;
-  --accent-amber: #f59e0b;
-  --text-primary: #e2e8f0;
-  --text-muted: #64748b;
-  --text-dim: #334155;
+  /* Warm "ma_hono Identity" palette */
+  --bg-base: #efebe2;        /* page canvas */
+  --bg-surface: #fbfaf5;     /* card / panel */
+  --bg-elevated: #f3f1e7;    /* raised rows, inputs-on-card */
+  --bg-input: #fbfaf5;       /* form field fill */
+  --border: #e6dfd0;
+  --border-bright: #d8cfbb;
+
+  /* Accents — green primary, warm orange secondary */
+  --accent-cyan: #2f7a4c;    /* legacy name, remapped to brand green */
+  --accent-green: #2f7a4c;
+  --accent-green-deep: #266340;
+  --accent-blue: #6db87a;    /* legacy name, remapped to soft green */
+  --accent-amber: #cc6b3a;   /* warm orange */
+  --accent-orange: #cc6b3a;
+
+  /* Text */
+  --text-primary: #221e17;
+  --text-secondary: #5c5447;
+  --text-muted: #9a917f;
+  --text-dim: #b3aa97;
+
+  /* Brand panel gradient */
+  --brand-gradient: linear-gradient(165deg, #e7f0e4 0%, #f3f1e7 58%, #fbfaf5 100%);
+
+  /* Fonts */
+  --font-sans: 'Plus Jakarta Sans', 'Noto Sans SC', sans-serif;
+  --font-serif: 'Spectral', 'Noto Serif SC', serif;
+  --font-mono: 'Plus Jakarta Sans', sans-serif;
 }
+
+* { box-sizing: border-box; }
 
 body {
   background-color: var(--bg-base);
   color: var(--text-primary);
-  font-family: 'IBM Plex Sans', sans-serif;
+  font-family: var(--font-sans);
 }
 
+input::placeholder { color: var(--text-dim); }
+
+/* Eyebrow / label display font — clean sans, not terminal mono */
 .font-display {
-  font-family: 'Space Mono', monospace;
+  font-family: var(--font-sans);
 }
 
-/* Subtle dot grid background */
+/* Serif display for headings */
+.font-serif {
+  font-family: var(--font-serif);
+}
+
+/* Warm ambient page background (replaces the dark dot grid) */
 .dot-grid {
-  background-image: radial-gradient(circle, #1e2d42 1px, transparent 1px);
-  background-size: 24px 24px;
+  background-image:
+    radial-gradient(120% 90% at 50% 0%, rgba(255, 255, 255, 0.45), transparent 60%),
+    radial-gradient(420px 420px at 12% -8%, rgba(231, 240, 228, 0.7), transparent 70%),
+    radial-gradient(460px 460px at 92% 108%, rgba(247, 231, 218, 0.65), transparent 70%);
+  background-attachment: fixed;
+}
+
+@keyframes floaty {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-10px); }
+}
+
+/* Collapse the auth split card to a single column on small screens */
+@media (max-width: 720px) {
+  .auth-brand-panel { display: none !important; }
 }
