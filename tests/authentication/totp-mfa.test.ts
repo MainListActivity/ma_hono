@@ -27,10 +27,12 @@ class TestLoginChallengeRepository
   implements LoginChallengeRepository, AuthenticationLoginChallengeRepository
 {
   public readonly challenges: LoginChallenge[] = [];
+  public rejectConsume = false;
 
   async create(challenge: LoginChallenge): Promise<void> { this.challenges.push(challenge); }
 
   async consume(id: string, consumedAt: string): Promise<boolean> {
+    if (this.rejectConsume) return false;
     const c = this.challenges.find(c => c.id === id && c.consumedAt === null);
     if (c) { c.consumedAt = consumedAt; return true; }
     return false;
@@ -454,6 +456,33 @@ describe("MFA — TOTP verify endpoint", () => {
 
     expect(res.status).toBe(400);
     await expect(res.json()).resolves.toEqual({ error: "invalid_request" });
+  });
+});
+
+describe("MFA — TOTP enrollment endpoint", () => {
+  it("does not persist a TOTP credential when challenge consumption loses the expiry race", async () => {
+    const { app, loginChallengeRepo, token, totpRepository } = await makeMfaApp({
+      mfaState: "pending_enrollment"
+    });
+
+    const startResponse = await app.request(
+      "https://idp.example.test/api/login/acme/mfa/totp/enroll/start",
+      { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ login_challenge: token }) }
+    );
+    expect(startResponse.status).toBe(200);
+    const { secret } = await startResponse.json() as { secret: string };
+    const code = await generateTotpCode(secret, Math.floor(Date.now() / 1000 / 30));
+    loginChallengeRepo.rejectConsume = true;
+
+    const finishResponse = await app.request(
+      "https://idp.example.test/api/login/acme/mfa/totp/enroll/finish",
+      { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ login_challenge: token, code }) }
+    );
+
+    expect(finishResponse.status).toBe(400);
+    await expect(totpRepository.findByTenantAndUser("tenant_acme", "user1")).resolves.toBeNull();
   });
 });
 

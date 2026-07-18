@@ -32,7 +32,7 @@ import type {
   AuthorizationCodeRepository,
   LoginChallengeRepository
 } from "../domain/authorization/repository";
-import type { AuthorizeSession } from "../domain/authorization/types";
+import type { AuthorizeSession, LoginChallenge } from "../domain/authorization/types";
 import type { AccessTokenClaimsRepository } from "../domain/clients/access-token-claims-repository";
 import type { RegistrationAccessTokenRepository } from "../domain/clients/registration-access-token-repository";
 import { sha256Base64Url } from "../lib/hash";
@@ -851,6 +851,24 @@ export const createApp = (options: AppOptions) => {
     );
   };
 
+  const findActiveLoginChallengeForTenant = async (
+    token: string,
+    tenantId: string
+  ): Promise<LoginChallenge | null> => {
+    const normalizedToken = token.trim();
+    if (normalizedToken.length === 0) return null;
+
+    const challenge = await loginChallengeLookupRepository.findByTokenHash(
+      await sha256Base64Url(normalizedToken)
+    );
+
+    return challenge !== null &&
+      challenge.tenantId === tenantId &&
+      isLoginChallengeActive(challenge)
+      ? challenge
+      : null;
+  };
+
   const handleChallengeInfo = async (context: Context) => {
     const issuerContext = await resolveLoginIssuerContext(context);
 
@@ -863,11 +881,12 @@ export const createApp = (options: AppOptions) => {
       return context.json({ error: "missing_login_challenge" }, 400);
     }
 
-    const { sha256Base64Url } = await import("../lib/hash");
-    const tokenHash = await sha256Base64Url(loginChallengeToken);
-    const challenge = await loginChallengeLookupRepository.findByTokenHash(tokenHash);
+    const challenge = await findActiveLoginChallengeForTenant(
+      loginChallengeToken,
+      issuerContext.tenant.id
+    );
 
-    if (challenge === null || !isLoginChallengeActive(challenge)) {
+    if (challenge === null) {
       return context.json({ error: "invalid_login_challenge" }, 400);
     }
 
@@ -1764,24 +1783,13 @@ export const createApp = (options: AppOptions) => {
     return context.json({ redirect_uri: redirectUrl.toString() }, 200);
   };
 
-  // Shared helper called after any MFA step succeeds.
-  // Consumes the login challenge, creates a browser session, sets the cookie,
-  // runs authorizeRequest, and redirects to the callback with code+state.
-  const handlePostMfaSuccess = async (
+  // Completes login only after the caller has atomically consumed the challenge.
+  const completeLoginAfterChallengeConsumed = async (
     context: Context,
     issuerContext: import("../domain/tenants/types").ResolvedIssuerContext,
     challenge: import("../domain/authorization/types").LoginChallenge,
     userId: string
   ): Promise<Response> => {
-    if (!isLoginChallengeActive(challenge)) {
-      return context.json({ error: "invalid_request" }, 400);
-    }
-
-    const consumed = await loginChallengeLookupRepository.consume(challenge.id, new Date().toISOString());
-    if (!consumed) {
-      return context.json({ error: "invalid_request" }, 400);
-    }
-
     const { session, sessionToken } = await createBrowserSession({
       sessionRepository: browserSessionRepository,
       tenantId: challenge.tenantId,
@@ -1885,6 +1893,34 @@ export const createApp = (options: AppOptions) => {
     return context.json({ redirect_uri: redirectUrl.toString() }, 200);
   };
 
+  // Shared helper called after an MFA verification that has no other
+  // irreversible state to persist before completing login.
+  const handlePostMfaSuccess = async (
+    context: Context,
+    issuerContext: import("../domain/tenants/types").ResolvedIssuerContext,
+    challenge: import("../domain/authorization/types").LoginChallenge,
+    userId: string
+  ): Promise<Response> => {
+    if (!isLoginChallengeActive(challenge)) {
+      return context.json({ error: "invalid_request" }, 400);
+    }
+
+    const consumed = await loginChallengeLookupRepository.consume(
+      challenge.id,
+      new Date().toISOString()
+    );
+    if (!consumed) {
+      return context.json({ error: "invalid_request" }, 400);
+    }
+
+    return completeLoginAfterChallengeConsumed(
+      context,
+      issuerContext,
+      challenge,
+      userId
+    );
+  };
+
   const handleMfaTotpVerify = async (context: Context) => {
     const issuerContext = await resolveLoginIssuerContext(context);
     if (issuerContext === null) return context.notFound();
@@ -1898,15 +1934,12 @@ export const createApp = (options: AppOptions) => {
     const code = (payload.code ?? "").trim();
     if (!token || !code) return context.json({ error: "invalid_request" }, 400);
 
-    const challenge = await loginChallengeLookupRepository.findByTokenHash(
-      await sha256Base64Url(token)
+    const challenge = await findActiveLoginChallengeForTenant(
+      token,
+      issuerContext.tenant.id
     );
 
-    if (
-      challenge === null ||
-      !isLoginChallengeActive(challenge) ||
-      challenge.tenantId !== issuerContext.tenant.id
-    ) {
+    if (challenge === null) {
       return context.json({ error: "invalid_request" }, 400);
     }
     if (challenge.mfaState !== "pending_totp" || challenge.authenticatedUserId === null) {
@@ -1966,15 +1999,12 @@ export const createApp = (options: AppOptions) => {
     const token = (payload.login_challenge ?? "").trim();
     if (!token) return context.json({ error: "invalid_request" }, 400);
 
-    const challenge = await loginChallengeLookupRepository.findByTokenHash(
-      await sha256Base64Url(token)
+    const challenge = await findActiveLoginChallengeForTenant(
+      token,
+      issuerContext.tenant.id
     );
 
-    if (
-      challenge === null ||
-      !isLoginChallengeActive(challenge) ||
-      challenge.tenantId !== issuerContext.tenant.id
-    ) {
+    if (challenge === null) {
       return context.json({ error: "invalid_request" }, 400);
     }
     if (challenge.mfaState !== "pending_passkey_step_up" || challenge.authenticatedUserId === null) {
@@ -2034,15 +2064,12 @@ export const createApp = (options: AppOptions) => {
       return context.json({ error: "invalid_request" }, 400);
     }
 
-    const challenge = await loginChallengeLookupRepository.findByTokenHash(
-      await sha256Base64Url(token)
+    const challenge = await findActiveLoginChallengeForTenant(
+      token,
+      issuerContext.tenant.id
     );
 
-    if (
-      challenge === null ||
-      !isLoginChallengeActive(challenge) ||
-      challenge.tenantId !== issuerContext.tenant.id
-    ) {
+    if (challenge === null) {
       return context.json({ error: "invalid_request" }, 400);
     }
     if (challenge.mfaState !== "pending_passkey_step_up" || challenge.authenticatedUserId === null) {
@@ -2149,15 +2176,12 @@ export const createApp = (options: AppOptions) => {
     const token = (payload.login_challenge ?? "").trim();
     if (!token) return context.json({ error: "invalid_request" }, 400);
 
-    const challenge = await loginChallengeLookupRepository.findByTokenHash(
-      await sha256Base64Url(token)
+    const challenge = await findActiveLoginChallengeForTenant(
+      token,
+      issuerContext.tenant.id
     );
 
-    if (
-      challenge === null ||
-      !isLoginChallengeActive(challenge) ||
-      challenge.tenantId !== issuerContext.tenant.id
-    ) {
+    if (challenge === null) {
       return context.json({ error: "invalid_request" }, 400);
     }
     if (challenge.mfaState !== "pending_enrollment" || challenge.authenticatedUserId === null) {
@@ -2191,15 +2215,12 @@ export const createApp = (options: AppOptions) => {
     const code = (payload.code ?? "").trim();
     if (!token || !code) return context.json({ error: "invalid_request" }, 400);
 
-    const challenge = await loginChallengeLookupRepository.findByTokenHash(
-      await sha256Base64Url(token)
+    const challenge = await findActiveLoginChallengeForTenant(
+      token,
+      issuerContext.tenant.id
     );
 
-    if (
-      challenge === null ||
-      !isLoginChallengeActive(challenge) ||
-      challenge.tenantId !== issuerContext.tenant.id
-    ) {
+    if (challenge === null) {
       return context.json({ error: "invalid_request" }, 400);
     }
     if (
@@ -2229,8 +2250,13 @@ export const createApp = (options: AppOptions) => {
       return context.json({ error: "invalid_code", remaining_attempts: 5 - newCount }, 401);
     }
 
-    // Create TOTP credential
     const now = new Date().toISOString();
+    const consumed = await loginChallengeLookupRepository.consume(challenge.id, now);
+    if (!consumed) {
+      return context.json({ error: "invalid_request" }, 400);
+    }
+
+    // Persist the credential only after the expiry-safe atomic consume succeeds.
     try {
       await totpRepository.create({
         id: crypto.randomUUID(),
@@ -2245,11 +2271,9 @@ export const createApp = (options: AppOptions) => {
         createdAt: now
       });
     } catch (err) {
-      if (isProvisionConflictError(err)) {
-        // Duplicate enrollment — already enrolled, treat as success
-        return context.json({ mfa_enrolled: true }, 200);
-      }
-      throw err;
+      if (!isProvisionConflictError(err)) throw err;
+      // A concurrent request already created the credential; this request owns
+      // the consumed login challenge and can safely continue login.
     }
 
     await loginChallengeLookupRepository.completeEnrollment(challenge.id);
@@ -2259,7 +2283,12 @@ export const createApp = (options: AppOptions) => {
       targetType: "login_challenge", targetId: challenge.id, payload: null
     });
 
-    return handlePostMfaSuccess(context, issuerContext, challenge, challenge.authenticatedUserId);
+    return completeLoginAfterChallengeConsumed(
+      context,
+      issuerContext,
+      challenge,
+      challenge.authenticatedUserId
+    );
   };
 
   const handleMfaSwitchToTotp = async (context: Context) => {
@@ -2274,15 +2303,12 @@ export const createApp = (options: AppOptions) => {
     const token = (payload.login_challenge ?? "").trim();
     if (!token) return context.json({ error: "invalid_request" }, 400);
 
-    const challenge = await loginChallengeLookupRepository.findByTokenHash(
-      await sha256Base64Url(token)
+    const challenge = await findActiveLoginChallengeForTenant(
+      token,
+      issuerContext.tenant.id
     );
 
-    if (
-      challenge === null ||
-      !isLoginChallengeActive(challenge) ||
-      challenge.tenantId !== issuerContext.tenant.id
-    ) {
+    if (challenge === null) {
       return context.json({ error: "invalid_request" }, 400);
     }
     if (challenge.mfaState !== "pending_passkey_step_up") {
@@ -2759,13 +2785,12 @@ export const createApp = (options: AppOptions) => {
       return context.json({ error: "invalid_request" }, 400);
     }
 
-    const tokenHash = await sha256Base64Url(loginChallengeToken);
-    const challenge = await loginChallengeLookupRepository.findByTokenHash(tokenHash);
+    const challenge = await findActiveLoginChallengeForTenant(
+      loginChallengeToken,
+      issuerContext.tenant.id
+    );
 
-    if (challenge === null || !isLoginChallengeActive(challenge)) {
-      return context.json({ error: "invalid_login_challenge" }, 400);
-    }
-    if (challenge.tenantId !== issuerContext.tenant.id) {
+    if (challenge === null) {
       return context.json({ error: "invalid_login_challenge" }, 400);
     }
 

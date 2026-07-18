@@ -692,8 +692,7 @@ class D1LoginChallengeRepository
       .where(
         and(
           eq(loginChallenges.tokenHash, tokenHash),
-          isNull(loginChallenges.consumedAt),
-          sql`${loginChallenges.expiresAt} > ${new Date().toISOString()}`
+          isNull(loginChallenges.consumedAt)
         )
       )
       .limit(1);
