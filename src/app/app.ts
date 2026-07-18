@@ -21,7 +21,9 @@ import type { AuditRepository } from "../domain/audit/repository";
 import { authenticateAdminSession, loginAdmin } from "../domain/admin-auth/service";
 import type { AdminRepository } from "../domain/admin-auth/repository";
 import type { AuthenticationLoginChallengeRepository } from "../domain/authentication/login-challenge-repository";
-import { isLoginChallengeActive } from "../domain/authentication/login-challenge";
+import {
+  findActiveLoginChallengeForTenant as findActiveLoginChallengeForTenantDomain
+} from "../domain/authentication/login-challenge";
 import type { BrowserSessionRepository } from "../domain/authentication/repository";
 import {
   buildBrowserSessionCookie,
@@ -32,7 +34,7 @@ import type {
   AuthorizationCodeRepository,
   LoginChallengeRepository
 } from "../domain/authorization/repository";
-import type { AuthorizeSession, LoginChallenge } from "../domain/authorization/types";
+import type { AuthorizeSession } from "../domain/authorization/types";
 import type { AccessTokenClaimsRepository } from "../domain/clients/access-token-claims-repository";
 import type { RegistrationAccessTokenRepository } from "../domain/clients/registration-access-token-repository";
 import { sha256Base64Url } from "../lib/hash";
@@ -851,23 +853,12 @@ export const createApp = (options: AppOptions) => {
     );
   };
 
-  const findActiveLoginChallengeForTenant = async (
-    token: string,
-    tenantId: string
-  ): Promise<LoginChallenge | null> => {
-    const normalizedToken = token.trim();
-    if (normalizedToken.length === 0) return null;
-
-    const challenge = await loginChallengeLookupRepository.findByTokenHash(
-      await sha256Base64Url(normalizedToken)
-    );
-
-    return challenge !== null &&
-      challenge.tenantId === tenantId &&
-      isLoginChallengeActive(challenge)
-      ? challenge
-      : null;
-  };
+  const findActiveLoginChallengeForTenant = (token: string, tenantId: string) =>
+    findActiveLoginChallengeForTenantDomain({
+      loginChallengeRepository: loginChallengeLookupRepository,
+      tenantId,
+      token
+    });
 
   const handleChallengeInfo = async (context: Context) => {
     const issuerContext = await resolveLoginIssuerContext(context);
@@ -1893,34 +1884,6 @@ export const createApp = (options: AppOptions) => {
     return context.json({ redirect_uri: redirectUrl.toString() }, 200);
   };
 
-  // Shared helper called after an MFA verification that has no other
-  // irreversible state to persist before completing login.
-  const handlePostMfaSuccess = async (
-    context: Context,
-    issuerContext: import("../domain/tenants/types").ResolvedIssuerContext,
-    challenge: import("../domain/authorization/types").LoginChallenge,
-    userId: string
-  ): Promise<Response> => {
-    if (!isLoginChallengeActive(challenge)) {
-      return context.json({ error: "invalid_request" }, 400);
-    }
-
-    const consumed = await loginChallengeLookupRepository.consume(
-      challenge.id,
-      new Date().toISOString()
-    );
-    if (!consumed) {
-      return context.json({ error: "invalid_request" }, 400);
-    }
-
-    return completeLoginAfterChallengeConsumed(
-      context,
-      issuerContext,
-      challenge,
-      userId
-    );
-  };
-
   const handleMfaTotpVerify = async (context: Context) => {
     const issuerContext = await resolveLoginIssuerContext(context);
     if (issuerContext === null) return context.notFound();
@@ -1976,6 +1939,14 @@ export const createApp = (options: AppOptions) => {
       }, 401);
     }
 
+    const consumed = await loginChallengeLookupRepository.consume(
+      challenge.id,
+      new Date().toISOString()
+    );
+    if (!consumed) {
+      return context.json({ error: "invalid_request" }, 400);
+    }
+
     await totpRepository.updateLastUsedWindow(totpCred.id, result.windowIndex);
     await loginChallengeLookupRepository.satisfyMfa(challenge.id);
     await recordAuditEventBestEffort({
@@ -1984,7 +1955,12 @@ export const createApp = (options: AppOptions) => {
       targetType: "login_challenge", targetId: challenge.id, payload: null
     });
 
-    return handlePostMfaSuccess(context, issuerContext, challenge, challenge.authenticatedUserId);
+    return completeLoginAfterChallengeConsumed(
+      context,
+      issuerContext,
+      challenge,
+      challenge.authenticatedUserId
+    );
   };
 
   const handleMfaPasskeyStart = async (context: Context) => {
@@ -2154,6 +2130,14 @@ export const createApp = (options: AppOptions) => {
       return context.json({ error: "passkey_verification_failed", remaining_attempts: 5 - newCount }, 401);
     }
 
+    const consumed = await loginChallengeLookupRepository.consume(
+      challenge.id,
+      new Date().toISOString()
+    );
+    if (!consumed) {
+      return context.json({ error: "invalid_request" }, 400);
+    }
+
     await loginChallengeLookupRepository.satisfyMfa(challenge.id);
     await recordAuditEventBestEffort({
       actorType: "user", actorId: challenge.authenticatedUserId,
@@ -2161,7 +2145,12 @@ export const createApp = (options: AppOptions) => {
       targetType: "login_challenge", targetId: challenge.id, payload: null
     });
 
-    return handlePostMfaSuccess(context, issuerContext, challenge, challenge.authenticatedUserId);
+    return completeLoginAfterChallengeConsumed(
+      context,
+      issuerContext,
+      challenge,
+      challenge.authenticatedUserId
+    );
   };
 
   const handleMfaTotpEnrollStart = async (context: Context) => {
