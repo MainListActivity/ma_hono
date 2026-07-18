@@ -45,6 +45,24 @@ const redirectUriSchema = z.string().superRefine((value, ctx) => {
   }
 });
 
+const initiateLoginUriSchema = z.string().trim().min(1).superRefine((value, ctx) => {
+  try {
+    const url = new URL(value);
+
+    if (url.protocol !== "https:") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "initiate login uri must use https"
+      });
+    }
+  } catch {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "initiate login uri must be a valid absolute url"
+    });
+  }
+});
+
 const httpHeaderNamePattern = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
 
 const claimHookUrlSchema = z.string().trim().min(1).superRefine((value, ctx) => {
@@ -154,6 +172,7 @@ export const adminClientRegistrationSchema = z
       "none"
     ]),
     access_token_audience: z.string().min(1).optional(),
+    initiate_login_uri: initiateLoginUriSchema.optional(),
     claim_hook_url: claimHookUrlSchema.optional(),
     claim_hook_auth_header_name: claimHookHeaderNameSchema.optional(),
     claim_hook_auth_header_value: claimHookHeaderValueSchema.optional(),
@@ -321,6 +340,7 @@ export const adminClientUpdateSchema = z
     grant_types: z.array(z.enum(["authorization_code"])).optional(),
     response_types: z.array(z.enum(["code"])).optional(),
     access_token_audience: z.string().min(1).nullable().optional(),
+    initiate_login_uri: initiateLoginUriSchema.nullable().optional(),
     claim_hook_url: claimHookUrlSchema.nullable().optional(),
     claim_hook_auth_header_name: claimHookHeaderNameSchema.nullable().optional(),
     claim_hook_auth_header_value: claimHookHeaderValueSchema.nullable().optional(),

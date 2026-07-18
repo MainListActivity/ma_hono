@@ -62,6 +62,7 @@ export const oidcClients = sqliteTable(
     consentPolicy: text("consent_policy").notNull().default("skip"),
     clientProfile: text("client_profile").notNull().default("web"),
     accessTokenAudience: text("access_token_audience"),
+    initiateLoginUri: text("initiate_login_uri"),
     claimHookUrl: text("claim_hook_url"),
     claimHookAuthHeaderName: text("claim_hook_auth_header_name"),
     claimHookAuthHeaderValue: text("claim_hook_auth_header_value"),

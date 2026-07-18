@@ -4,6 +4,7 @@ import type { LoginChallenge } from "../../../domain/authorization/types";
 import type { User } from "../../../domain/users/types";
 import { verifyPassword } from "../../../domain/users/passwords";
 import { sha256Base64Url } from "../../../lib/hash";
+import { isLoginChallengeActive } from "../../../domain/authentication/login-challenge";
 
 export type PasswordLoginFailureReason =
   | "invalid_credentials"
@@ -62,7 +63,7 @@ export const authenticateWithPassword = async ({
     challenge === null ||
     challenge.issuer !== issuer ||
     challenge.tenantId !== tenantId ||
-    new Date(challenge.expiresAt).getTime() <= now.getTime()
+    !isLoginChallengeActive(challenge, now)
   ) {
     return {
       kind: "rejected",

@@ -204,6 +204,23 @@ describe("GET /login/:tenant/challenge-info", () => {
     await expect(res.json()).resolves.toMatchObject({ error: "invalid_login_challenge" });
   });
 
+  it("returns 400 when login_challenge is expired", async () => {
+    const token = "challenge-expired";
+    const challenge = await buildChallenge(token);
+    challenge.expiresAt = new Date(Date.now() - 1_000).toISOString();
+    const app = makeApp(
+      new TestLoginChallengeRepository([challenge]),
+      new MemoryClientAuthMethodPolicyRepository()
+    );
+
+    const res = await app.request(
+      `https://auth.example.test/login/acme/challenge-info?login_challenge=${token}`
+    );
+
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toMatchObject({ error: "invalid_login_challenge" });
+  });
+
   it("returns 404 when tenant slug is unknown", async () => {
     const token = "challenge-unknown-tenant";
     const challengeRepo = new TestLoginChallengeRepository([

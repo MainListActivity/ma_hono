@@ -151,6 +151,7 @@ export interface ClientSummary {
   application_type: "web" | "native";
   client_profile: "spa" | "web" | "native" | "db";
   access_token_audience: string | null;
+  initiate_login_uri: string | null;
   claim_hook_url: string | null;
   claim_hook_auth_header_name: string | null;
   claim_hook_auth_header_value: string | null;
@@ -269,6 +270,7 @@ export const createClient = async (
     grant_types: string[];
     response_types: string[];
     access_token_audience?: string;
+    initiate_login_uri?: string;
     claim_hook_url?: string;
     claim_hook_auth_header_name?: string;
     claim_hook_auth_header_value?: string;
@@ -327,6 +329,7 @@ export const updateClient = async (
     response_types?: string[];
     token_endpoint_auth_method?: string;
     access_token_audience?: string | null;
+    initiate_login_uri?: string | null;
     claim_hook_url?: string | null;
     claim_hook_auth_header_name?: string | null;
     claim_hook_auth_header_value?: string | null;

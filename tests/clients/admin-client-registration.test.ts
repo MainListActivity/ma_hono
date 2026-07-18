@@ -19,6 +19,24 @@ describe("Admin Client Registration Schema", () => {
     expect(result.success).toBe(true);
   });
 
+  it("accepts an HTTPS initiate_login_uri", () => {
+    const result = adminClientRegistrationSchema.safeParse({
+      ...baseSpa,
+      initiate_login_uri: "https://app.example.com/login"
+    });
+
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects a non-HTTPS initiate_login_uri", () => {
+    const result = adminClientRegistrationSchema.safeParse({
+      ...baseSpa,
+      initiate_login_uri: "http://app.example.com/login"
+    });
+
+    expect(result.success).toBe(false);
+  });
+
   it("rejects SPA without audience", () => {
     const result = adminClientRegistrationSchema.safeParse({
       ...baseSpa,

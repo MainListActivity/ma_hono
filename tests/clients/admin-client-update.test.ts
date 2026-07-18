@@ -62,6 +62,51 @@ const loginAsAdmin = async (app: ReturnType<typeof makeApp>["app"]) => {
 };
 
 describe("PATCH /admin/tenants/:tenantId/clients/:clientId", () => {
+  it("updates and returns the initiate login URI", async () => {
+    const { app, clientRepository } = makeApp();
+    const token = await loginAsAdmin(app);
+
+    await clientRepository.create({
+      id: "client_web_login",
+      tenantId: "tenant_acme",
+      clientId: "web-client-login",
+      clientName: "Web Client",
+      applicationType: "web",
+      grantTypes: ["authorization_code"],
+      redirectUris: ["https://app.example.test/callback"],
+      responseTypes: ["code"],
+      tokenEndpointAuthMethod: "client_secret_basic",
+      clientSecretHash: await sha256Base64Url("secret"),
+      trustLevel: "first_party_trusted",
+      consentPolicy: "skip",
+      clientProfile: "web",
+      accessTokenAudience: null,
+      initiateLoginUri: null
+    });
+
+    const response = await app.request(
+      "https://idp.example.test/admin/tenants/tenant_acme/clients/web-client-login",
+      {
+        method: "PATCH",
+        headers: {
+          authorization: `Bearer ${token}`,
+          "content-type": "application/json"
+        },
+        body: JSON.stringify({
+          initiate_login_uri: "https://app.example.test/login"
+        })
+      }
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      initiate_login_uri: "https://app.example.test/login"
+    });
+    await expect(clientRepository.findByClientId("web-client-login")).resolves.toMatchObject({
+      initiateLoginUri: "https://app.example.test/login"
+    });
+  });
+
   it("generates and stores a secret when a SPA client becomes a web client", async () => {
     const { app, clientRepository } = makeApp();
     const token = await loginAsAdmin(app);

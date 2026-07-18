@@ -2,6 +2,7 @@ import type { LoginChallenge } from "../authorization/types";
 
 export interface AuthenticationLoginChallengeRepository {
   consume(challengeId: string, consumedAt: string): Promise<boolean>;
+  /** Returns only an unconsumed challenge. Callers must still enforce expiresAt. */
   findByTokenHash(tokenHash: string): Promise<LoginChallenge | null>;
   /** Set authenticated_user_id and mfa_state after first-factor success */
   setMfaState(

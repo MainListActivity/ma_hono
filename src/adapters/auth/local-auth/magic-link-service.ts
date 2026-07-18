@@ -4,6 +4,7 @@ import type { LoginChallenge } from "../../../domain/authorization/types";
 import type { User } from "../../../domain/users/types";
 import type { UserRepository } from "../../../domain/users/repository";
 import { sha256Base64Url } from "../../../lib/hash";
+import { isLoginChallengeActive } from "../../../domain/authentication/login-challenge";
 
 export type MagicLinkRequestResult =
   | {
@@ -61,7 +62,7 @@ export const requestMagicLink = async ({
     challenge === null ||
     challenge.issuer !== issuer ||
     challenge.tenantId !== tenantId ||
-    new Date(challenge.expiresAt).getTime() <= now.getTime()
+    !isLoginChallengeActive(challenge, now)
   ) {
     return { kind: "rejected", reason: "invalid_login_challenge" };
   }
@@ -124,7 +125,7 @@ export const consumeMagicLink = async ({
     magicLinkRecord.loginChallengeTokenHash
   );
 
-  if (challenge === null) {
+  if (challenge === null || !isLoginChallengeActive(challenge, now)) {
     return { kind: "rejected", reason: "invalid_or_expired_token" };
   }
 

@@ -51,6 +51,7 @@ export const registerClient = async ({
     consentPolicy: payload.consent_policy,
     clientProfile: "web",
     accessTokenAudience: null,
+    initiateLoginUri: null,
     claimHookUrl: null,
     claimHookAuthHeaderName: null,
     claimHookAuthHeaderValue: null
@@ -111,6 +112,7 @@ export const registerClientFromAdmin = async ({
     consentPolicy: payload.consent_policy,
     clientProfile: payload.client_profile,
     accessTokenAudience: payload.access_token_audience ?? null,
+    initiateLoginUri: payload.initiate_login_uri ?? null,
     claimHookUrl: payload.claim_hook_url ?? null,
     claimHookAuthHeaderName: payload.claim_hook_auth_header_name ?? null,
     claimHookAuthHeaderValue: payload.claim_hook_auth_header_value ?? null

@@ -439,6 +439,7 @@ class D1ClientRepository implements ClientRepository {
       consentPolicy: row.consentPolicy as Client["consentPolicy"],
       clientProfile: row.clientProfile as Client["clientProfile"],
       accessTokenAudience: row.accessTokenAudience,
+      initiateLoginUri: row.initiateLoginUri,
       claimHookUrl: row.claimHookUrl,
       claimHookAuthHeaderName: row.claimHookAuthHeaderName,
       claimHookAuthHeaderValue: row.claimHookAuthHeaderValue
@@ -459,6 +460,7 @@ class D1ClientRepository implements ClientRepository {
       consentPolicy: client.consentPolicy,
       clientProfile: client.clientProfile,
       accessTokenAudience: client.accessTokenAudience,
+      initiateLoginUri: client.initiateLoginUri ?? null,
       claimHookUrl: client.claimHookUrl ?? null,
       claimHookAuthHeaderName: client.claimHookAuthHeaderName ?? null,
       claimHookAuthHeaderValue: client.claimHookAuthHeaderValue ?? null,
@@ -486,6 +488,7 @@ class D1ClientRepository implements ClientRepository {
         grantTypes: client.grantTypes,
         responseTypes: client.responseTypes,
         accessTokenAudience: client.accessTokenAudience,
+        initiateLoginUri: client.initiateLoginUri ?? null,
         claimHookUrl: client.claimHookUrl ?? null,
         claimHookAuthHeaderName: client.claimHookAuthHeaderName ?? null,
         claimHookAuthHeaderValue: client.claimHookAuthHeaderValue ?? null,
@@ -671,7 +674,8 @@ class D1LoginChallengeRepository
       .where(
         and(
           eq(loginChallenges.id, challengeId),
-          isNull(loginChallenges.consumedAt)
+          isNull(loginChallenges.consumedAt),
+          sql`${loginChallenges.expiresAt} > ${consumedAt}`
         )
       )
       .returning({
@@ -688,7 +692,8 @@ class D1LoginChallengeRepository
       .where(
         and(
           eq(loginChallenges.tokenHash, tokenHash),
-          isNull(loginChallenges.consumedAt)
+          isNull(loginChallenges.consumedAt),
+          sql`${loginChallenges.expiresAt} > ${new Date().toISOString()}`
         )
       )
       .limit(1);

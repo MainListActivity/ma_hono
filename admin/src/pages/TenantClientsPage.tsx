@@ -369,6 +369,7 @@ export default function TenantClientsPage() {
   const [redirectUris, setRedirectUris] = useState('');
   const [authMethod, setAuthMethod] = useState('client_secret_basic');
   const [accessTokenAudience, setAccessTokenAudience] = useState('');
+  const [initiateLoginUri, setInitiateLoginUri] = useState('');
   const [claimHookUrl, setClaimHookUrl] = useState('');
   const [claimHookAuthHeaderName, setClaimHookAuthHeaderName] = useState('');
   const [claimHookAuthHeaderValue, setClaimHookAuthHeaderValue] = useState('');
@@ -390,6 +391,7 @@ export default function TenantClientsPage() {
   const [editRedirectUris, setEditRedirectUris] = useState('');
   const [editAuthMethod, setEditAuthMethod] = useState('');
   const [editAudience, setEditAudience] = useState('');
+  const [editInitiateLoginUri, setEditInitiateLoginUri] = useState('');
   const [editClaimHookUrl, setEditClaimHookUrl] = useState('');
   const [editClaimHookAuthHeaderName, setEditClaimHookAuthHeaderName] = useState('');
   const [editClaimHookAuthHeaderValue, setEditClaimHookAuthHeaderValue] = useState('');
@@ -422,6 +424,7 @@ export default function TenantClientsPage() {
     setRedirectUris('');
     setAuthMethod('client_secret_basic');
     setAccessTokenAudience('');
+    setInitiateLoginUri('');
     setClaimHookUrl('');
     setClaimHookAuthHeaderName('');
     setClaimHookAuthHeaderValue('');
@@ -454,6 +457,7 @@ export default function TenantClientsPage() {
     setFormError(null);
     const uris = redirectUris.split('\n').map(u => u.trim()).filter(Boolean);
     const trimmedAudience = accessTokenAudience.trim();
+    const trimmedInitiateLoginUri = initiateLoginUri.trim();
 
     if (!clientName.trim() || (clientProfile !== 'db' && uris.length === 0)) {
       setFormError("CLIENT NAME AND AT LEAST ONE REDIRECT URI REQUIRED");
@@ -506,6 +510,9 @@ export default function TenantClientsPage() {
         grant_types: clientProfile === 'db' ? [] : ['authorization_code'],
         response_types: clientProfile === 'db' ? [] : ['code'],
         ...(trimmedAudience ? { access_token_audience: trimmedAudience } : {}),
+        ...(trimmedInitiateLoginUri
+          ? { initiate_login_uri: trimmedInitiateLoginUri }
+          : {}),
         ...(claimHookUrl.trim()
           ? { claim_hook_url: claimHookUrl.trim() }
           : {}),
@@ -569,6 +576,7 @@ export default function TenantClientsPage() {
     setEditRedirectUris(c.redirect_uris.join('\n'));
     setEditAuthMethod(c.token_endpoint_auth_method);
     setEditAudience(c.access_token_audience ?? '');
+    setEditInitiateLoginUri(c.initiate_login_uri ?? '');
     setEditClaimHookUrl(c.claim_hook_url ?? '');
     setEditClaimHookAuthHeaderName(c.claim_hook_auth_header_name ?? '');
     setEditClaimHookAuthHeaderValue('');
@@ -576,6 +584,7 @@ export default function TenantClientsPage() {
     setEditSubmitting(false);
     try {
       const detail = await getClient(token!, tenantId!, c.client_id);
+      setEditInitiateLoginUri(detail.initiate_login_uri ?? '');
       setEditClaimHookUrl(detail.claim_hook_url ?? '');
       setEditClaimHookAuthHeaderName(detail.claim_hook_auth_header_name ?? '');
       setEditClaimHookAuthHeaderValue('');
@@ -601,6 +610,7 @@ export default function TenantClientsPage() {
 
     const uris = editRedirectUris.split('\n').map(u => u.trim()).filter(Boolean);
     const trimmedAudience = editAudience.trim();
+    const trimmedInitiateLoginUri = editInitiateLoginUri.trim();
 
     if (!editName.trim() || (editProfile !== 'db' && uris.length === 0)) {
       setEditError("CLIENT NAME AND AT LEAST ONE REDIRECT URI REQUIRED");
@@ -659,6 +669,7 @@ export default function TenantClientsPage() {
         response_types: editProfile === 'db' ? [] : ['code'],
         token_endpoint_auth_method: editEffectiveAuth,
         access_token_audience: trimmedAudience || null,
+        initiate_login_uri: trimmedInitiateLoginUri || null,
         claim_hook_url: editClaimHookUrl.trim() || null,
         claim_hook_auth_header_name: trimmedHookHeaderName || null,
         ...(trimmedHookHeaderName.length === 0
@@ -982,6 +993,23 @@ export default function TenantClientsPage() {
                 onFocus={e => (e.target.style.borderColor = 'var(--accent-cyan)')}
                 onBlur={e => (e.target.style.borderColor = 'var(--border)')}
               />
+            </div>
+
+            <div style={{ marginBottom: '20px' }}>
+              <label style={labelStyle}>INITIATE LOGIN URI</label>
+              <input
+                type="url"
+                value={initiateLoginUri}
+                onChange={e => setInitiateLoginUri(e.target.value)}
+                placeholder="https://myapp.example.com/login"
+                disabled={clientProfile === 'db'}
+                style={{ ...inputStyle, cursor: clientProfile === 'db' ? 'not-allowed' : 'text', opacity: clientProfile === 'db' ? 0.7 : 1 }}
+                onFocus={e => (e.target.style.borderColor = 'var(--accent-cyan)')}
+                onBlur={e => (e.target.style.borderColor = 'var(--border)')}
+              />
+              <div style={{ marginTop: '6px', fontSize: '11px', color: 'var(--text-muted)' }}>
+                HTTPS endpoint where this IdP can send users to restart login after a session expires.
+              </div>
             </div>
 
             <div style={{ marginBottom: '20px', padding: '14px', border: '1px solid var(--border)', background: 'var(--bg-surface)' }}>
@@ -1332,6 +1360,23 @@ export default function TenantClientsPage() {
                 onFocus={e => (e.target.style.borderColor = 'var(--accent-cyan)')}
                 onBlur={e => (e.target.style.borderColor = 'var(--border)')}
               />
+            </div>
+
+            <div style={{ marginBottom: '20px' }}>
+              <label style={labelStyle}>INITIATE LOGIN URI</label>
+              <input
+                type="url"
+                value={editInitiateLoginUri}
+                onChange={e => setEditInitiateLoginUri(e.target.value)}
+                placeholder="https://myapp.example.com/login"
+                disabled={editProfile === 'db'}
+                style={{ ...inputStyle, cursor: editProfile === 'db' ? 'not-allowed' : 'text', opacity: editProfile === 'db' ? 0.7 : 1 }}
+                onFocus={e => (e.target.style.borderColor = 'var(--accent-cyan)')}
+                onBlur={e => (e.target.style.borderColor = 'var(--border)')}
+              />
+              <div style={{ marginTop: '6px', fontSize: '11px', color: 'var(--text-muted)' }}>
+                HTTPS endpoint where this IdP can send users to restart login after a session expires.
+              </div>
             </div>
 
             <div style={{ marginBottom: '20px', padding: '14px', border: '1px solid var(--border)', background: 'var(--bg-surface)' }}>

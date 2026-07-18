@@ -6,6 +6,7 @@ import type { LoginChallenge } from "../../../domain/authorization/types";
 import type { User } from "../../../domain/users/types";
 import type { UserRepository } from "../../../domain/users/repository";
 import { sha256Base64Url } from "../../../lib/hash";
+import { isLoginChallengeActive } from "../../../domain/authentication/login-challenge";
 
 export type PasskeyEnrollStartResult =
   | {
@@ -175,7 +176,7 @@ export const startPasskeyLogin = async ({
     loginChallenge === null ||
     loginChallenge.issuer !== issuer ||
     loginChallenge.tenantId !== tenantId ||
-    new Date(loginChallenge.expiresAt).getTime() <= now.getTime()
+    !isLoginChallengeActive(loginChallenge, now)
   ) {
     return { kind: "rejected", reason: "invalid_login_challenge" };
   }
@@ -243,7 +244,7 @@ export const finishPasskeyLogin = async ({
     assertionSession.loginChallengeTokenHash
   );
 
-  if (loginChallenge === null) {
+  if (loginChallenge === null || !isLoginChallengeActive(loginChallenge, now)) {
     await recordLoginFailure(assertionSession.id, passkeyRepository, now);
     return { kind: "rejected", reason: "invalid_credentials" };
   }

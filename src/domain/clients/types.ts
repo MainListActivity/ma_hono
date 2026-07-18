@@ -62,6 +62,7 @@ export interface Client {
   consentPolicy: ClientConsentPolicy;
   clientProfile: ClientProfile;
   accessTokenAudience: string | null;
+  initiateLoginUri?: string | null;
   claimHookUrl?: string | null;
   claimHookAuthHeaderName?: string | null;
   claimHookAuthHeaderValue?: string | null;

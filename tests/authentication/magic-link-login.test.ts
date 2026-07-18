@@ -307,6 +307,63 @@ describe("magic link login", () => {
     );
   });
 
+  it("rejects a magic link when its login challenge expired after issuance", async () => {
+    const loginChallengeToken = "challenge-expires-after-magic-link-issued";
+    const challenge = await buildChallenge({ token: loginChallengeToken });
+    const loginChallengeRepository = new TestLoginChallengeRepository([challenge]);
+    const magicLinkRepository = new MemoryMagicLinkRepository();
+    const authorizationCodeRepository = new MemoryAuthorizationCodeRepository();
+    const sessionRepository = new MemoryUserSessionRepository();
+    const app = createApp({
+      auditRepository: new MemoryAuditRepository(),
+      authorizationCodeRepository,
+      browserSessionRepository: sessionRepository,
+      clientRepository: new MemoryClientRepository(clients),
+      loginChallengeLookupRepository: loginChallengeRepository,
+      loginChallengeRepository,
+      magicLinkRepository,
+      adminBootstrapPasswordHash: "",
+      adminWhitelist: [],
+      managementApiToken: "",
+      oidcHost: "idp.example.test", authDomain: "auth.example.test",
+      tenantRepository,
+      totpRepository: new MemoryTotpRepository(),
+      mfaPasskeyChallengeRepository: new MemoryMfaPasskeyChallengeRepository(),
+      totpEncryptionKey: new Uint8Array(32).fill(7),
+      userRepository: buildUserRepository()
+    });
+
+    const requestResponse = await app.request(
+      "https://idp.example.test/login/acme/magic-link/request",
+      {
+        body: new URLSearchParams({
+          email: "alice@acme.test",
+          login_challenge: loginChallengeToken
+        }),
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        method: "POST"
+      }
+    );
+    expect(requestResponse.status).toBe(200);
+    const { magic_link_token: magicLinkToken } = await requestResponse.json() as {
+      magic_link_token: string;
+    };
+    challenge.expiresAt = new Date(Date.now() - 1_000).toISOString();
+
+    const consumeResponse = await app.request(
+      "https://idp.example.test/login/acme/magic-link/consume",
+      {
+        body: new URLSearchParams({ token: magicLinkToken }),
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        method: "POST"
+      }
+    );
+
+    expect(consumeResponse.status).toBe(400);
+    expect(sessionRepository.listSessions()).toHaveLength(0);
+    expect(authorizationCodeRepository.listAuthorizationCodes()).toHaveLength(0);
+  });
+
   it("expired or previously consumed magic link is rejected", async () => {
     const loginChallengeToken = "challenge-magic-link-expired";
     const loginChallengeRepository = new TestLoginChallengeRepository([

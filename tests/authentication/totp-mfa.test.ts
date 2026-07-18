@@ -434,6 +434,27 @@ describe("MFA — TOTP verify endpoint", () => {
     const body = await res.json() as { error: string };
     expect(body.error).toBe("replay");
   });
+
+  it("rejects a valid TOTP code when the login challenge is expired", async () => {
+    const rawSecret = generateTotpSecret();
+    const secretEncrypted = await encryptTotpSecret(rawSecret, TEST_TOTP_KEY);
+    const { app, challenge, token } = await makeMfaApp({
+      mfaState: "pending_totp",
+      totpCredOverride: { secretEncrypted, lastUsedWindow: 0 }
+    });
+    challenge.expiresAt = new Date(Date.now() - 1_000).toISOString();
+    const windowIndex = Math.floor(Date.now() / 1000 / 30);
+    const code = await generateTotpCode(rawSecret, windowIndex);
+
+    const res = await app.request(
+      "https://idp.example.test/api/login/acme/mfa/totp/verify",
+      { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ login_challenge: token, code }) }
+    );
+
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toEqual({ error: "invalid_request" });
+  });
 });
 
 describe("MFA — switch-to-totp endpoint", () => {

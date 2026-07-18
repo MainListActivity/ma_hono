@@ -21,6 +21,7 @@ import type { AuditRepository } from "../domain/audit/repository";
 import { authenticateAdminSession, loginAdmin } from "../domain/admin-auth/service";
 import type { AdminRepository } from "../domain/admin-auth/repository";
 import type { AuthenticationLoginChallengeRepository } from "../domain/authentication/login-challenge-repository";
+import { isLoginChallengeActive } from "../domain/authentication/login-challenge";
 import type { BrowserSessionRepository } from "../domain/authentication/repository";
 import {
   buildBrowserSessionCookie,
@@ -866,7 +867,7 @@ export const createApp = (options: AppOptions) => {
     const tokenHash = await sha256Base64Url(loginChallengeToken);
     const challenge = await loginChallengeLookupRepository.findByTokenHash(tokenHash);
 
-    if (challenge === null) {
+    if (challenge === null || !isLoginChallengeActive(challenge)) {
       return context.json({ error: "invalid_login_challenge" }, 400);
     }
 
@@ -1772,6 +1773,10 @@ export const createApp = (options: AppOptions) => {
     challenge: import("../domain/authorization/types").LoginChallenge,
     userId: string
   ): Promise<Response> => {
+    if (!isLoginChallengeActive(challenge)) {
+      return context.json({ error: "invalid_request" }, 400);
+    }
+
     const consumed = await loginChallengeLookupRepository.consume(challenge.id, new Date().toISOString());
     if (!consumed) {
       return context.json({ error: "invalid_request" }, 400);
@@ -1897,7 +1902,11 @@ export const createApp = (options: AppOptions) => {
       await sha256Base64Url(token)
     );
 
-    if (challenge === null || challenge.tenantId !== issuerContext.tenant.id) {
+    if (
+      challenge === null ||
+      !isLoginChallengeActive(challenge) ||
+      challenge.tenantId !== issuerContext.tenant.id
+    ) {
       return context.json({ error: "invalid_request" }, 400);
     }
     if (challenge.mfaState !== "pending_totp" || challenge.authenticatedUserId === null) {
@@ -1961,7 +1970,11 @@ export const createApp = (options: AppOptions) => {
       await sha256Base64Url(token)
     );
 
-    if (challenge === null || challenge.tenantId !== issuerContext.tenant.id) {
+    if (
+      challenge === null ||
+      !isLoginChallengeActive(challenge) ||
+      challenge.tenantId !== issuerContext.tenant.id
+    ) {
       return context.json({ error: "invalid_request" }, 400);
     }
     if (challenge.mfaState !== "pending_passkey_step_up" || challenge.authenticatedUserId === null) {
@@ -1983,7 +1996,7 @@ export const createApp = (options: AppOptions) => {
       tenantId: challenge.tenantId,
       loginChallengeId: challenge.id,
       challengeHash,
-      expiresAt: new Date(now.getTime() + 5 * 60 * 1000).toISOString(),
+      expiresAt: challenge.expiresAt,
       consumedAt: null,
       createdAt: now.toISOString()
     });
@@ -2025,7 +2038,11 @@ export const createApp = (options: AppOptions) => {
       await sha256Base64Url(token)
     );
 
-    if (challenge === null || challenge.tenantId !== issuerContext.tenant.id) {
+    if (
+      challenge === null ||
+      !isLoginChallengeActive(challenge) ||
+      challenge.tenantId !== issuerContext.tenant.id
+    ) {
       return context.json({ error: "invalid_request" }, 400);
     }
     if (challenge.mfaState !== "pending_passkey_step_up" || challenge.authenticatedUserId === null) {
@@ -2136,7 +2153,11 @@ export const createApp = (options: AppOptions) => {
       await sha256Base64Url(token)
     );
 
-    if (challenge === null || challenge.tenantId !== issuerContext.tenant.id) {
+    if (
+      challenge === null ||
+      !isLoginChallengeActive(challenge) ||
+      challenge.tenantId !== issuerContext.tenant.id
+    ) {
       return context.json({ error: "invalid_request" }, 400);
     }
     if (challenge.mfaState !== "pending_enrollment" || challenge.authenticatedUserId === null) {
@@ -2174,7 +2195,11 @@ export const createApp = (options: AppOptions) => {
       await sha256Base64Url(token)
     );
 
-    if (challenge === null || challenge.tenantId !== issuerContext.tenant.id) {
+    if (
+      challenge === null ||
+      !isLoginChallengeActive(challenge) ||
+      challenge.tenantId !== issuerContext.tenant.id
+    ) {
       return context.json({ error: "invalid_request" }, 400);
     }
     if (
@@ -2253,7 +2278,11 @@ export const createApp = (options: AppOptions) => {
       await sha256Base64Url(token)
     );
 
-    if (challenge === null || challenge.tenantId !== issuerContext.tenant.id) {
+    if (
+      challenge === null ||
+      !isLoginChallengeActive(challenge) ||
+      challenge.tenantId !== issuerContext.tenant.id
+    ) {
       return context.json({ error: "invalid_request" }, 400);
     }
     if (challenge.mfaState !== "pending_passkey_step_up") {
@@ -2733,7 +2762,7 @@ export const createApp = (options: AppOptions) => {
     const tokenHash = await sha256Base64Url(loginChallengeToken);
     const challenge = await loginChallengeLookupRepository.findByTokenHash(tokenHash);
 
-    if (challenge === null || challenge.consumedAt !== null) {
+    if (challenge === null || !isLoginChallengeActive(challenge)) {
       return context.json({ error: "invalid_login_challenge" }, 400);
     }
     if (challenge.tenantId !== issuerContext.tenant.id) {
@@ -3338,6 +3367,7 @@ export const createApp = (options: AppOptions) => {
         application_type: c.applicationType,
         client_profile: c.clientProfile,
         access_token_audience: c.accessTokenAudience,
+        initiate_login_uri: c.initiateLoginUri ?? null,
         claim_hook_url: c.claimHookUrl ?? null,
         claim_hook_auth_header_name: c.claimHookAuthHeaderName ?? null,
         claim_hook_auth_header_value: null,
@@ -3384,6 +3414,7 @@ export const createApp = (options: AppOptions) => {
       application_type: client.applicationType,
       client_profile: client.clientProfile,
       access_token_audience: client.accessTokenAudience,
+      initiate_login_uri: client.initiateLoginUri ?? null,
       claim_hook_url: client.claimHookUrl ?? null,
       claim_hook_auth_header_name: client.claimHookAuthHeaderName ?? null,
       claim_hook_auth_header_value: null,
@@ -3590,6 +3621,7 @@ export const createApp = (options: AppOptions) => {
             client_name: result.client.clientName,
             client_profile: result.client.clientProfile,
             access_token_audience: result.client.accessTokenAudience,
+            initiate_login_uri: result.client.initiateLoginUri ?? null,
             claim_hook_url: result.client.claimHookUrl ?? null,
             claim_hook_auth_header_name: result.client.claimHookAuthHeaderName ?? null
           },
@@ -3616,6 +3648,7 @@ export const createApp = (options: AppOptions) => {
           consent_policy: result.client.consentPolicy,
           client_profile: result.client.clientProfile,
           access_token_audience: result.client.accessTokenAudience,
+          initiate_login_uri: result.client.initiateLoginUri ?? null,
           claim_hook_url: result.client.claimHookUrl ?? null,
           claim_hook_auth_header_name: result.client.claimHookAuthHeaderName ?? null,
           claim_hook_auth_header_value: null
@@ -3756,6 +3789,9 @@ export const createApp = (options: AppOptions) => {
       if (parsed.access_token_audience !== undefined) {
         updated.accessTokenAudience = parsed.access_token_audience;
       }
+      if (parsed.initiate_login_uri !== undefined) {
+        updated.initiateLoginUri = parsed.initiate_login_uri;
+      }
       if (parsed.claim_hook_url !== undefined) updated.claimHookUrl = parsed.claim_hook_url;
       if (parsed.claim_hook_auth_header_name !== undefined) {
         updated.claimHookAuthHeaderName = parsed.claim_hook_auth_header_name;
@@ -3860,6 +3896,7 @@ export const createApp = (options: AppOptions) => {
         application_type: updated.applicationType,
         client_profile: updated.clientProfile,
         access_token_audience: updated.accessTokenAudience,
+        initiate_login_uri: updated.initiateLoginUri ?? null,
         claim_hook_url: updated.claimHookUrl ?? null,
         claim_hook_auth_header_name: updated.claimHookAuthHeaderName ?? null,
         claim_hook_auth_header_value: null,
