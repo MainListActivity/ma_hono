@@ -30,6 +30,7 @@ import {
   PasskeyIcon,
   UserIcon
 } from "../components/auth/icons";
+import { useDocumentTitle } from "../hooks/useDocumentTitle";
 
 type MfaState = "pending_totp" | "pending_passkey_step_up" | "pending_enrollment";
 
@@ -736,20 +737,34 @@ export default function TenantLoginPage() {
   } | null>(null);
 
   useEffect(() => {
+    let ignore = false;
+
+    setInfo(null);
+    setActiveMethod(null);
+    setLoadError(null);
+
     if (!tenantSlug || !loginChallenge) {
       setLoadError("没有有效的登录会话，请返回应用后重试。");
       return;
     }
     getChallengeInfo(tenantSlug, loginChallenge).then(data => {
+      if (ignore) return;
       setInfo(data);
       if (data.methods.length > 0) setActiveMethod(data.methods[0].method);
     }).catch(() => {
+      if (ignore) return;
       setLoadError("此登录会话已过期或无效，请返回应用后重试。");
     });
+
+    return () => {
+      ignore = true;
+    };
   }, [tenantSlug, loginChallenge]);
 
-  const tenantName = info?.tenant_display_name ?? tenantSlug ?? "Workspace";
+  const tenantName = info?.tenant_display_name ?? "Workspace";
   const tenantInitial = tenantName.trim().charAt(0) || "·";
+
+  useDocumentTitle(info ? `登录到 ${info.tenant_display_name}` : undefined);
 
   return (
     <AuthShell>

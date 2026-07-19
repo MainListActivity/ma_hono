@@ -3,6 +3,7 @@ import { useNavigate } from "react-router";
 import { createTenant, updateTenant, deleteTenant, listTenants, rotateTenantKey, type TenantSummary } from "../api/client";
 import { useAuth } from "../App";
 import Modal from "../components/Modal";
+import { useDocumentTitle } from "../hooks/useDocumentTitle";
 
 const inputStyle: React.CSSProperties = {
   width: '100%',
@@ -28,6 +29,8 @@ const labelStyle: React.CSSProperties = {
 };
 
 export default function TenantsPage() {
+  useDocumentTitle("租户管理");
+
   const { token } = useAuth();
   const navigate = useNavigate();
   const [tenants, setTenants] = useState<TenantSummary[]>([]);

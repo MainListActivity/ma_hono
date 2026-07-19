@@ -4,8 +4,11 @@ import { login } from "../api/client";
 import { useAuth } from "../App";
 import { AuthShell, BrandPanel, FieldLabel, fieldWrapStyle, iconSpanStyle, inputStyle, primaryButtonStyle } from "../components/auth/AuthShell";
 import { LockIcon, MailIcon } from "../components/auth/icons";
+import { useDocumentTitle } from "../hooks/useDocumentTitle";
 
 export default function LoginPage() {
+  useDocumentTitle("管理员登录");
+
   const { setToken } = useAuth();
   const navigate = useNavigate();
   const [email, setEmail] = useState("");

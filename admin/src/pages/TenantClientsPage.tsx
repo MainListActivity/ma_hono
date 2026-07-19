@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams, useNavigate } from "react-router";
 import {
   getTenant,
@@ -16,6 +16,7 @@ import {
 import { useAuth } from "../App";
 import Modal from "../components/Modal";
 import AgentContextModal from "../components/AgentContextModal";
+import { useDocumentTitle } from "../hooks/useDocumentTitle";
 
 const inputStyle: React.CSSProperties = {
   width: '100%',
@@ -408,6 +409,10 @@ export default function TenantClientsPage() {
   const [resettingClientId, setResettingClientId] = useState<string | null>(null);
   const [confirmReset, setConfirmReset] = useState<ClientSummary | null>(null);
   const [resetError, setResetError] = useState<string | null>(null);
+  const loadRequestId = useRef(0);
+
+  const currentTenant = tenant?.id === tenantId ? tenant : null;
+  useDocumentTitle(currentTenant ? `${currentTenant.display_name} · 客户端管理` : undefined);
 
   const derivedApplicationType: "web" | "native" =
     clientProfile === "native" ? "native" : "web";
@@ -434,6 +439,7 @@ export default function TenantClientsPage() {
 
   const load = async () => {
     if (!token || !tenantId) return;
+    const requestId = ++loadRequestId.current;
     setLoading(true);
     setLoadError(null);
     try {
@@ -441,12 +447,14 @@ export default function TenantClientsPage() {
         getTenant(token, tenantId),
         listClients(token, tenantId)
       ]);
+      if (requestId !== loadRequestId.current) return;
       setTenant(t);
       setClients(c.clients);
     } catch {
+      if (requestId !== loadRequestId.current) return;
       setLoadError("FAILED TO LOAD");
     } finally {
-      setLoading(false);
+      if (requestId === loadRequestId.current) setLoading(false);
     }
   };
 

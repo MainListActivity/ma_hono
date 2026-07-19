@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams, useNavigate } from "react-router";
 import {
   getTenant,
@@ -9,6 +9,7 @@ import {
 } from "../api/client";
 import { useAuth } from "../App";
 import Modal from "../components/Modal";
+import { useDocumentTitle } from "../hooks/useDocumentTitle";
 
 const inputStyle: React.CSSProperties = {
   width: '100%',
@@ -55,9 +56,14 @@ export default function TenantUsersPage() {
   const [username, setUsername] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const loadRequestId = useRef(0);
+
+  const currentTenant = tenant?.id === tenantId ? tenant : null;
+  useDocumentTitle(currentTenant ? `${currentTenant.display_name} · 用户管理` : undefined);
 
   const load = async () => {
     if (!token || !tenantId) return;
+    const requestId = ++loadRequestId.current;
     setLoading(true);
     setLoadError(null);
     try {
@@ -65,12 +71,14 @@ export default function TenantUsersPage() {
         getTenant(token, tenantId),
         listUsers(token, tenantId)
       ]);
+      if (requestId !== loadRequestId.current) return;
       setTenant(tenantData);
       setUsers(usersData.users);
     } catch {
+      if (requestId !== loadRequestId.current) return;
       setLoadError("FAILED TO LOAD DATA");
     } finally {
-      setLoading(false);
+      if (requestId === loadRequestId.current) setLoading(false);
     }
   };
 
