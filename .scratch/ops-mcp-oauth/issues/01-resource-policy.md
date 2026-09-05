@@ -27,4 +27,3 @@ Parent: [跨仓 OAuth 规格](../PRD.md)
 
 - 遵循本仓 AGENTS.md：pnpm、Workers、Hono、D1/Drizzle、Vitest。
 - 此票创建不表示已修改实现或获准部署；线上 client、密钥和迁移变更在实施发布阶段明确执行。
-

@@ -30,4 +30,3 @@ Label: ready-for-agent
 ## 交付
 
 本目录只有实施计划。没有修改 IdP 代码、数据库、client 配置或线上设置。schema 迁移、配置及部署按本仓工程流程在实施阶段执行。
-
