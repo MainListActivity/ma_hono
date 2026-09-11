@@ -64,7 +64,11 @@ fi
 echo "[D1] DATABASE_ID=$DATABASE_ID"
 
 # --- KV ---
-declare -A KV_IDS
+# Keep this compatible with the macOS system Bash (3.2), which does not
+# support associative arrays.
+ADMIN_SESSIONS_KV_ID=""
+USER_SESSIONS_KV_ID=""
+REGISTRATION_TOKENS_KV_ID=""
 for KV_NAME in "${KV_NAMES[@]}"; do
   echo "[KV] 查找或创建 $KV_NAME ..."
   KV_ID=$(pnpm exec wrangler kv namespace list 2>/dev/null | jq -r ".[] | select(.title==\"$KV_NAME\") | .id // empty")
@@ -73,7 +77,11 @@ for KV_NAME in "${KV_NAMES[@]}"; do
     pnpm exec wrangler kv namespace create "$KV_NAME" > /dev/null
     KV_ID=$(pnpm exec wrangler kv namespace list | jq -r ".[] | select(.title==\"$KV_NAME\") | .id")
   fi
-  KV_IDS[$KV_NAME]=$KV_ID
+  case "$KV_NAME" in
+    ADMIN_SESSIONS_KV) ADMIN_SESSIONS_KV_ID="$KV_ID" ;;
+    USER_SESSIONS_KV) USER_SESSIONS_KV_ID="$KV_ID" ;;
+    REGISTRATION_TOKENS_KV) REGISTRATION_TOKENS_KV_ID="$KV_ID" ;;
+  esac
   echo "[KV] ${KV_NAME}_ID=$KV_ID"
 done
 
@@ -81,9 +89,9 @@ done
 echo "[config] 写入真实 ID 到 wrangler.jsonc ..."
 sed -i.bak \
   -e "s|\"database_id\": \"[^\"]*\"|\"database_id\": \"$DATABASE_ID\"|" \
-  -e "s|\"id\": \"replace-with-admin-sessions-kv-id\"|\"id\": \"${KV_IDS[ADMIN_SESSIONS_KV]}\"|" \
-  -e "s|\"id\": \"replace-with-user-sessions-kv-id\"|\"id\": \"${KV_IDS[USER_SESSIONS_KV]}\"|" \
-  -e "s|\"id\": \"replace-with-registration-tokens-kv-id\"|\"id\": \"${KV_IDS[REGISTRATION_TOKENS_KV]}\"|" \
+  -e "s|\"id\": \"replace-with-admin-sessions-kv-id\"|\"id\": \"${ADMIN_SESSIONS_KV_ID}\"|" \
+  -e "s|\"id\": \"replace-with-user-sessions-kv-id\"|\"id\": \"${USER_SESSIONS_KV_ID}\"|" \
+  -e "s|\"id\": \"replace-with-registration-tokens-kv-id\"|\"id\": \"${REGISTRATION_TOKENS_KV_ID}\"|" \
   "$WRANGLER_FILE"
 rm -f "${WRANGLER_FILE}.bak"
 echo "[config] 完成，wrangler.jsonc 已更新"
