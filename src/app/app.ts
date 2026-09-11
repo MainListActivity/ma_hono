@@ -750,7 +750,7 @@ export const createApp = (options: AppOptions) => {
   const buildConsentUrl = (issuerContext: import("../domain/tenants/types").ResolvedIssuerContext) =>
     issuerContext.source === "custom_domain"
       ? `https://${issuerContext.requestHost}/consent`
-      : `https://${authDomain}/consent/${issuerContext.tenant.slug}`;
+      : `https://${authDomain}/api/consent/${issuerContext.tenant.slug}`;
 
   const createConsentChallenge = async (
     issuerContext: import("../domain/tenants/types").ResolvedIssuerContext,
@@ -838,7 +838,10 @@ export const createApp = (options: AppOptions) => {
   };
 
   const handleAuthorize = async (context: Context) => {
-    const issuerContext = await resolveIssuerContext({
+    const slug = context.req.param("tenant");
+    const issuerContext = new URL(context.req.url).hostname === authDomain && slug
+      ? await resolveIssuerContextBySlug({ slug, oidcHost, tenantRepository })
+      : await resolveIssuerContext({
       requestUrl: context.req.url,
       oidcHost,
       tenantRepository

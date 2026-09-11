@@ -673,7 +673,7 @@ describe("worker entrypoint wiring", () => {
       const worker = (await import("../../src/index")).default;
 
       await worker.fetch(
-        new Request("https://o.example.test/t/acme/authorize"),
+        new Request("https://o.example.test/t/acme/jwks.json"),
         {} as Record<string, unknown>,
         {} as ExecutionContext
       );
@@ -784,7 +784,7 @@ describe("worker entrypoint wiring", () => {
 
       const response = await worker.fetch(
         new Request(
-          `https://o.example.test/t/acme/authorize?${authorizeQuery}`,
+          `https://auth.example.test/api/t/acme/authorize?${authorizeQuery}`,
           {
             headers: {
               cookie: `user_session=${browserSessionToken}`
@@ -919,7 +919,7 @@ describe("worker entrypoint wiring", () => {
 
       const response = await worker.fetch(
         new Request(
-          `https://o.example.test/t/acme/authorize?${authorizeQuery}`,
+          `https://auth.example.test/api/t/acme/authorize?${authorizeQuery}`,
           {
             headers: {
               cookie: `user_session=${browserSessionToken}`

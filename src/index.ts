@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { browserAuthorizationRedirect } from "./app/browser-authorization-redirect";
 import { createApp } from "./app/app";
 import { createSetupApp } from "./app/setup-app";
 import { createRuntimeRepositories } from "./adapters/db/drizzle/runtime";
@@ -145,6 +146,8 @@ export default {
         : new Hono().route("/api", app);
 
     try {
+      const browserRedirect = browserAuthorizationRedirect(request, oidcHost, authDomain);
+      if (browserRedirect) return browserRedirect;
       return await root.fetch(request, env, executionContext);
     } finally {
       await repositories.close();

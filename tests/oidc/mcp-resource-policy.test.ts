@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { Hono } from "hono";
 
 import { MemoryAuthorizationCodeRepository } from "../../src/adapters/db/memory/memory-authorization-code-repository";
 import { MemoryClientRepository } from "../../src/adapters/db/memory/memory-client-repository";
@@ -58,7 +59,15 @@ const createPolicyApp = (
   loginChallengeRepository = new MemoryLoginChallengeRepository(),
   consentChallengeRepository = new MemoryConsentChallengeRepository()
 ) =>
-  createApp({
+  new Hono().route("/api", createApp({
+    authorizationCodeRepository,
+    authorizeSessionResolver: () => ({ tenantId: "tenant_acme", userId: "user-1" }),
+    clientRepository, consentChallengeRepository, loginChallengeRepository,
+    adminBootstrapPasswordHash: "", adminWhitelist: [], managementApiToken: "management-secret",
+    mcpResource: resource, oidcHost: "idp.example.test", authDomain: "auth.example.test", tenantRepository,
+    totpRepository: new MemoryTotpRepository(), mfaPasskeyChallengeRepository: new MemoryMfaPasskeyChallengeRepository(),
+    totpEncryptionKey: new Uint8Array(32)
+  })).route("/", createApp({
     authorizationCodeRepository,
     authorizeSessionResolver: () => ({ tenantId: "tenant_acme", userId: "user-1" }),
     clientRepository,
@@ -74,7 +83,7 @@ const createPolicyApp = (
     totpRepository: new MemoryTotpRepository(),
     mfaPasskeyChallengeRepository: new MemoryMfaPasskeyChallengeRepository(),
     totpEncryptionKey: new Uint8Array(32).fill(0)
-  });
+  }));
 
 describe("MCP resource indicators", () => {
   it("binds authorize requests to the managed resource and client scope ceiling", async () => {
@@ -147,7 +156,7 @@ describe("MCP resource indicators", () => {
     expect(authorizeResponse.status).toBe(302);
     const consentLocation = new URL(authorizeResponse.headers.get("location") ?? "");
     expect(consentLocation.origin).toBe("https://auth.example.test");
-    expect(consentLocation.pathname).toBe("/consent/acme");
+    expect(consentLocation.pathname).toBe("/api/consent/acme");
     const challengeToken = consentLocation.searchParams.get("consent_challenge");
     expect(challengeToken).toBeTypeOf("string");
 
