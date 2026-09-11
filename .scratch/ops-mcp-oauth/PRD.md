@@ -29,4 +29,9 @@ Label: ready-for-agent
 
 ## 交付
 
-本目录只有实施计划。没有修改 IdP 代码、数据库、client 配置或线上设置。schema 迁移、配置及部署按本仓工程流程在实施阶段执行。
+## 当前实施状态
+
+- IDP-OM-01/02/03 的资源策略、受限 MCP DCR、第三方 consent、refresh/revoke 已在本仓实现并通过本地测试。
+- 生产 D1 已应用 `0011_mcp_resource_scope.sql` 与 `0012_consent_challenges.sql`；Worker 已部署并由
+  `surreal_ck` 的 SCK-LCM-10 记录 discovery/DCR 与生命周期实测结果。
+- 真实 Codex 真人授权、五工具调用和 refresh/revoke 仍是跨仓验收项；不把人工复制 token 视为完成。
