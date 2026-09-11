@@ -37,6 +37,10 @@ import type {
   RefreshTokenRepository
 } from "../../../domain/tokens/refresh-token-repository";
 import type {
+  AccessTokenRevocationRecord,
+  AccessTokenRevocationRepository
+} from "../../../domain/tokens/access-token-revocation-repository";
+import type {
   PasskeyCredential,
   PasskeyRepository
 } from "../../../domain/authentication/passkey-repository";
@@ -66,6 +70,7 @@ import type {
 } from "../../../domain/users/types";
 import { R2KeyMaterialStore } from "../../r2/r2-key-material-store";
 import {
+  accessTokenRevocations,
   adminUsers,
   auditEvents,
   authorizationCodes,
@@ -1566,6 +1571,33 @@ class D1RefreshTokenRepository implements RefreshTokenRepository {
   }
 }
 
+class D1AccessTokenRevocationRepository implements AccessTokenRevocationRepository {
+  constructor(private readonly db: ReturnType<typeof drizzle>) {}
+
+  async revoke(record: AccessTokenRevocationRecord): Promise<void> {
+    await this.db
+      .insert(accessTokenRevocations)
+      .values({
+        id: record.id,
+        tenantId: record.tenantId,
+        clientId: record.clientId,
+        tokenHash: record.tokenHash,
+        expiresAt: record.expiresAt,
+        revokedAt: record.revokedAt
+      })
+      .onConflictDoNothing({ target: accessTokenRevocations.tokenHash });
+  }
+
+  async isRevoked(tokenHash: string): Promise<boolean> {
+    const [row] = await this.db
+      .select({ id: accessTokenRevocations.id })
+      .from(accessTokenRevocations)
+      .where(eq(accessTokenRevocations.tokenHash, tokenHash))
+      .limit(1);
+    return row !== undefined;
+  }
+}
+
 export class D1TotpRepository implements TotpRepository {
   constructor(private readonly db: ReturnType<typeof drizzle>) {}
 
@@ -1770,6 +1802,7 @@ export class D1PasskeyRepository implements PasskeyRepository {
 export const createRuntimeRepositories = async (config: RuntimeConfig) => {
   const db = drizzle(config.db, {
     schema: {
+      accessTokenRevocations,
       adminUsers,
       auditEvents,
       authorizationCodes,
@@ -1808,6 +1841,7 @@ export const createRuntimeRepositories = async (config: RuntimeConfig) => {
   const loginChallengeRepository = new D1LoginChallengeRepository(db);
 
   return {
+    accessTokenRevocationRepository: new D1AccessTokenRevocationRepository(db),
     adminRepository: new D1KvAdminRepository(db, config.adminSessionsKv),
     auditRepository: new D1AuditRepository(db),
     authorizationCodeRepository: new D1AuthorizationCodeRepository(db),

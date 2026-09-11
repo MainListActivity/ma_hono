@@ -8,6 +8,7 @@ export interface DiscoveryMetadata {
   authorization_endpoint: string;
   token_endpoint: string;
   revocation_endpoint: string;
+  introspection_endpoint: string;
   grant_types_supported: string[];
   response_types_supported: string[];
   code_challenge_methods_supported: string[];
@@ -37,6 +38,7 @@ export const buildDiscoveryMetadata = (
     authorization_endpoint: `${issuerContext.issuer}/authorize`,
     token_endpoint: `${issuerContext.issuer}/token`,
     revocation_endpoint: `${issuerContext.issuer}/revoke`,
+    introspection_endpoint: `${issuerContext.issuer}/introspect`,
     grant_types_supported: ["authorization_code", "refresh_token"],
     response_types_supported: ["code"],
     code_challenge_methods_supported: ["S256"],

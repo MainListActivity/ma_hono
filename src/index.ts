@@ -124,6 +124,7 @@ export default {
       oidcHost,
       browserSessionRepository,
       registrationAccessTokenRepository: repositories.registrationAccessTokenRepository,
+      accessTokenRevocationRepository: repositories.accessTokenRevocationRepository,
       refreshTokenRepository: repositories.refreshTokenRepository,
       signer: repositories.signer,
       tenantRepository: repositories.tenantRepository,

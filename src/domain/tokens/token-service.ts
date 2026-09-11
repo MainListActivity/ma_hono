@@ -28,6 +28,7 @@ import type {
   RefreshTokenRecord,
   RefreshTokenRepository
 } from "./refresh-token-repository";
+import type { AccessTokenRevocationRepository } from "./access-token-revocation-repository";
 
 type TokenErrorCode = OidcTokenErrorResponse["error"];
 
@@ -53,9 +54,20 @@ export interface TokenRevokeRequest {
   token: string;
 }
 
+export interface TokenIntrospectionRequest {
+  authorizationHeader: string | undefined;
+  requestedClientId: string | null;
+  requestedClientSecret: string | null;
+  token: string;
+}
+
 export type TokenRevokeResult =
   | { kind: "success"; clientId: string }
   | { kind: "error"; clientId: string | null; error: "invalid_client"; status: 401 };
+
+export type TokenIntrospectionResult =
+  | { kind: "success"; active: boolean }
+  | { kind: "error"; error: "invalid_client"; status: 401 };
 
 type ScopeTokenErrorResult = {
   kind: "error";
@@ -305,6 +317,36 @@ const createSignedJwt = async ({
       typ: "JWT"
     })
     .sign(privateKey);
+};
+
+const verifyTenantAccessToken = async ({
+  issuerContext,
+  signer,
+  tenantId,
+  token
+}: {
+  issuerContext: ResolvedIssuerContext;
+  signer: SigningKeySigner | undefined;
+  tenantId: string;
+  token: string;
+}): Promise<Record<string, unknown> | null> => {
+  if (signer === undefined) return null;
+
+  const signingKeyMaterial = await signer.loadActiveSigningKeyMaterial(tenantId);
+  if (signingKeyMaterial === null) return null;
+
+  try {
+    const publicKey = await importJWK(
+      signingKeyMaterial.key.publicJwk,
+      signingKeyMaterial.key.alg
+    );
+    const verification = await jwtVerify(token, publicKey, {
+      issuer: issuerContext.issuer
+    });
+    return verification.payload as Record<string, unknown>;
+  } catch {
+    return null;
+  }
 };
 
 const mutableScopeClaimNames = new Map([
@@ -1217,15 +1259,19 @@ export const exchangeAuthorizationCode = async ({
 /** RFC 7009-style refresh-token revocation. Unknown or already consumed
  * tokens are deliberately treated as success to avoid token-existence leaks. */
 export const revokeToken = async ({
+  accessTokenRevocationRepository,
   clientRepository,
   issuerContext,
   refreshTokenRepository,
-  request
+  request,
+  signer
 }: {
+  accessTokenRevocationRepository: AccessTokenRevocationRepository;
   clientRepository: ClientRepository;
   issuerContext: ResolvedIssuerContext;
   refreshTokenRepository: RefreshTokenRepository;
   request: TokenRevokeRequest;
+  signer: SigningKeySigner | undefined;
 }): Promise<TokenRevokeResult> => {
   const authenticatedClient = await authenticateClient({
     authorizationHeader: request.authorizationHeader,
@@ -1256,8 +1302,74 @@ export const revokeToken = async ({
       record.issuer === issuerContext.issuer
     ) {
       await refreshTokenRepository.consume(record.id, new Date().toISOString(), null);
+    } else {
+      const payload = await verifyTenantAccessToken({
+        issuerContext,
+        signer,
+        tenantId: authenticatedClient.client.tenantId,
+        token
+      });
+      const tokenClientId = typeof payload?.client_id === "string" ? payload.client_id : null;
+      const expiresAtSeconds = typeof payload?.exp === "number" ? payload.exp : null;
+
+      if (tokenClientId === authenticatedClient.client.clientId && expiresAtSeconds !== null) {
+        await accessTokenRevocationRepository.revoke({
+          id: crypto.randomUUID(),
+          tenantId: authenticatedClient.client.tenantId,
+          clientId: tokenClientId,
+          tokenHash: await sha256Base64Url(token),
+          expiresAt: new Date(expiresAtSeconds * 1000).toISOString(),
+          revokedAt: new Date().toISOString()
+        });
+      }
     }
   }
 
   return { kind: "success", clientId: authenticatedClient.client.clientId };
+};
+
+/** RFC 7662-style minimal response for resource servers. */
+export const introspectAccessToken = async ({
+  accessTokenRevocationRepository,
+  clientRepository,
+  issuerContext,
+  request,
+  signer
+}: {
+  accessTokenRevocationRepository: AccessTokenRevocationRepository;
+  clientRepository: ClientRepository;
+  issuerContext: ResolvedIssuerContext;
+  request: TokenIntrospectionRequest;
+  signer: SigningKeySigner | undefined;
+}): Promise<TokenIntrospectionResult> => {
+  const authenticatedClient = await authenticateClient({
+    authorizationHeader: request.authorizationHeader,
+    clientRepository,
+    issuerContext,
+    requestedClientId: request.requestedClientId,
+    requestedClientSecret: request.requestedClientSecret,
+    requireClientSecret: true
+  });
+
+  if (!authenticatedClient.ok) {
+    return { kind: "error", error: "invalid_client", status: 401 };
+  }
+
+  const token = request.token.trim();
+  if (token.length === 0) return { kind: "success", active: false };
+
+  const payload = await verifyTenantAccessToken({
+    issuerContext,
+    signer,
+    tenantId: authenticatedClient.client.tenantId,
+    token
+  });
+  if (payload === null || typeof payload.client_id !== "string") {
+    return { kind: "success", active: false };
+  }
+
+  return {
+    kind: "success",
+    active: !(await accessTokenRevocationRepository.isRevoked(await sha256Base64Url(token)))
+  };
 };

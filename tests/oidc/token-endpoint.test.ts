@@ -6,6 +6,7 @@ import { MemoryAuthorizationCodeRepository } from "../../src/adapters/db/memory/
 import { MemoryClientAuthMethodPolicyRepository } from "../../src/adapters/db/memory/memory-client-auth-method-policy-repository";
 import { MemoryClientRepository } from "../../src/adapters/db/memory/memory-client-repository";
 import { MemoryRefreshTokenRepository } from "../../src/adapters/db/memory/memory-refresh-token-repository";
+import { MemoryAccessTokenRevocationRepository } from "../../src/adapters/db/memory/memory-access-token-revocation-repository";
 import { MemoryTenantRepository } from "../../src/adapters/db/memory/memory-tenant-repository";
 import { MemoryTotpRepository } from "../../src/adapters/db/memory/memory-totp-repository";
 import { MemoryMfaPasskeyChallengeRepository } from "../../src/adapters/db/memory/memory-mfa-passkey-challenge-repository";
@@ -1413,5 +1414,76 @@ describe("/token", () => {
     });
     expect(refresh.status).toBe(400);
     await expect(refresh.json()).resolves.toEqual({ error: "invalid_grant" });
+  });
+
+  it("marks a revoked access token inactive for an authenticated resource server", async () => {
+    const { signer } = await createSigner();
+    const client = await createClient({
+      authMethod: "client_secret_basic",
+      clientId: "client_access_revoke",
+      secret: "access-revoke-secret"
+    });
+    const codeRepository = new MemoryAuthorizationCodeRepository();
+    const accessTokenRevocationRepository = new MemoryAccessTokenRevocationRepository();
+    await seedAuthorizationCode({
+      code: "code-access-revoke",
+      clientId: client.clientId,
+      codeRepository,
+      expiresAt: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+      issuer: "https://idp.example.test/t/acme"
+    });
+
+    const app = createApp({
+      accessTokenRevocationRepository,
+      auditRepository: new MemoryAuditRepository(),
+      authorizationCodeRepository: codeRepository,
+      clientRepository: new MemoryClientRepository([client]),
+      adminBootstrapPasswordHash: "",
+      adminWhitelist: [],
+      managementApiToken: "",
+      oidcHost: "idp.example.test",
+      authDomain: "auth.example.test",
+      signer,
+      tenantRepository,
+      totpRepository: new MemoryTotpRepository(),
+      mfaPasskeyChallengeRepository: new MemoryMfaPasskeyChallengeRepository(),
+      totpEncryptionKey: new Uint8Array(32).fill(0)
+    });
+
+    const exchanged = await exchangeCode({
+      app,
+      clientId: client.clientId,
+      code: "code-access-revoke",
+      codeVerifier: "verifier-123456",
+      redirectUri: "https://app.acme.test/callback",
+      secret: "access-revoke-secret",
+      useBasicAuth: true,
+      requestUrl: "https://idp.example.test/t/acme/token"
+    });
+    const tokenSet = (await exchanged.json()) as { access_token: string };
+    const authorization = `Basic ${btoa(`${client.clientId}:access-revoke-secret`)}`;
+    const introspect = async () =>
+      await app.request("https://idp.example.test/t/acme/introspect", {
+        method: "POST",
+        headers: {
+          authorization,
+          "content-type": "application/x-www-form-urlencoded"
+        },
+        body: new URLSearchParams({ token: tokenSet.access_token }).toString()
+      });
+
+    await expect(introspect()).resolves.toMatchObject({ status: 200 });
+    await expect((await introspect()).json()).resolves.toEqual({ active: true });
+
+    const revoked = await app.request("https://idp.example.test/t/acme/revoke", {
+      method: "POST",
+      headers: {
+        authorization,
+        "content-type": "application/x-www-form-urlencoded"
+      },
+      body: new URLSearchParams({ token: tokenSet.access_token }).toString()
+    });
+    expect(revoked.status).toBe(200);
+    await expect((await introspect()).json()).resolves.toEqual({ active: false });
   });
 });

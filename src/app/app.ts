@@ -74,11 +74,13 @@ import {
 } from "../domain/oidc/resource-policy";
 import {
   exchangeAuthorizationCode,
+  introspectAccessToken,
   issueClientAccessToken,
   issueScopeToken,
   revokeToken
 } from "../domain/tokens/token-service";
 import type { RefreshTokenRepository } from "../domain/tokens/refresh-token-repository";
+import type { AccessTokenRevocationRepository } from "../domain/tokens/access-token-revocation-repository";
 import { activateUser } from "../domain/users/activate-user";
 import { hashPassword } from "../domain/users/passwords";
 import { provisionUser } from "../domain/users/provision-user";
@@ -270,6 +272,16 @@ class EmptyRefreshTokenRepository implements RefreshTokenRepository {
   }
 }
 
+class EmptyAccessTokenRevocationRepository implements AccessTokenRevocationRepository {
+  async revoke(): Promise<void> {
+    return;
+  }
+
+  async isRevoked(): Promise<boolean> {
+    return false;
+  }
+}
+
 class EmptyAdminRepository implements AdminRepository {
   async createSession(): Promise<void> {
     return;
@@ -405,6 +417,7 @@ export interface AppOptions {
   /** OIDC protocol hostname, e.g. "o.maplayer.top". Used to resolve issuer context and build issuer URLs. */
   oidcHost: string;
   registrationAccessTokenRepository?: RegistrationAccessTokenRepository;
+  accessTokenRevocationRepository?: AccessTokenRevocationRepository;
   refreshTokenRepository?: RefreshTokenRepository;
   signer?: SigningKeySigner;
   tenantRepository?: TenantRepository;
@@ -458,6 +471,8 @@ export const createApp = (options: AppOptions) => {
     options.registrationAccessTokenRepository ?? new EmptyRegistrationAccessTokenRepository();
   const refreshTokenRepository =
     options.refreshTokenRepository ?? new EmptyRefreshTokenRepository();
+  const accessTokenRevocationRepository =
+    options.accessTokenRevocationRepository ?? new EmptyAccessTokenRevocationRepository();
   const oidcHost = options.oidcHost;
   const mcpRegistrationBuckets = new Map<string, { windowStartedAt: number; count: number }>();
 
@@ -2802,6 +2817,7 @@ export const createApp = (options: AppOptions) => {
     }
 
     const result = await revokeToken({
+      accessTokenRevocationRepository,
       clientRepository,
       issuerContext,
       refreshTokenRepository,
@@ -2810,7 +2826,8 @@ export const createApp = (options: AppOptions) => {
         requestedClientId: formData.get("client_id")?.toString() ?? null,
         requestedClientSecret: formData.get("client_secret")?.toString() ?? null,
         token: formData.get("token")?.toString() ?? ""
-      }
+      },
+      signer
     });
 
     if (result.kind === "error") {
@@ -2831,6 +2848,47 @@ export const createApp = (options: AppOptions) => {
     });
 
     return context.json({}, 200);
+  };
+
+  const handleIntrospect = async (context: Context) => {
+    context.header("Cache-Control", "no-store");
+    context.header("Pragma", "no-cache");
+
+    const issuerContext = await resolveIssuerContext({
+      requestUrl: context.req.url,
+      oidcHost,
+      tenantRepository
+    });
+    if (issuerContext === null) return context.notFound();
+
+    let formData: FormData;
+    try {
+      formData = await context.req.formData();
+    } catch {
+      return context.json({ error: "invalid_request" }, 400);
+    }
+
+    const result = await introspectAccessToken({
+      accessTokenRevocationRepository,
+      clientRepository,
+      issuerContext,
+      request: {
+        authorizationHeader: context.req.header("authorization"),
+        requestedClientId: formData.get("client_id")?.toString() ?? null,
+        requestedClientSecret: formData.get("client_secret")?.toString() ?? null,
+        token: formData.get("token")?.toString() ?? ""
+      },
+      signer
+    });
+
+    if (result.kind === "error") {
+      if (context.req.header("authorization")?.match(/^basic\s+/iu) !== null) {
+        context.header("WWW-Authenticate", 'Basic realm="introspect", error="invalid_client"');
+      }
+      return context.json({ error: result.error }, result.status);
+    }
+
+    return context.json({ active: result.active }, 200);
   };
 
   const handleScope = async (context: Context) => {
@@ -3024,6 +3082,8 @@ export const createApp = (options: AppOptions) => {
   app.post("/t/:tenant/token", handleToken);
   app.post("/revoke", handleRevoke);
   app.post("/t/:tenant/revoke", handleRevoke);
+  app.post("/introspect", handleIntrospect);
+  app.post("/t/:tenant/introspect", handleIntrospect);
   app.post("/scope", handleScope);
   app.post("/t/:tenant/scope", handleScope);
 

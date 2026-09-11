@@ -488,6 +488,30 @@ export const refreshTokens = sqliteTable(
   })
 );
 
+export const accessTokenRevocations = sqliteTable(
+  "access_token_revocations",
+  {
+    id: text("id").primaryKey(),
+    tenantId: text("tenant_id")
+      .notNull()
+      .references(() => tenants.id, { onDelete: "cascade" }),
+    clientId: text("client_id").notNull(),
+    tokenHash: text("token_hash").notNull(),
+    expiresAt: text("expires_at").notNull(),
+    revokedAt: text("revoked_at").notNull()
+  },
+  (table) => ({
+    tenantClientFk: foreignKey({
+      columns: [table.tenantId, table.clientId],
+      foreignColumns: [oidcClients.tenantId, oidcClients.clientId]
+    }).onDelete("cascade"),
+    tokenHashUnique: uniqueIndex("access_token_revocations_token_hash_unique").on(
+      table.tokenHash
+    ),
+    expiresAtIdx: index("access_token_revocations_expires_at_idx").on(table.expiresAt)
+  })
+);
+
 export const emailLoginTokens = sqliteTable(
   "email_login_tokens",
   {
