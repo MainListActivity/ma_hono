@@ -87,6 +87,7 @@ export default {
       authDomain,
       auditRepository: repositories.auditRepository,
       authorizationCodeRepository: repositories.authorizationCodeRepository,
+      consentChallengeRepository: repositories.consentChallengeRepository,
       accessTokenClaimsRepository: repositories.accessTokenClaimsRepository,
       authorizeSessionResolver: async (context) => {
         const sessionToken = getCookieValue(context.req.header("cookie"), browserSessionCookieName);
@@ -118,6 +119,7 @@ export default {
       loginChallengeLookupRepository: repositories.authenticationLoginChallengeRepository,
       loginChallengeRepository: repositories.loginChallengeRepository,
       managementApiToken: platformConfig.managementApiToken,
+      mcpResource: `https://${authDomain}/ops`,
       oidcHost,
       browserSessionRepository,
       registrationAccessTokenRepository: repositories.registrationAccessTokenRepository,

@@ -62,6 +62,7 @@ export const oidcClients = sqliteTable(
     consentPolicy: text("consent_policy").notNull().default("skip"),
     clientProfile: text("client_profile").notNull().default("web"),
     accessTokenAudience: text("access_token_audience"),
+    allowedScopes: text("allowed_scopes", { mode: "json" }).$type<string[] | null>(),
     initiateLoginUri: text("initiate_login_uri"),
     claimHookUrl: text("claim_hook_url"),
     claimHookAuthHeaderName: text("claim_hook_auth_header_name"),
@@ -339,6 +340,7 @@ export const loginChallenges = sqliteTable(
     authMethod: text("auth_method"),
     redirectUri: text("redirect_uri").notNull(),
     scope: text("scope").notNull(),
+    resource: text("resource"),
     state: text("state").notNull(),
     codeChallenge: text("code_challenge").notNull(),
     codeChallengeMethod: text("code_challenge_method").notNull(),
@@ -380,6 +382,7 @@ export const authorizationCodes = sqliteTable(
       .references(() => users.id, { onDelete: "cascade" }),
     redirectUri: text("redirect_uri").notNull(),
     scope: text("scope").notNull(),
+    resource: text("resource"),
     nonce: text("nonce"),
     codeChallenge: text("code_challenge").notNull(),
     codeChallengeMethod: text("code_challenge_method").notNull(),
@@ -405,6 +408,46 @@ export const authorizationCodes = sqliteTable(
   })
 );
 
+export const consentChallenges = sqliteTable(
+  "consent_challenges",
+  {
+    id: text("id").primaryKey(),
+    tenantId: text("tenant_id")
+      .notNull()
+      .references(() => tenants.id, { onDelete: "cascade" }),
+    issuer: text("issuer").notNull(),
+    clientId: text("client_id").notNull(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    redirectUri: text("redirect_uri").notNull(),
+    scope: text("scope").notNull(),
+    resource: text("resource"),
+    state: text("state"),
+    nonce: text("nonce"),
+    codeChallenge: text("code_challenge").notNull(),
+    codeChallengeMethod: text("code_challenge_method").notNull(),
+    tokenHash: text("token_hash").notNull(),
+    expiresAt: text("expires_at").notNull(),
+    consumedAt: text("consumed_at"),
+    createdAt: text("created_at").notNull()
+  },
+  (table) => ({
+    tenantUserFk: foreignKey({
+      columns: [table.tenantId, table.userId],
+      foreignColumns: [users.tenantId, users.id]
+    }).onDelete("cascade"),
+    tenantClientFk: foreignKey({
+      columns: [table.tenantId, table.clientId],
+      foreignColumns: [oidcClients.tenantId, oidcClients.clientId]
+    }).onDelete("cascade"),
+    tenantIdIdx: index("consent_challenges_tenant_id_idx").on(table.tenantId),
+    tokenHashActiveUnique: uniqueIndex("consent_challenges_token_hash_active_unique")
+      .on(table.tokenHash)
+      .where(sql`${table.consumedAt} IS NULL`)
+  })
+);
+
 export const refreshTokens = sqliteTable(
   "refresh_tokens",
   {
@@ -418,6 +461,7 @@ export const refreshTokens = sqliteTable(
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
     scope: text("scope").notNull(),
+    resource: text("resource"),
     authMethod: text("auth_method"),
     tokenHash: text("token_hash").notNull(),
     absoluteExpiresAt: text("absolute_expires_at").notNull(),

@@ -377,4 +377,98 @@ describe("Dynamic Client Registration", () => {
     expect(clientRepository.deleteAttempted).toBe(true);
     expect(registrationAccessTokenRepository.deleteAttempted).toBe(true);
   });
+
+  it("registers a public MCP PKCE client without exposing the management credential", async () => {
+    const clientRepository = new MemoryClientRepository();
+    const registrationAccessTokenRepository = new MemoryRegistrationAccessTokenRepository();
+    const app = createApp({
+      clientRepository,
+      registrationAccessTokenRepository,
+      adminBootstrapPasswordHash: "",
+      adminWhitelist: [],
+      managementApiToken: "manage-acme",
+      mcpResource: "https://auth.example.test/ops",
+      oidcHost: "idp.example.test",
+      authDomain: "auth.example.test",
+      tenantRepository,
+      totpRepository: new MemoryTotpRepository(),
+      mfaPasskeyChallengeRepository: new MemoryMfaPasskeyChallengeRepository(),
+      totpEncryptionKey: new Uint8Array(32).fill(0)
+    });
+
+    const response = await app.request("https://idp.example.test/t/acme/connect/mcp/register", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({
+        client_name: "Codex",
+        application_type: "native",
+        grant_types: ["authorization_code"],
+        redirect_uris: ["http://127.0.0.1:43123/callback"],
+        response_types: ["code"],
+        token_endpoint_auth_method: "none",
+        resource: "https://auth.example.test/ops",
+        scope: "openid content.read content.submit"
+      })
+    });
+
+    expect(response.status).toBe(201);
+    const body = (await response.json()) as DynamicClientRegistrationResponse & {
+      resource: string;
+      scope: string;
+      client_secret: string | null;
+    };
+    const stored = await clientRepository.findByClientId(body.client_id);
+
+    expect(body.client_secret).toBeNull();
+    expect(body.resource).toBe("https://auth.example.test/ops");
+    expect(body.scope).toBe("openid content.read content.submit");
+    expect(stored?.trustLevel).toBe("third_party");
+    expect(stored?.consentPolicy).toBe("require");
+    expect(stored?.accessTokenAudience).toBe("https://auth.example.test/ops");
+    expect(stored?.allowedScopes).toEqual(["content.read", "content.submit"]);
+    expect(registrationAccessTokenRepository.listTokens()).toHaveLength(1);
+    expect(body.registration_access_token).not.toBe("manage-acme");
+  });
+
+  it("rejects MCP metadata that tries to inject trust, claims, audience, or a non-loopback callback", async () => {
+    const app = createApp({
+      clientRepository: new MemoryClientRepository(),
+      adminBootstrapPasswordHash: "",
+      adminWhitelist: [],
+      managementApiToken: "manage-acme",
+      mcpResource: "https://auth.example.test/ops",
+      oidcHost: "idp.example.test",
+      authDomain: "auth.example.test",
+      tenantRepository,
+      totpRepository: new MemoryTotpRepository(),
+      mfaPasskeyChallengeRepository: new MemoryMfaPasskeyChallengeRepository(),
+      totpEncryptionKey: new Uint8Array(32).fill(0)
+    });
+
+    const response = await app.request("https://idp.example.test/t/acme/connect/mcp/register", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({
+        client_name: "Evil",
+        application_type: "native",
+        grant_types: ["authorization_code"],
+        redirect_uris: ["http://evil.example.test/callback"],
+        response_types: ["code"],
+        token_endpoint_auth_method: "none",
+        resource: "https://other.example.test/ops",
+        trust_level: "first_party_trusted",
+        access_token_audience: "https://other.example.test/ops",
+        claim_hook_url: "https://evil.example.test/hook"
+      })
+    });
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      error: "invalid_client_metadata"
+    });
+  });
 });

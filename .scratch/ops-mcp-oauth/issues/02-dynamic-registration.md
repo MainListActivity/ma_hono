@@ -1,5 +1,5 @@
-Status: blocked
-Label: needs-triage
+Status: done
+Label: verified
 Assignee: unassigned
 ID: IDP-OM-02
 Repository: ma_hono
@@ -21,9 +21,17 @@ Parent: [跨仓 OAuth 规格](../PRD.md)
 
 ## Acceptance
 
-- [ ] 无预注册 Codex 能完成注册；注册本身不发用户 token 或运营权限。
-- [ ] 恶意元数据、越界 audience、回调变更和管理配置注入被拒绝。
-- [ ] 现有管理注册及其它 tenant 行为不退化。
+- [x] 无预注册 Codex 能完成注册；注册本身不发用户 token 或运营权限。
+- [x] 恶意元数据、越界 audience、回调变更和管理配置注入被拒绝。
+- [x] 现有管理注册及其它 tenant 行为不退化。
+
+## Verification
+
+- `pnpm typecheck`
+- `pnpm test`（含公共 MCP DCR、恶意 metadata、loopback redirect 与管理注册回归）
+- `pnpm db:check`
+
+公共注册端点为 `/connect/mcp/register`（及 tenant 路径），只接受 `authorization_code` + PKCE、`token_endpoint_auth_method=none`、HTTPS/loopback 回调和受管 resource/scope；原 `/connect/register` 仍要求 management bearer。
 
 ## Boundaries
 

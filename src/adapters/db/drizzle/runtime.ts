@@ -20,6 +20,10 @@ import type {
   AuthorizationCodeRepository,
   LoginChallengeRepository
 } from "../../../domain/authorization/repository";
+import type {
+  ConsentChallenge,
+  ConsentChallengeRepository
+} from "../../../domain/authorization/consent-repository";
 import type { AuthenticationLoginChallengeRepository } from "../../../domain/authentication/login-challenge-repository";
 import type {
   AuthorizationCode,
@@ -62,6 +66,7 @@ import {
   adminUsers,
   auditEvents,
   authorizationCodes,
+  consentChallenges,
   clientAccessTokenClaims,
   clientAuthMethodPolicies,
   emailLoginTokens,
@@ -439,6 +444,7 @@ class D1ClientRepository implements ClientRepository {
       consentPolicy: row.consentPolicy as Client["consentPolicy"],
       clientProfile: row.clientProfile as Client["clientProfile"],
       accessTokenAudience: row.accessTokenAudience,
+      allowedScopes: row.allowedScopes ?? undefined,
       initiateLoginUri: row.initiateLoginUri,
       claimHookUrl: row.claimHookUrl,
       claimHookAuthHeaderName: row.claimHookAuthHeaderName,
@@ -460,6 +466,7 @@ class D1ClientRepository implements ClientRepository {
       consentPolicy: client.consentPolicy,
       clientProfile: client.clientProfile,
       accessTokenAudience: client.accessTokenAudience,
+      allowedScopes: client.allowedScopes ?? null,
       initiateLoginUri: client.initiateLoginUri ?? null,
       claimHookUrl: client.claimHookUrl ?? null,
       claimHookAuthHeaderName: client.claimHookAuthHeaderName ?? null,
@@ -488,6 +495,7 @@ class D1ClientRepository implements ClientRepository {
         grantTypes: client.grantTypes,
         responseTypes: client.responseTypes,
         accessTokenAudience: client.accessTokenAudience,
+        allowedScopes: client.allowedScopes ?? null,
         initiateLoginUri: client.initiateLoginUri ?? null,
         claimHookUrl: client.claimHookUrl ?? null,
         claimHookAuthHeaderName: client.claimHookAuthHeaderName ?? null,
@@ -654,6 +662,7 @@ class D1LoginChallengeRepository
       authMethod: challenge.authMethod ?? null,
       redirectUri: challenge.redirectUri,
       scope: challenge.scope,
+      resource: challenge.resource ?? null,
       state: challenge.state,
       codeChallenge: challenge.codeChallenge,
       codeChallengeMethod: challenge.codeChallengeMethod,
@@ -709,6 +718,7 @@ class D1LoginChallengeRepository
       authMethod: row.authMethod as LoginChallenge["authMethod"],
       redirectUri: row.redirectUri,
       scope: row.scope,
+      resource: row.resource,
       state: row.state,
       codeChallenge: row.codeChallenge,
       codeChallengeMethod: row.codeChallengeMethod as LoginChallenge["codeChallengeMethod"],
@@ -790,6 +800,7 @@ class D1AuthorizationCodeRepository implements AuthorizationCodeRepository {
       userId: code.userId,
       redirectUri: code.redirectUri,
       scope: code.scope,
+      resource: code.resource ?? null,
       nonce: code.nonce,
       codeChallenge: code.codeChallenge,
       codeChallengeMethod: code.codeChallengeMethod,
@@ -825,6 +836,7 @@ class D1AuthorizationCodeRepository implements AuthorizationCodeRepository {
       userId: row.userId,
       redirectUri: row.redirectUri,
       scope: row.scope,
+      resource: row.resource,
       nonce: row.nonce,
       codeChallenge: row.codeChallenge,
       codeChallengeMethod: row.codeChallengeMethod as AuthorizationCode["codeChallengeMethod"],
@@ -848,6 +860,85 @@ class D1AuthorizationCodeRepository implements AuthorizationCodeRepository {
         )
       )
       .returning({ id: authorizationCodes.id });
+
+    return row !== undefined;
+  }
+}
+
+class D1ConsentChallengeRepository implements ConsentChallengeRepository {
+  constructor(private readonly db: ReturnType<typeof drizzle>) {}
+
+  async create(challenge: ConsentChallenge): Promise<void> {
+    await this.db.insert(consentChallenges).values({
+      id: challenge.id,
+      tenantId: challenge.tenantId,
+      issuer: challenge.issuer,
+      clientId: challenge.clientId,
+      userId: challenge.userId,
+      redirectUri: challenge.redirectUri,
+      scope: challenge.scope,
+      resource: challenge.resource,
+      state: challenge.state,
+      nonce: challenge.nonce,
+      codeChallenge: challenge.codeChallenge,
+      codeChallengeMethod: challenge.codeChallengeMethod,
+      tokenHash: challenge.tokenHash,
+      expiresAt: challenge.expiresAt,
+      consumedAt: challenge.consumedAt,
+      createdAt: challenge.createdAt
+    });
+  }
+
+  async findActiveByTokenHash(tokenHash: string): Promise<ConsentChallenge | null> {
+    const now = new Date().toISOString();
+    const [row] = await this.db
+      .select()
+      .from(consentChallenges)
+      .where(
+        and(
+          eq(consentChallenges.tokenHash, tokenHash),
+          isNull(consentChallenges.consumedAt),
+          sql`${consentChallenges.expiresAt} > ${now}`
+        )
+      )
+      .limit(1);
+
+    if (row === undefined) {
+      return null;
+    }
+
+    return {
+      id: row.id,
+      tenantId: row.tenantId,
+      issuer: row.issuer,
+      clientId: row.clientId,
+      userId: row.userId,
+      redirectUri: row.redirectUri,
+      scope: row.scope,
+      resource: row.resource,
+      state: row.state,
+      nonce: row.nonce,
+      codeChallenge: row.codeChallenge,
+      codeChallengeMethod: row.codeChallengeMethod as ConsentChallenge["codeChallengeMethod"],
+      tokenHash: row.tokenHash,
+      expiresAt: row.expiresAt,
+      consumedAt: row.consumedAt,
+      createdAt: row.createdAt
+    };
+  }
+
+  async consumeById(id: string, consumedAt: string): Promise<boolean> {
+    const [row] = await this.db
+      .update(consentChallenges)
+      .set({ consumedAt })
+      .where(
+        and(
+          eq(consentChallenges.id, id),
+          isNull(consentChallenges.consumedAt),
+          sql`${consentChallenges.expiresAt} > ${consumedAt}`
+        )
+      )
+      .returning({ id: consentChallenges.id });
 
     return row !== undefined;
   }
@@ -1386,6 +1477,7 @@ class D1RefreshTokenRepository implements RefreshTokenRepository {
       clientId: record.clientId,
       userId: record.userId,
       scope: record.scope,
+      resource: record.resource ?? null,
       authMethod: record.authMethod,
       tokenHash: record.tokenHash,
       absoluteExpiresAt: record.absoluteExpiresAt,
@@ -1416,6 +1508,7 @@ class D1RefreshTokenRepository implements RefreshTokenRepository {
       clientId: row.clientId,
       userId: row.userId,
       scope: row.scope,
+      resource: row.resource,
       authMethod: row.authMethod as RefreshTokenRecord["authMethod"],
       tokenHash: row.tokenHash,
       absoluteExpiresAt: row.absoluteExpiresAt,
@@ -1651,6 +1744,7 @@ export const createRuntimeRepositories = async (config: RuntimeConfig) => {
       adminUsers,
       auditEvents,
       authorizationCodes,
+      consentChallenges,
       clientAccessTokenClaims,
       clientAuthMethodPolicies,
       emailLoginTokens,
@@ -1688,6 +1782,7 @@ export const createRuntimeRepositories = async (config: RuntimeConfig) => {
     adminRepository: new D1KvAdminRepository(db, config.adminSessionsKv),
     auditRepository: new D1AuditRepository(db),
     authorizationCodeRepository: new D1AuthorizationCodeRepository(db),
+    consentChallengeRepository: new D1ConsentChallengeRepository(db),
     accessTokenClaimsRepository: new D1AccessTokenClaimsRepository(db),
     clientAuthMethodPolicyRepository: new D1ClientAuthMethodPolicyRepository(db),
     clientRepository: new D1ClientRepository(db),

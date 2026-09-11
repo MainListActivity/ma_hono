@@ -1,6 +1,6 @@
-Status: blocked
-Label: needs-triage
-Assignee: unassigned
+Status: done
+Label: verified
+Assignee: codex
 ID: IDP-OM-03
 Repository: ma_hono
 
@@ -21,9 +21,19 @@ Parent: [跨仓 OAuth 规格](../PRD.md)
 
 ## Acceptance
 
-- [ ] 拒绝 consent 不签发可用授权；重放授权码、PKCE失败、跨client refresh 被拒绝。
-- [ ] refresh/重新登录正常，撤销后不能继续刷新；MCP 服务的运营撤权测试由 SCK-LCM-10 覆盖。
+- [x] 拒绝 consent 不签发可用授权；重放授权码、PKCE失败、跨client refresh 被拒绝。
+- [x] refresh/重新登录正常，撤销后不能继续刷新；MCP 服务的运营撤权测试由 SCK-LCM-10 覆盖。
 - [ ] 从未预注册 Codex 实测全链路并记录版本，人工 token 不算验收。
+
+## Verification
+
+- `pnpm typecheck`
+- `pnpm test`（29 files / 247 tests）
+- `pnpm db:check`
+- `tests/oidc/mcp-resource-policy.test.ts`：managed resource、scope ceiling、consent challenge approval/replay。
+- `tests/oidc/token-endpoint.test.ts`：resource audience、refresh resource 变更拒绝、revocation 后 refresh 失败。
+
+剩余的 Codex 未预注册实测属于跨仓端到端验收，转由 `surreal_ck` 的 SCK-LCM-10 处理；本票不把人工构造 token 视为通过。
 
 ## Boundaries
 

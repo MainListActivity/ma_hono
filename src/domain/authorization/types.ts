@@ -12,6 +12,7 @@ export interface AuthorizeRequestParameters {
   redirectUri: string;
   responseType: string;
   scope: string;
+  resource?: string | null;
   state: string | null;
   nonce: string | null;
   codeChallenge: string | null;
@@ -24,6 +25,7 @@ export interface ValidatedAuthorizeRequest {
   issuer: string;
   redirectUri: string;
   scope: string;
+  resource: string | null;
   state: string | null;
   nonce: string | null;
   tenantId: string;
@@ -39,6 +41,7 @@ export interface LoginChallenge {
   authMethod?: ClientAuthMethodName | null;
   redirectUri: string;
   scope: string;
+  resource?: string | null;
   state: string;
   codeChallenge: string;
   codeChallengeMethod: PkceCodeChallengeMethod;
@@ -63,6 +66,7 @@ export interface AuthorizationCode {
   userId: string;
   redirectUri: string;
   scope: string;
+  resource?: string | null;
   nonce: string | null;
   codeChallenge: string;
   codeChallengeMethod: PkceCodeChallengeMethod;

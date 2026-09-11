@@ -46,6 +46,17 @@ export interface ScopeTokenRequest {
   subjectToken: string;
 }
 
+export interface TokenRevokeRequest {
+  authorizationHeader: string | undefined;
+  requestedClientId: string | null;
+  requestedClientSecret: string | null;
+  token: string;
+}
+
+export type TokenRevokeResult =
+  | { kind: "success"; clientId: string }
+  | { kind: "error"; clientId: string | null; error: "invalid_client"; status: 401 };
+
 type ScopeTokenErrorResult = {
   kind: "error";
   clientId: string | null;
@@ -76,6 +87,7 @@ export interface TokenExchangeRequest {
   grantType: string;
   refreshToken: string | null;
   redirectUri: string;
+  resource?: string | null;
   requestedClientId: string | null;
   requestedClientSecret: string | null;
 }
@@ -537,6 +549,7 @@ const issueRefreshToken = async ({
   issuer,
   now,
   refreshTokenRepository,
+  resource,
   scope,
   tenantId,
   userId
@@ -546,6 +559,7 @@ const issueRefreshToken = async ({
   issuer: string;
   now: Date;
   refreshTokenRepository: RefreshTokenRepository;
+  resource: string | null;
   scope: string;
   tenantId: string;
   userId: string;
@@ -558,6 +572,7 @@ const issueRefreshToken = async ({
     clientId: client.clientId,
     userId,
     scope,
+    resource,
     authMethod,
     tokenHash: await sha256Base64Url(refreshToken),
     absoluteExpiresAt: new Date(
@@ -583,6 +598,7 @@ const issueTokenSet = async ({
   clientAuthMethodPolicyRepository,
   issuer,
   refreshTokenRepository,
+  resource,
   scope,
   signer,
   tenantId,
@@ -598,6 +614,7 @@ const issueTokenSet = async ({
   clientAuthMethodPolicyRepository: ClientAuthMethodPolicyRepository;
   issuer: string;
   refreshTokenRepository: RefreshTokenRepository;
+  resource: string | null;
   scope: string;
   signer: SigningKeySigner;
   tenantId: string;
@@ -626,7 +643,7 @@ const issueTokenSet = async ({
     client,
     clientAuthMethodPolicyRepository
   });
-  const resolvedAudience = client.accessTokenAudience ?? client.clientId;
+  const resolvedAudience = resource ?? client.accessTokenAudience ?? client.clientId;
   const nowSeconds = Math.floor(now.getTime() / 1000);
   const idTokenClaims = buildIdTokenClaims({
     audience: client.clientId,
@@ -666,6 +683,7 @@ const issueTokenSet = async ({
       issuer,
       now,
       refreshTokenRepository,
+      resource,
       scope,
       tenantId,
       userId
@@ -983,6 +1001,21 @@ export const exchangeAuthorizationCode = async ({
       };
     }
 
+    const refreshResource = refreshTokenRecord?.resource ?? null;
+    if (
+      (request.resource !== undefined &&
+        request.resource !== null &&
+        request.resource !== refreshResource) ||
+      (refreshResource !== null && refreshResource !== authenticatedClient.client.accessTokenAudience)
+    ) {
+      return {
+        kind: "error",
+        clientId: authenticatedClient.client.clientId,
+        error: "invalid_grant",
+        status: 400
+      };
+    }
+
     try {
       const tokenSet = await issueTokenSet({
         accessTokenClaimsRepository,
@@ -990,6 +1023,7 @@ export const exchangeAuthorizationCode = async ({
         clientAuthMethodPolicyRepository,
         issuer: issuerContext.issuer,
         refreshTokenRepository,
+        resource: refreshResource,
         scope: refreshTokenRecord.scope,
         signer,
         tenantId: refreshTokenRecord.tenantId,
@@ -1084,7 +1118,12 @@ export const exchangeAuthorizationCode = async ({
     codeRecord.tenantId !== authenticatedClient.client.tenantId ||
     codeRecord.issuer !== issuerContext.issuer ||
     codeRecord.redirectUri !== request.redirectUri ||
-    new Date(codeRecord.expiresAt).getTime() <= now.getTime()
+    new Date(codeRecord.expiresAt).getTime() <= now.getTime() ||
+    (request.resource !== undefined &&
+      request.resource !== null &&
+      request.resource !== (codeRecord.resource ?? null)) ||
+    ((codeRecord.resource ?? null) !== null &&
+      codeRecord.resource !== authenticatedClient.client.accessTokenAudience)
   ) {
     return {
       kind: "error",
@@ -1137,6 +1176,7 @@ export const exchangeAuthorizationCode = async ({
       clientAuthMethodPolicyRepository,
       issuer: issuerContext.issuer,
       refreshTokenRepository,
+      resource: codeRecord.resource ?? null,
       scope: codeRecord.scope,
       signer,
       tenantId: codeRecord.tenantId,
@@ -1172,4 +1212,52 @@ export const exchangeAuthorizationCode = async ({
       status: 400
     };
   }
+};
+
+/** RFC 7009-style refresh-token revocation. Unknown or already consumed
+ * tokens are deliberately treated as success to avoid token-existence leaks. */
+export const revokeToken = async ({
+  clientRepository,
+  issuerContext,
+  refreshTokenRepository,
+  request
+}: {
+  clientRepository: ClientRepository;
+  issuerContext: ResolvedIssuerContext;
+  refreshTokenRepository: RefreshTokenRepository;
+  request: TokenRevokeRequest;
+}): Promise<TokenRevokeResult> => {
+  const authenticatedClient = await authenticateClient({
+    authorizationHeader: request.authorizationHeader,
+    clientRepository,
+    issuerContext,
+    requestedClientId: request.requestedClientId,
+    requestedClientSecret: request.requestedClientSecret
+  });
+
+  if (!authenticatedClient.ok) {
+    return {
+      kind: "error",
+      clientId: authenticatedClient.clientId,
+      error: "invalid_client",
+      status: 401
+    };
+  }
+
+  const token = request.token.trim();
+  if (token.length > 0) {
+    const record = await refreshTokenRepository.findActiveByTokenHash(
+      await sha256Base64Url(token)
+    );
+    if (
+      record !== null &&
+      record.clientId === authenticatedClient.client.clientId &&
+      record.tenantId === authenticatedClient.client.tenantId &&
+      record.issuer === issuerContext.issuer
+    ) {
+      await refreshTokenRepository.consume(record.id, new Date().toISOString(), null);
+    }
+  }
+
+  return { kind: "success", clientId: authenticatedClient.client.clientId };
 };

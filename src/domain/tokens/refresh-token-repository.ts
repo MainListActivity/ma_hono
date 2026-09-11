@@ -7,6 +7,7 @@ export interface RefreshTokenRecord {
   clientId: string;
   userId: string;
   scope: string;
+  resource?: string | null;
   authMethod: ClientAuthMethodName | null;
   tokenHash: string;
   absoluteExpiresAt: string;

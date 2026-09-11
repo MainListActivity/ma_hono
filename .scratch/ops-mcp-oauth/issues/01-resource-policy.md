@@ -1,5 +1,5 @@
-Status: open
-Label: ready-for-agent
+Status: done
+Label: verified
 Assignee: unassigned
 ID: IDP-OM-01
 Repository: ma_hono
@@ -20,8 +20,16 @@ Parent: [跨仓 OAuth 规格](../PRD.md)
 
 ## Acceptance
 
-- [ ] 授权、换token、refresh 的 resource/aud/scope 一致，越界请求拒绝。
-- [ ] 相同租户用户跨客户端 sub 一致，不同租户隔离；客户原登录回归通过。
+- [x] 授权、换token、refresh 的 resource/aud/scope 一致，越界请求拒绝。
+- [x] 相同租户用户跨客户端 sub 一致，不同租户隔离；客户原登录回归通过。
+
+## Verification
+
+- `pnpm typecheck`
+- `pnpm test`（246 tests）
+- `pnpm db:check`
+
+实现包括受管 resource policy、每客户端 scope ceiling、授权码/登录挑战/刷新令牌的 resource 绑定、D1 migration `0011_mcp_resource_scope.sql`，以及回归覆盖的 MCP audience、scope expansion、refresh resource mismatch 场景。
 
 ## Boundaries
 

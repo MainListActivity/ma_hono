@@ -127,6 +127,43 @@ describe("OIDC discovery", () => {
     });
   });
 
+  it("advertises the managed MCP resource and public registration endpoint when enabled", async () => {
+    const app = createApp({
+      adminBootstrapPasswordHash: "",
+      adminWhitelist: [],
+      managementApiToken: "",
+      mcpResource: "https://auth.example.test/ops",
+      oidcHost: "idp.example.test",
+      authDomain: "auth.example.test",
+      tenantRepository,
+      totpRepository: new MemoryTotpRepository(),
+      mfaPasskeyChallengeRepository: new MemoryMfaPasskeyChallengeRepository(),
+      totpEncryptionKey: new Uint8Array(32).fill(0)
+    });
+
+    const response = await app.request(
+      "https://idp.example.test/t/acme/.well-known/openid-configuration"
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      registration_endpoint: "https://idp.example.test/t/acme/connect/mcp/register",
+      management_registration_endpoint: "https://idp.example.test/t/acme/connect/register",
+      scopes_supported: [
+        "openid",
+        "content.read",
+        "content.submit",
+        "content.publish",
+        "content.withdraw",
+        "content.restore",
+        "content.source.manage"
+      ],
+      resource_indicators_supported: true,
+      resource_parameter_supported: true,
+      mcp_resource: "https://auth.example.test/ops"
+    });
+  });
+
   it("returns 404 when the issuer cannot be resolved", async () => {
     const app = createApp({
       adminBootstrapPasswordHash: "",
