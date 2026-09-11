@@ -156,6 +156,10 @@ class EmptyClientAuthMethodPolicyRepository implements ClientAuthMethodPolicyRep
 }
 
 class EmptyRegistrationAccessTokenRepository implements RegistrationAccessTokenRepository {
+  async findByTokenHash(): Promise<null> {
+    return null;
+  }
+
   async deleteByTokenHash(): Promise<void> {
     return;
   }
@@ -3213,6 +3217,66 @@ export const createApp = (options: AppOptions) => {
     }
   };
 
+  const mcpRegistrationToken = (authorizationHeader: string | undefined): string | null =>
+    authorizationHeader?.match(/^Bearer\s+([^\s]+)$/iu)?.[1] ?? null;
+
+  const mcpClientRegistrationMetadata = (client: Client) => ({
+    client_id: client.clientId,
+    client_secret: null,
+    client_name: client.clientName,
+    redirect_uris: client.redirectUris,
+    application_type: client.applicationType,
+    token_endpoint_auth_method: client.tokenEndpointAuthMethod,
+    grant_types: client.grantTypes,
+    response_types: client.responseTypes,
+    scope: ["openid", ...(client.allowedScopes ?? [])].join(" "),
+    resource: client.accessTokenAudience
+  });
+
+  const resolveMcpRegistrationClient = async (context: Context, clientId: string) => {
+    const issuerContext = await resolveIssuerContext({
+      requestUrl: context.req.url,
+      oidcHost,
+      tenantRepository
+    });
+
+    if (issuerContext === null || mcpResourcePolicy === null) {
+      return { kind: "not_found" as const };
+    }
+
+    const token = mcpRegistrationToken(context.req.header("authorization"));
+    if (token === null) {
+      context.header("WWW-Authenticate", 'Bearer realm="mcp-registration", error="invalid_token"');
+      return { kind: "unauthorized" as const };
+    }
+
+    const tokenRecord = await registrationAccessTokenRepository.findByTokenHash(
+      await sha256Base64Url(token)
+    );
+    if (
+      tokenRecord === null
+      || tokenRecord.clientId !== clientId
+      || tokenRecord.tenantId !== issuerContext.tenant.id
+      || tokenRecord.issuer !== issuerContext.issuer
+    ) {
+      context.header("WWW-Authenticate", 'Bearer realm="mcp-registration", error="invalid_token"');
+      return { kind: "unauthorized" as const };
+    }
+
+    const client = await clientRepository.findByClientId(clientId);
+    if (
+      client === null
+      || client.tenantId !== issuerContext.tenant.id
+      || client.tokenEndpointAuthMethod !== "none"
+      || client.trustLevel !== "third_party"
+      || client.accessTokenAudience !== mcpResourcePolicy.resource
+    ) {
+      return { kind: "not_found" as const };
+    }
+
+    return { kind: "authorized" as const, client, token };
+  };
+
   app.post("/connect/register", async (context) => {
     const result = await handleDynamicClientRegistration(
       context.req.header("authorization"),
@@ -3286,6 +3350,44 @@ export const createApp = (options: AppOptions) => {
 
     return context.json(result.body ?? { error: "too_many_requests" }, result.status);
   });
+
+  const handleMcpClientRegistrationConfiguration = async (context: Context) => {
+    const clientId = context.req.param("clientId");
+    if (clientId === undefined || clientId.length === 0) {
+      return context.notFound();
+    }
+    const result = await resolveMcpRegistrationClient(context, clientId);
+    if (result.kind === "not_found") return context.notFound();
+    if (result.kind === "unauthorized") return context.json({ error: "invalid_token" }, 401);
+
+    if (context.req.method === "GET") {
+      return context.json(mcpClientRegistrationMetadata(result.client), 200);
+    }
+
+    if (context.req.method === "DELETE") {
+      await clientRepository.deleteByClientId(result.client.clientId);
+      await registrationAccessTokenRepository.deleteByTokenHash(
+        await sha256Base64Url(result.token)
+      );
+      await recordAuditEventBestEffort({
+        actorType: "mcp_dcr",
+        actorId: result.client.clientId,
+        tenantId: result.client.tenantId,
+        eventType: "oidc.client.deleted",
+        targetType: "oidc_client",
+        targetId: result.client.clientId,
+        payload: { resource: mcpResourcePolicy?.resource ?? null }
+      });
+      return context.body(null, 204);
+    }
+
+    return context.json({ error: "method_not_allowed" }, 405);
+  };
+
+  app.get("/connect/mcp/register/:clientId", handleMcpClientRegistrationConfiguration);
+  app.delete("/connect/mcp/register/:clientId", handleMcpClientRegistrationConfiguration);
+  app.get("/t/:tenant/connect/mcp/register/:clientId", handleMcpClientRegistrationConfiguration);
+  app.delete("/t/:tenant/connect/mcp/register/:clientId", handleMcpClientRegistrationConfiguration);
 
   app.post("/t/:tenant/register", async (context) => {
     const issuerContext = await resolveIssuerContextBySlug({

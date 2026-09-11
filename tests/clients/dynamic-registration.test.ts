@@ -52,6 +52,10 @@ describe("Dynamic Client Registration", () => {
       throw new Error("KV unavailable");
     }
 
+    async findByTokenHash(): Promise<RegistrationAccessTokenRecord | null> {
+      return null;
+    }
+
     async deleteByTokenHash(): Promise<void> {
       return;
     }
@@ -430,6 +434,90 @@ describe("Dynamic Client Registration", () => {
     expect(stored?.allowedScopes).toEqual(["content.read", "content.submit"]);
     expect(registrationAccessTokenRepository.listTokens()).toHaveLength(1);
     expect(body.registration_access_token).not.toBe("manage-acme");
+  });
+
+  it("exposes the public MCP registration metadata and allows bearer-authorized deletion", async () => {
+    const clientRepository = new MemoryClientRepository();
+    const auditRepository = new MemoryAuditRepository();
+    const registrationAccessTokenRepository = new MemoryRegistrationAccessTokenRepository();
+    const app = createApp({
+      clientRepository,
+      auditRepository,
+      registrationAccessTokenRepository,
+      adminBootstrapPasswordHash: "",
+      adminWhitelist: [],
+      managementApiToken: "manage-acme",
+      mcpResource: "https://auth.example.test/ops",
+      oidcHost: "idp.example.test",
+      authDomain: "auth.example.test",
+      tenantRepository,
+      totpRepository: new MemoryTotpRepository(),
+      mfaPasskeyChallengeRepository: new MemoryMfaPasskeyChallengeRepository(),
+      totpEncryptionKey: new Uint8Array(32).fill(0)
+    });
+
+    const registrationResponse = await app.request(
+      "https://idp.example.test/t/acme/connect/mcp/register",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          client_name: "Codex lifecycle",
+          application_type: "native",
+          grant_types: ["authorization_code"],
+          redirect_uris: ["http://127.0.0.1:43123/callback"],
+          response_types: ["code"],
+          token_endpoint_auth_method: "none",
+          resource: "https://auth.example.test/ops",
+          scope: "openid content.read"
+        })
+      }
+    );
+
+    expect(registrationResponse.status).toBe(201);
+    const registration = (await registrationResponse.json()) as DynamicClientRegistrationResponse;
+
+    const metadataResponse = await app.request(registration.registration_client_uri, {
+      headers: { authorization: `Bearer ${registration.registration_access_token}` }
+    });
+
+    expect(metadataResponse.status).toBe(200);
+    await expect(metadataResponse.json()).resolves.toMatchObject({
+      client_id: registration.client_id,
+      client_secret: null,
+      client_name: "Codex lifecycle",
+      token_endpoint_auth_method: "none",
+      scope: "openid content.read",
+      resource: "https://auth.example.test/ops"
+    });
+
+    const invalidMetadataResponse = await app.request(registration.registration_client_uri, {
+      headers: { authorization: "Bearer wrong-token" }
+    });
+
+    expect(invalidMetadataResponse.status).toBe(401);
+    expect(invalidMetadataResponse.headers.get("www-authenticate")).toContain(
+      'error="invalid_token"'
+    );
+
+    const deleteResponse = await app.request(registration.registration_client_uri, {
+      method: "DELETE",
+      headers: { authorization: `Bearer ${registration.registration_access_token}` }
+    });
+
+    expect(deleteResponse.status).toBe(204);
+    expect(await clientRepository.findByClientId(registration.client_id)).toBeNull();
+    expect(registrationAccessTokenRepository.listTokens()).toHaveLength(0);
+    expect(auditRepository.listEvents().map((event) => event.eventType)).toEqual([
+      "oidc.client.registered",
+      "oidc.client.deleted"
+    ]);
+
+    const deletedMetadataResponse = await app.request(registration.registration_client_uri, {
+      headers: { authorization: `Bearer ${registration.registration_access_token}` }
+    });
+
+    expect(deletedMetadataResponse.status).toBe(401);
   });
 
   it("rejects MCP metadata that tries to inject trust, claims, audience, or a non-loopback callback", async () => {

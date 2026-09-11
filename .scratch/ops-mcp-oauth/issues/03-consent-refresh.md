@@ -28,7 +28,7 @@ Parent: [跨仓 OAuth 规格](../PRD.md)
 ## Verification
 
 - `pnpm typecheck`
-- `pnpm test`（29 files / 247 tests）
+- `pnpm test`（29 files / 248 tests）
 - `pnpm db:check`
 - `tests/oidc/mcp-resource-policy.test.ts`：managed resource、scope ceiling、consent challenge approval/replay。
 - `tests/oidc/token-endpoint.test.ts`：resource audience、refresh resource 变更拒绝、revocation 后 refresh 失败。

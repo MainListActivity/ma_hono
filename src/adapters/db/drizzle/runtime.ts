@@ -5,7 +5,10 @@ import type { AuditRepository } from "../../../domain/audit/repository";
 import type { AuditEvent } from "../../../domain/audit/types";
 import type { AdminRepository } from "../../../domain/admin-auth/repository";
 import type { AdminSession, AdminUser } from "../../../domain/admin-auth/types";
-import type { RegistrationAccessTokenRepository } from "../../../domain/clients/registration-access-token-repository";
+import type {
+  RegistrationAccessTokenRecord,
+  RegistrationAccessTokenRepository
+} from "../../../domain/clients/registration-access-token-repository";
 import type { AccessTokenClaimsRepository } from "../../../domain/clients/access-token-claims-repository";
 import type { AccessTokenCustomClaim } from "../../../domain/clients/access-token-claims-types";
 import type {
@@ -1374,6 +1377,32 @@ class KvRegistrationAccessTokenRepository
   implements RegistrationAccessTokenRepository
 {
   constructor(private readonly kv: KVNamespace) {}
+
+  async findByTokenHash(tokenHash: string): Promise<RegistrationAccessTokenRecord | null> {
+    const raw = await this.kv.get(`${registrationTokenPrefix}${tokenHash}`);
+    if (raw === null) return null;
+
+    try {
+      const parsed = JSON.parse(raw) as Partial<RegistrationAccessTokenRecord>;
+      if (
+        typeof parsed.clientId !== "string" ||
+        typeof parsed.expiresAt !== "string" ||
+        typeof parsed.issuer !== "string" ||
+        typeof parsed.tenantId !== "string" ||
+        typeof parsed.tokenHash !== "string" ||
+        parsed.tokenHash !== tokenHash
+      ) {
+        return null;
+      }
+      if (new Date(parsed.expiresAt).getTime() <= Date.now()) {
+        await this.kv.delete(`${registrationTokenPrefix}${tokenHash}`);
+        return null;
+      }
+      return parsed as RegistrationAccessTokenRecord;
+    } catch {
+      return null;
+    }
+  }
 
   async deleteByTokenHash(tokenHash: string): Promise<void> {
     await this.kv.delete(`${registrationTokenPrefix}${tokenHash}`);
