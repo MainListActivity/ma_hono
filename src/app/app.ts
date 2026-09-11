@@ -797,13 +797,15 @@ export const createApp = (options: AppOptions) => {
     challengeToken,
     resource,
     scope,
-    tenantDisplayName
+    tenantDisplayName,
+    formAction
   }: {
     clientName: string;
     challengeToken: string;
     resource: string | null;
     scope: string;
     tenantDisplayName: string;
+    formAction: string;
   }) => {
     const scopeItems = scope
       .split(/\s+/u)
@@ -814,7 +816,7 @@ export const createApp = (options: AppOptions) => {
 
     return `<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>授权确认</title>
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; form-action 'self'; style-src 'unsafe-inline'"></head>
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; form-action 'self' ${escapeHtml(formAction)}; style-src 'unsafe-inline'"></head>
 <body><main><h1>${escapeHtml(tenantDisplayName)} 授权确认</h1>
 <p><strong>${escapeHtml(clientName)}</strong> 请求访问你的账号。</p>${resourceMarkup}
 <p>请求权限：</p><ul>${scopeItems}</ul>
@@ -1024,7 +1026,11 @@ export const createApp = (options: AppOptions) => {
       return context.json({ error: "invalid_consent_challenge" }, 400);
     }
 
-    context.header("Content-Security-Policy", "default-src 'none'; form-action 'self'; style-src 'unsafe-inline'");
+    // Chromium applies form-action to the POST's redirect as well. The callback
+    // was validated against the registered client before creating this challenge.
+    const callbackUrl = new URL(challenge.redirectUri);
+    const formAction = callbackUrl.origin === "null" ? callbackUrl.protocol : callbackUrl.origin;
+    context.header("Content-Security-Policy", `default-src 'none'; form-action 'self' ${formAction}; style-src 'unsafe-inline'`);
     context.header("Cache-Control", "no-store");
     return context.html(
       buildConsentPage({
@@ -1032,7 +1038,8 @@ export const createApp = (options: AppOptions) => {
         challengeToken: token,
         resource: challenge.resource,
         scope: challenge.scope,
-        tenantDisplayName: issuerContext.tenant.displayName
+        tenantDisplayName: issuerContext.tenant.displayName,
+        formAction
       })
     );
   };
