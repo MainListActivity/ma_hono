@@ -120,7 +120,10 @@ export default {
       loginChallengeLookupRepository: repositories.authenticationLoginChallengeRepository,
       loginChallengeRepository: repositories.loginChallengeRepository,
       managementApiToken: platformConfig.managementApiToken,
-      mcpResource: `https://${authDomain}/ops`,
+      // The protected-resource identifier is the actual MCP endpoint, not the
+      // OIDC audience used to validate its bearer token.  Codex and other MCP
+      // clients require the metadata resource to match the URL they connect to.
+      mcpResource: `https://l.${platformConfig.rootDomain}/api/ops/mcp`,
       oidcHost,
       browserSessionRepository,
       registrationAccessTokenRepository: repositories.registrationAccessTokenRepository,
