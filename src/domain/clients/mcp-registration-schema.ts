@@ -50,7 +50,26 @@ export const mcpClientRegistrationSchema = z
   .object({
     client_name: z.string().trim().min(1).max(200),
     application_type: z.enum(["web", "native"]),
-    grant_types: z.array(z.literal("authorization_code")).length(1),
+    grant_types: z
+      .array(z.enum(["authorization_code", "refresh_token"]))
+      .min(1)
+      .max(2)
+      .superRefine((value, context) => {
+        if (!value.includes("authorization_code")) {
+          context.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: "grant_types must include authorization_code",
+            path: ["grant_types"]
+          });
+        }
+        if (new Set(value).size !== value.length) {
+          context.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: "grant_types must not contain duplicates",
+            path: ["grant_types"]
+          });
+        }
+      }),
     redirect_uris: z.array(mcpRedirectUriSchema).min(1).max(16),
     response_types: z.array(z.literal("code")).length(1),
     token_endpoint_auth_method: z.literal("none"),

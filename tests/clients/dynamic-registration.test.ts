@@ -436,6 +436,47 @@ describe("Dynamic Client Registration", () => {
     expect(body.registration_access_token).not.toBe("manage-acme");
   });
 
+  it("accepts refresh-token grant metadata from MCP clients", async () => {
+    const clientRepository = new MemoryClientRepository();
+    const app = createApp({
+      clientRepository,
+      registrationAccessTokenRepository: new MemoryRegistrationAccessTokenRepository(),
+      adminBootstrapPasswordHash: "",
+      adminWhitelist: [],
+      managementApiToken: "manage-acme",
+      mcpResource: "https://auth.example.test/ops",
+      oidcHost: "idp.example.test",
+      authDomain: "auth.example.test",
+      tenantRepository,
+      totpRepository: new MemoryTotpRepository(),
+      mfaPasskeyChallengeRepository: new MemoryMfaPasskeyChallengeRepository(),
+      totpEncryptionKey: new Uint8Array(32).fill(0)
+    });
+
+    const response = await app.request("https://idp.example.test/t/acme/connect/mcp/register", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        client_name: "Codex refresh",
+        application_type: "native",
+        grant_types: ["authorization_code", "refresh_token"],
+        redirect_uris: ["http://127.0.0.1:43123/callback"],
+        response_types: ["code"],
+        token_endpoint_auth_method: "none",
+        resource: "https://auth.example.test/ops",
+        scope: "openid content.read"
+      })
+    });
+
+    expect(response.status).toBe(201);
+    const body = (await response.json()) as { client_id: string; grant_types: string[] };
+    expect(body.grant_types).toEqual(["authorization_code", "refresh_token"]);
+    expect((await clientRepository.findByClientId(body.client_id))?.grantTypes).toEqual([
+      "authorization_code",
+      "refresh_token"
+    ]);
+  });
+
   it("exposes the public MCP registration metadata and allows bearer-authorized deletion", async () => {
     const clientRepository = new MemoryClientRepository();
     const auditRepository = new MemoryAuditRepository();
