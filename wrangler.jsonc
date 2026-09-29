@@ -11,22 +11,22 @@
     {
       "binding": "DB",
       "database_name": "ma-hono",
-      "database_id": "replace-with-d1-database-id",
+      "database_id": "621dbcf7-ddcc-4099-8df2-3ec076830857",
       "migrations_dir": "drizzle/migrations"
     }
   ],
   "kv_namespaces": [
     {
       "binding": "ADMIN_SESSIONS_KV",
-      "id": "replace-with-admin-sessions-kv-id"
+      "id": "2437a574794f4786bb7f2f477587e124"
     },
     {
       "binding": "USER_SESSIONS_KV",
-      "id": "replace-with-user-sessions-kv-id"
+      "id": "96623d1624d74b9da28589fb350d75b9"
     },
     {
       "binding": "REGISTRATION_TOKENS_KV",
-      "id": "replace-with-registration-tokens-kv-id"
+      "id": "97c43217be494c6b8b0a90a42e2d637c"
     }
   ],
   "r2_buckets": [

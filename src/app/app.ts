@@ -31,6 +31,10 @@ import {
 } from "../domain/authentication/session-service";
 import { authorizeRequest } from "../domain/authorization/authorize-request";
 import type {
+  ConsentChallenge,
+  ConsentChallengeRepository
+} from "../domain/authorization/consent-repository";
+import type {
   AuthorizationCodeRepository,
   LoginChallengeRepository
 } from "../domain/authorization/repository";
@@ -43,6 +47,7 @@ import {
   createOpaqueToken,
   DuplicateDbClientError,
   registerClient,
+  registerMcpClient,
   registerClientFromAdmin
 } from "../domain/clients/register-client";
 import type { AccessTokenCustomClaim, AccessTokenClaimUserField } from "../domain/clients/access-token-claims-types";
@@ -63,11 +68,20 @@ import { resolveIssuerContext, resolveIssuerContextBySlug } from "../domain/tena
 import type { Tenant } from "../domain/tenants/types";
 import { buildDiscoveryMetadata } from "../domain/oidc/discovery";
 import {
+  createManagedResourcePolicy,
+  DEFAULT_MCP_SCOPES,
+  type ManagedResourcePolicy
+} from "../domain/oidc/resource-policy";
+import {
   exchangeAuthorizationCode,
+  introspectAccessToken,
   issueClientAccessToken,
-  issueScopeToken
+  issueScopeToken,
+  revokeToken
 } from "../domain/tokens/token-service";
+import type { ContentReaderIssuancePolicy } from "../domain/tokens/content-reader-policy";
 import type { RefreshTokenRepository } from "../domain/tokens/refresh-token-repository";
+import type { AccessTokenRevocationRepository } from "../domain/tokens/access-token-revocation-repository";
 import { activateUser } from "../domain/users/activate-user";
 import { hashPassword } from "../domain/users/passwords";
 import { provisionUser } from "../domain/users/provision-user";
@@ -145,6 +159,10 @@ class EmptyClientAuthMethodPolicyRepository implements ClientAuthMethodPolicyRep
 }
 
 class EmptyRegistrationAccessTokenRepository implements RegistrationAccessTokenRepository {
+  async findByTokenHash(): Promise<null> {
+    return null;
+  }
+
   async deleteByTokenHash(): Promise<void> {
     return;
   }
@@ -227,6 +245,20 @@ class EmptyAuthorizationCodeRepository implements AuthorizationCodeRepository {
   }
 }
 
+class EmptyConsentChallengeRepository implements ConsentChallengeRepository {
+  async create(): Promise<void> {
+    return;
+  }
+
+  async findActiveByTokenHash(): Promise<null> {
+    return null;
+  }
+
+  async consumeById(): Promise<false> {
+    return false;
+  }
+}
+
 class EmptyRefreshTokenRepository implements RefreshTokenRepository {
   async create(): Promise<void> {
     return;
@@ -237,6 +269,16 @@ class EmptyRefreshTokenRepository implements RefreshTokenRepository {
   }
 
   async consume(): Promise<false> {
+    return false;
+  }
+}
+
+class EmptyAccessTokenRevocationRepository implements AccessTokenRevocationRepository {
+  async revoke(): Promise<void> {
+    return;
+  }
+
+  async isRevoked(): Promise<boolean> {
     return false;
   }
 }
@@ -349,6 +391,7 @@ export interface AppOptions {
   adminRepository?: AdminRepository;
   auditRepository?: AuditRepository;
   authorizationCodeRepository?: AuthorizationCodeRepository;
+  consentChallengeRepository?: ConsentChallengeRepository;
   authorizeSessionResolver?: (context: Context) => Promise<AuthorizeSession | null> | AuthorizeSession | null;
   /** Root domain, e.g. "maplayer.top". Used to build login redirect URLs: https://auth.{authDomain}/login/{slug} */
   authDomain: string;
@@ -362,15 +405,25 @@ export interface AppOptions {
   loginChallengeRepository?: LoginChallengeRepository;
   magicLinkRepository?: MagicLinkRepository;
   managementApiToken: string;
+  /** Public protected-resource URI for the operations MCP, when enabled. */
+  mcpResource?: string;
+  /** Optional server-side scope ceiling for the operations MCP. */
+  mcpScopes?: string[];
   mfaPasskeyChallengeRepository: MfaPasskeyChallengeRepository;
   passkeyRepository?: PasskeyRepository;
   totpRepository: TotpRepository;
   totpEncryptionKey: Uint8Array;
   /** Optional test override for `hook`-source custom claim fetches. */
   claimHookFetcher?: ClaimHookFetcher;
+  /**
+   * Optional allowlist for content_reader credential issuance on `/scope`.
+   * When omitted, content_reader requests are rejected with `invalid_scope`.
+   */
+  contentReaderPolicy?: ContentReaderIssuancePolicy | null;
   /** OIDC protocol hostname, e.g. "o.maplayer.top". Used to resolve issuer context and build issuer URLs. */
   oidcHost: string;
   registrationAccessTokenRepository?: RegistrationAccessTokenRepository;
+  accessTokenRevocationRepository?: AccessTokenRevocationRepository;
   refreshTokenRepository?: RefreshTokenRepository;
   signer?: SigningKeySigner;
   tenantRepository?: TenantRepository;
@@ -386,6 +439,9 @@ export const createApp = (options: AppOptions) => {
   const auditRepository = options.auditRepository ?? new EmptyAuditRepository();
   const authorizationCodeRepository =
     options.authorizationCodeRepository ?? new EmptyAuthorizationCodeRepository();
+  const consentChallengeRepository =
+    options.consentChallengeRepository ?? new EmptyConsentChallengeRepository();
+  const consentUiEnabled = options.consentChallengeRepository !== undefined;
   const authorizeSessionResolver = options.authorizeSessionResolver ?? (async () => null);
   const browserSessionRepository =
     options.browserSessionRepository ?? new EmptyBrowserSessionRepository();
@@ -402,6 +458,13 @@ export const createApp = (options: AppOptions) => {
     options.loginChallengeRepository ?? new EmptyLoginChallengeRepository();
   const magicLinkRepository = options.magicLinkRepository ?? new EmptyMagicLinkRepository();
   const managementApiToken = options.managementApiToken;
+  const mcpResourcePolicy: ManagedResourcePolicy | null =
+    options.mcpResource === undefined
+      ? null
+      : createManagedResourcePolicy({
+          resource: options.mcpResource,
+          scopes: options.mcpScopes ?? DEFAULT_MCP_SCOPES
+        });
   const mfaPasskeyChallengeRepository = options.mfaPasskeyChallengeRepository;
   const passkeyRepository = options.passkeyRepository ?? new EmptyPasskeyRepository();
   const totpRepository = options.totpRepository;
@@ -409,12 +472,16 @@ export const createApp = (options: AppOptions) => {
   const tenantRepository = options.tenantRepository ?? new EmptyTenantRepository();
   const userRepository = options.userRepository ?? new EmptyUserRepository();
   const claimHookFetcher = options.claimHookFetcher;
+  const contentReaderPolicy = options.contentReaderPolicy ?? null;
   const signer = options.signer;
   const registrationAccessTokenRepository =
     options.registrationAccessTokenRepository ?? new EmptyRegistrationAccessTokenRepository();
   const refreshTokenRepository =
     options.refreshTokenRepository ?? new EmptyRefreshTokenRepository();
+  const accessTokenRevocationRepository =
+    options.accessTokenRevocationRepository ?? new EmptyAccessTokenRevocationRepository();
   const oidcHost = options.oidcHost;
+  const mcpRegistrationBuckets = new Map<string, { windowStartedAt: number; count: number }>();
 
   const resolveAllowedCorsOrigin = (origin: string) => {
     try {
@@ -443,6 +510,8 @@ export const createApp = (options: AppOptions) => {
 
   app.use("/token", tokenCors);
   app.use("/t/:tenant/token", tokenCors);
+  app.use("/revoke", tokenCors);
+  app.use("/t/:tenant/revoke", tokenCors);
   app.use("/t/:tenant/.well-known/openid-configuration", tokenCors);
   app.use("/t/:tenant/jwks.json", tokenCors);
   app.use("/db/execTemplate", tokenCors);
@@ -616,7 +685,11 @@ export const createApp = (options: AppOptions) => {
       tenantRepository
     });
 
-    return issuerContext === null ? null : buildDiscoveryMetadata(issuerContext);
+    return issuerContext === null
+      ? null
+      : buildDiscoveryMetadata(issuerContext, {
+          mcpResourcePolicy
+        });
   };
 
   const buildClientErrorRedirectUrl = ({
@@ -696,6 +769,84 @@ export const createApp = (options: AppOptions) => {
     }
   };
 
+  const buildConsentUrl = (issuerContext: import("../domain/tenants/types").ResolvedIssuerContext) =>
+    issuerContext.source === "custom_domain"
+      ? `https://${issuerContext.requestHost}/consent`
+      : `https://${authDomain}/api/consent/${issuerContext.tenant.slug}`;
+
+  const createConsentChallenge = async (
+    issuerContext: import("../domain/tenants/types").ResolvedIssuerContext,
+    request: import("../domain/authorization/types").ValidatedAuthorizeRequest,
+    userId: string
+  ) => {
+    const token = createOpaqueToken();
+    const now = new Date();
+    const challenge: ConsentChallenge = {
+      id: crypto.randomUUID(),
+      tenantId: issuerContext.tenant.id,
+      issuer: issuerContext.issuer,
+      clientId: request.clientId,
+      userId,
+      redirectUri: request.redirectUri,
+      scope: request.scope,
+      resource: request.resource,
+      state: request.state,
+      nonce: request.nonce,
+      codeChallenge: request.codeChallenge,
+      codeChallengeMethod: request.codeChallengeMethod,
+      tokenHash: await sha256Base64Url(token),
+      expiresAt: new Date(now.getTime() + 10 * 60 * 1000).toISOString(),
+      consumedAt: null,
+      createdAt: now.toISOString()
+    };
+
+    await consentChallengeRepository.create(challenge);
+    const consentUrl = new URL(buildConsentUrl(issuerContext));
+    consentUrl.searchParams.set("consent_challenge", token);
+    return consentUrl.toString();
+  };
+
+  const escapeHtml = (value: string) =>
+    value
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#39;");
+
+  const buildConsentPage = ({
+    clientName,
+    challengeToken,
+    resource,
+    scope,
+    tenantDisplayName,
+    formAction
+  }: {
+    clientName: string;
+    challengeToken: string;
+    resource: string | null;
+    scope: string;
+    tenantDisplayName: string;
+    formAction: string;
+  }) => {
+    const scopeItems = scope
+      .split(/\s+/u)
+      .filter(Boolean)
+      .map((scopeName) => `<li>${escapeHtml(scopeName)}</li>`)
+      .join("");
+    const resourceMarkup = resource === null ? "" : `<p>目标资源：${escapeHtml(resource)}</p>`;
+
+    return `<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>授权确认</title>
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; form-action 'self' ${escapeHtml(formAction)}; style-src 'unsafe-inline'"></head>
+<body><main><h1>${escapeHtml(tenantDisplayName)} 授权确认</h1>
+<p><strong>${escapeHtml(clientName)}</strong> 请求访问你的账号。</p>${resourceMarkup}
+<p>请求权限：</p><ul>${scopeItems}</ul>
+<form method="post"><input type="hidden" name="consent_challenge" value="${escapeHtml(challengeToken)}">
+<button type="submit" name="decision" value="approve">允许</button>
+<button type="submit" name="decision" value="deny">拒绝</button></form></main></body></html>`;
+  };
+
   const isProvisionConflictError = (error: unknown) => {
     if (!(error instanceof Error)) {
       return false;
@@ -711,7 +862,10 @@ export const createApp = (options: AppOptions) => {
   };
 
   const handleAuthorize = async (context: Context) => {
-    const issuerContext = await resolveIssuerContext({
+    const slug = context.req.param("tenant");
+    const issuerContext = new URL(context.req.url).hostname === authDomain && slug
+      ? await resolveIssuerContextBySlug({ slug, oidcHost, tenantRepository })
+      : await resolveIssuerContext({
       requestUrl: context.req.url,
       oidcHost,
       tenantRepository
@@ -737,12 +891,14 @@ export const createApp = (options: AppOptions) => {
         redirectUri: url.searchParams.get("redirect_uri") ?? "",
         responseType: url.searchParams.get("response_type") ?? "",
         scope: url.searchParams.get("scope") ?? "",
+        resource: url.searchParams.get("resource"),
         state: url.searchParams.get("state"),
         nonce: url.searchParams.get("nonce"),
         codeChallenge: url.searchParams.get("code_challenge"),
         codeChallengeMethod: url.searchParams.get("code_challenge_method")
       },
-      session
+      session,
+      resourcePolicy: mcpResourcePolicy
     });
 
     if (result.kind === "error") {
@@ -804,6 +960,13 @@ export const createApp = (options: AppOptions) => {
         }
       });
 
+      if (consentUiEnabled && session !== null) {
+        return context.redirect(
+          await createConsentChallenge(issuerContext, result.request, session.userId),
+          302
+        );
+      }
+
       return context.redirect(
         buildClientErrorRedirectUrl({
           error: "consent_required",
@@ -833,6 +996,193 @@ export const createApp = (options: AppOptions) => {
       redirectUrl.searchParams.set("state", result.request.state);
     }
 
+    return context.redirect(redirectUrl.toString(), 302);
+  };
+
+  const resolveConsentChallenge = async (context: Context) => {
+    const issuerContext = await resolveLoginIssuerContext(context);
+    if (issuerContext === null) {
+      return { issuerContext: null, challenge: null, token: null, session: null };
+    }
+
+    const token = context.req.query("consent_challenge") ?? "";
+    if (token.length === 0) {
+      return { issuerContext, challenge: null, token, session: null };
+    }
+
+    const challenge = await consentChallengeRepository.findActiveByTokenHash(
+      await sha256Base64Url(token)
+    );
+    const resolvedSession = await authorizeSessionResolver(context);
+    const session =
+      resolvedSession !== null && resolvedSession.tenantId === issuerContext.tenant.id
+        ? resolvedSession
+        : null;
+
+    if (
+      challenge === null ||
+      challenge.tenantId !== issuerContext.tenant.id ||
+      (session !== null && session.userId !== challenge.userId)
+    ) {
+      return { issuerContext, challenge: null, token, session };
+    }
+
+    return { issuerContext, challenge, token, session };
+  };
+
+  const handleConsentGet = async (context: Context) => {
+    if (!consentUiEnabled) {
+      return context.notFound();
+    }
+
+    const { issuerContext, challenge, session, token } = await resolveConsentChallenge(context);
+    if (issuerContext === null) {
+      return context.notFound();
+    }
+    if (challenge === null || session === null || token === null) {
+      return context.json({ error: "invalid_consent_challenge" }, 400);
+    }
+
+    const client = await clientRepository.findByClientId(challenge.clientId);
+    if (client === null) {
+      return context.json({ error: "invalid_consent_challenge" }, 400);
+    }
+
+    // Chromium applies form-action to the POST's redirect as well. The callback
+    // was validated against the registered client before creating this challenge.
+    const callbackUrl = new URL(challenge.redirectUri);
+    const formAction = callbackUrl.origin === "null" ? callbackUrl.protocol : callbackUrl.origin;
+    context.header("Content-Security-Policy", `default-src 'none'; form-action 'self' ${formAction}; style-src 'unsafe-inline'`);
+    context.header("Cache-Control", "no-store");
+    return context.html(
+      buildConsentPage({
+        clientName: client.clientName,
+        challengeToken: token,
+        resource: challenge.resource,
+        scope: challenge.scope,
+        tenantDisplayName: issuerContext.tenant.displayName,
+        formAction
+      })
+    );
+  };
+
+  const handleConsentPost = async (context: Context) => {
+    if (!consentUiEnabled) {
+      return context.notFound();
+    }
+
+    const issuerContext = await resolveLoginIssuerContext(context);
+    if (issuerContext === null) {
+      return context.notFound();
+    }
+
+    let formData: FormData;
+    try {
+      formData = await context.req.formData();
+    } catch {
+      return context.json({ error: "invalid_request" }, 400);
+    }
+
+    const token = String(formData.get("consent_challenge") ?? "");
+    const decision = String(formData.get("decision") ?? "deny");
+    const challenge =
+      token.length === 0
+        ? null
+        : await consentChallengeRepository.findActiveByTokenHash(await sha256Base64Url(token));
+    const resolvedSession = await authorizeSessionResolver(context);
+    const session =
+      resolvedSession !== null && resolvedSession.tenantId === issuerContext.tenant.id
+        ? resolvedSession
+        : null;
+
+    if (
+      challenge === null ||
+      session === null ||
+      challenge.tenantId !== issuerContext.tenant.id ||
+      session.userId !== challenge.userId
+    ) {
+      return context.json({ error: "invalid_consent_challenge" }, 400);
+    }
+
+    const consumed = await consentChallengeRepository.consumeById(
+      challenge.id,
+      new Date().toISOString()
+    );
+    if (!consumed) {
+      return context.json({ error: "invalid_consent_challenge" }, 400);
+    }
+
+    if (decision !== "approve") {
+      await recordAuditEventBestEffort({
+        actorType: "end_user",
+        actorId: session.userId,
+        tenantId: issuerContext.tenant.id,
+        eventType: "oidc.authorization.consent.denied",
+        targetType: "oidc_client",
+        targetId: challenge.clientId,
+        payload: { resource: challenge.resource, scope: challenge.scope }
+      });
+
+      return context.redirect(
+        buildClientErrorRedirectUrl({
+          error: "access_denied",
+          redirectUri: challenge.redirectUri,
+          state: challenge.state
+        }),
+        302
+      );
+    }
+
+    const authorizationResult = await authorizeRequest({
+      authMethod: null,
+      authorizationCodeRepository,
+      clientRepository,
+      issuerContext,
+      loginChallengeRepository,
+      request: {
+        clientId: challenge.clientId,
+        redirectUri: challenge.redirectUri,
+        responseType: "code",
+        scope: challenge.scope,
+        resource: challenge.resource,
+        state: challenge.state,
+        nonce: challenge.nonce,
+        codeChallenge: challenge.codeChallenge,
+        codeChallengeMethod: challenge.codeChallengeMethod
+      },
+      session,
+      resourcePolicy: mcpResourcePolicy,
+      consentGranted: true
+    });
+
+    if (authorizationResult.kind !== "authorization_granted") {
+      const error = authorizationResult.kind === "error" ? authorizationResult.error : "invalid_request";
+      return context.redirect(
+        buildClientErrorRedirectUrl({
+          error,
+          errorDescription: authorizationResult.kind === "error" ? authorizationResult.errorDescription : undefined,
+          redirectUri: challenge.redirectUri,
+          state: challenge.state
+        }),
+        302
+      );
+    }
+
+    await recordAuditEventBestEffort({
+      actorType: "end_user",
+      actorId: session.userId,
+      tenantId: issuerContext.tenant.id,
+      eventType: "oidc.authorization.consent.granted",
+      targetType: "oidc_client",
+      targetId: challenge.clientId,
+      payload: { resource: challenge.resource, scope: challenge.scope }
+    });
+
+    const redirectUrl = new URL(authorizationResult.request.redirectUri);
+    redirectUrl.searchParams.set("code", authorizationResult.code);
+    if (authorizationResult.request.state !== null) {
+      redirectUrl.searchParams.set("state", authorizationResult.request.state);
+    }
     return context.redirect(redirectUrl.toString(), 302);
   };
 
@@ -1104,6 +1454,7 @@ export const createApp = (options: AppOptions) => {
         redirectUri: result.challenge.redirectUri,
         responseType: "code",
         scope: result.challenge.scope,
+        resource: result.challenge.resource ?? null,
         state: result.challenge.state.length === 0 ? null : result.challenge.state,
         nonce: result.challenge.nonce,
         codeChallenge: result.challenge.codeChallenge,
@@ -1112,7 +1463,8 @@ export const createApp = (options: AppOptions) => {
       session: {
         userId: result.user.id,
         tenantId: result.user.tenantId
-      }
+      },
+      resourcePolicy: mcpResourcePolicy
     });
 
     if (authorizationResult.kind === "error") {
@@ -1168,16 +1520,15 @@ export const createApp = (options: AppOptions) => {
         }
       });
 
-      return context.json(
-        {
-          redirect_uri: buildClientErrorRedirectUrl({
+      const redirectUri = consentUiEnabled
+        ? await createConsentChallenge(issuerContext, authorizationResult.request, result.user.id)
+        : buildClientErrorRedirectUrl({
             error: "consent_required",
             redirectUri: authorizationResult.request.redirectUri,
             state: authorizationResult.request.state
-          })
-        },
-        200
-      );
+          });
+
+      return context.json({ redirect_uri: redirectUri }, 200);
     }
 
     if (authorizationResult.kind !== "authorization_granted") {
@@ -1355,6 +1706,7 @@ export const createApp = (options: AppOptions) => {
         redirectUri: result.challenge.redirectUri,
         responseType: "code",
         scope: result.challenge.scope,
+        resource: result.challenge.resource ?? null,
         state: result.challenge.state.length === 0 ? null : result.challenge.state,
         nonce: result.challenge.nonce,
         codeChallenge: result.challenge.codeChallenge,
@@ -1363,7 +1715,8 @@ export const createApp = (options: AppOptions) => {
       session: {
         userId: result.user.id,
         tenantId: result.user.tenantId
-      }
+      },
+      resourcePolicy: mcpResourcePolicy
     });
 
     if (authorizationResult.kind === "error") {
@@ -1411,16 +1764,15 @@ export const createApp = (options: AppOptions) => {
         }
       });
 
-      return context.json(
-        {
-          redirect_uri: buildClientErrorRedirectUrl({
+      const redirectUri = consentUiEnabled
+        ? await createConsentChallenge(issuerContext, authorizationResult.request, result.user.id)
+        : buildClientErrorRedirectUrl({
             error: "consent_required",
             redirectUri: authorizationResult.request.redirectUri,
             state: authorizationResult.request.state
-          })
-        },
-        200
-      );
+          });
+
+      return context.json({ redirect_uri: redirectUri }, 200);
     }
 
     if (authorizationResult.kind !== "authorization_granted") {
@@ -1681,6 +2033,7 @@ export const createApp = (options: AppOptions) => {
         redirectUri: result.challenge.redirectUri,
         responseType: "code",
         scope: result.challenge.scope,
+        resource: result.challenge.resource ?? null,
         state: result.challenge.state.length === 0 ? null : result.challenge.state,
         nonce: result.challenge.nonce,
         codeChallenge: result.challenge.codeChallenge,
@@ -1689,7 +2042,8 @@ export const createApp = (options: AppOptions) => {
       session: {
         userId: result.user.id,
         tenantId: result.user.tenantId
-      }
+      },
+      resourcePolicy: mcpResourcePolicy
     });
 
     if (authorizationResult.kind === "error") {
@@ -1737,16 +2091,15 @@ export const createApp = (options: AppOptions) => {
         }
       });
 
-      return context.json(
-        {
-          redirect_uri: buildClientErrorRedirectUrl({
+      const redirectUri = consentUiEnabled
+        ? await createConsentChallenge(issuerContext, authorizationResult.request, result.user.id)
+        : buildClientErrorRedirectUrl({
             error: "consent_required",
             redirectUri: authorizationResult.request.redirectUri,
             state: authorizationResult.request.state
-          })
-        },
-        200
-      );
+          });
+
+      return context.json({ redirect_uri: redirectUri }, 200);
     }
 
     if (authorizationResult.kind !== "authorization_granted") {
@@ -1807,12 +2160,14 @@ export const createApp = (options: AppOptions) => {
         redirectUri: challenge.redirectUri,
         responseType: "code",
         scope: challenge.scope,
+        resource: challenge.resource ?? null,
         state: challenge.state.length === 0 ? null : challenge.state,
         nonce: challenge.nonce,
         codeChallenge: challenge.codeChallenge,
         codeChallengeMethod: challenge.codeChallengeMethod
       },
-      session: { userId, tenantId: challenge.tenantId }
+      session: { userId, tenantId: challenge.tenantId },
+      resourcePolicy: mcpResourcePolicy
     });
 
     if (authorizationResult.kind === "error") {
@@ -1847,16 +2202,15 @@ export const createApp = (options: AppOptions) => {
     }
 
     if (authorizationResult.kind === "consent_required") {
-      return context.json(
-        {
-          redirect_uri: buildClientErrorRedirectUrl({
+      const redirectUri = consentUiEnabled
+        ? await createConsentChallenge(issuerContext, authorizationResult.request, userId)
+        : buildClientErrorRedirectUrl({
             error: "consent_required",
             redirectUri: authorizationResult.request.redirectUri,
             state: authorizationResult.request.state
-          })
-        },
-        200
-      );
+          });
+
+      return context.json({ redirect_uri: redirectUri }, 200);
     }
 
     if (authorizationResult.kind !== "authorization_granted") {
@@ -2395,6 +2749,7 @@ export const createApp = (options: AppOptions) => {
         refreshToken: formData.get("refresh_token")?.toString() ?? null,
         redirectUri: String(formData.get("redirect_uri") ?? ""),
         codeVerifier: String(formData.get("code_verifier") ?? ""),
+        resource: formData.get("resource")?.toString() || null,
         requestedClientId: formData.get("client_id")?.toString() ?? null,
         requestedClientSecret: formData.get("client_secret")?.toString() ?? null
       },
@@ -2448,6 +2803,101 @@ export const createApp = (options: AppOptions) => {
     return context.json(result.response, 200);
   };
 
+  const handleRevoke = async (context: Context) => {
+    context.header("Cache-Control", "no-store");
+    context.header("Pragma", "no-cache");
+
+    const issuerContext = await resolveIssuerContext({
+      requestUrl: context.req.url,
+      oidcHost,
+      tenantRepository
+    });
+    if (issuerContext === null) {
+      return context.notFound();
+    }
+
+    let formData: FormData;
+    try {
+      formData = await context.req.formData();
+    } catch {
+      return context.json({ error: "invalid_request" }, 400);
+    }
+
+    const result = await revokeToken({
+      accessTokenRevocationRepository,
+      clientRepository,
+      issuerContext,
+      refreshTokenRepository,
+      request: {
+        authorizationHeader: context.req.header("authorization"),
+        requestedClientId: formData.get("client_id")?.toString() ?? null,
+        requestedClientSecret: formData.get("client_secret")?.toString() ?? null,
+        token: formData.get("token")?.toString() ?? ""
+      },
+      signer
+    });
+
+    if (result.kind === "error") {
+      if (context.req.header("authorization")?.match(/^basic\s+/iu) !== null) {
+        context.header("WWW-Authenticate", 'Basic realm="revoke", error="invalid_client"');
+      }
+      return context.json({ error: result.error }, result.status);
+    }
+
+    await recordAuditEventBestEffort({
+      actorType: "oidc_client",
+      actorId: result.clientId,
+      tenantId: issuerContext.tenant.id,
+      eventType: "oidc.token.revoked",
+      targetType: "oidc_client",
+      targetId: result.clientId,
+      payload: null
+    });
+
+    return context.json({}, 200);
+  };
+
+  const handleIntrospect = async (context: Context) => {
+    context.header("Cache-Control", "no-store");
+    context.header("Pragma", "no-cache");
+
+    const issuerContext = await resolveIssuerContext({
+      requestUrl: context.req.url,
+      oidcHost,
+      tenantRepository
+    });
+    if (issuerContext === null) return context.notFound();
+
+    let formData: FormData;
+    try {
+      formData = await context.req.formData();
+    } catch {
+      return context.json({ error: "invalid_request" }, 400);
+    }
+
+    const result = await introspectAccessToken({
+      accessTokenRevocationRepository,
+      clientRepository,
+      issuerContext,
+      request: {
+        authorizationHeader: context.req.header("authorization"),
+        requestedClientId: formData.get("client_id")?.toString() ?? null,
+        requestedClientSecret: formData.get("client_secret")?.toString() ?? null,
+        token: formData.get("token")?.toString() ?? ""
+      },
+      signer
+    });
+
+    if (result.kind === "error") {
+      if (context.req.header("authorization")?.match(/^basic\s+/iu) !== null) {
+        context.header("WWW-Authenticate", 'Basic realm="introspect", error="invalid_client"');
+      }
+      return context.json({ error: result.error }, result.status);
+    }
+
+    return context.json({ active: result.active }, 200);
+  };
+
   const handleScope = async (context: Context) => {
     context.header("Cache-Control", "no-store");
     context.header("Pragma", "no-cache");
@@ -2488,6 +2938,7 @@ export const createApp = (options: AppOptions) => {
     const result = await issueScopeToken({
       accessTokenClaimsRepository,
       clientRepository,
+      contentReaderPolicy,
       issuerContext,
       request: {
         authorizationHeader: context.req.header("authorization"),
@@ -2509,12 +2960,23 @@ export const createApp = (options: AppOptions) => {
         actorType: "oidc_client",
         actorId: result.clientId,
         tenantId: result.tenantId ?? issuerContext.tenant.id,
-        eventType: "oidc.scope.switch.failed",
+        eventType:
+          result.mode === "content_reader"
+            ? "oidc.scope.content_reader.failed"
+            : "oidc.scope.switch.failed",
         targetType: "oidc_client",
         targetId: result.clientId,
         payload: {
           reason: result.error,
-          user_id: result.userId
+          mode: result.mode,
+          user_id: result.userId,
+          ...(result.mode === "content_reader"
+            ? {
+                workspace_id: result.workspaceId ?? null,
+                entitlement_revision: result.entitlementRevision ?? null,
+                content_database: result.contentDatabase ?? null
+              }
+            : {})
         }
       });
 
@@ -2533,17 +2995,29 @@ export const createApp = (options: AppOptions) => {
       actorType: "oidc_client",
       actorId: result.clientId,
       tenantId: result.tenantId,
-      eventType: "oidc.scope.switch.succeeded",
+      eventType:
+        result.mode === "content_reader"
+          ? "oidc.scope.content_reader.succeeded"
+          : "oidc.scope.switch.succeeded",
       targetType: "oidc_client",
       targetId: result.clientId,
       payload: {
+        mode: result.mode,
         claim_names:
           bodyRecord.claims !== null &&
           typeof bodyRecord.claims === "object" &&
           !Array.isArray(bodyRecord.claims)
             ? Object.keys(bodyRecord.claims as Record<string, unknown>)
             : [],
-        user_id: result.userId
+        user_id: result.userId,
+        ...(result.mode === "content_reader"
+          ? {
+              workspace_id: result.workspaceId ?? null,
+              entitlement_revision: result.entitlementRevision ?? null,
+              content_database: result.contentDatabase ?? null,
+              expires_in: result.response.expires_in
+            }
+          : {})
       }
     });
 
@@ -2631,8 +3105,16 @@ export const createApp = (options: AppOptions) => {
   // OIDC protocol routes (host = o.{domain})
   app.get("/authorize", handleAuthorize);
   app.get("/t/:tenant/authorize", handleAuthorize);
+  app.get("/consent", handleConsentGet);
+  app.get("/consent/:tenant", handleConsentGet);
+  app.post("/consent", handleConsentPost);
+  app.post("/consent/:tenant", handleConsentPost);
   app.post("/token", handleToken);
   app.post("/t/:tenant/token", handleToken);
+  app.post("/revoke", handleRevoke);
+  app.post("/t/:tenant/revoke", handleRevoke);
+  app.post("/introspect", handleIntrospect);
+  app.post("/t/:tenant/introspect", handleIntrospect);
   app.post("/scope", handleScope);
   app.post("/t/:tenant/scope", handleScope);
 
@@ -2724,6 +3206,178 @@ export const createApp = (options: AppOptions) => {
     }
   };
 
+  const handleMcpClientRegistration = async (requestUrl: string, payload: unknown, clientIp: string) => {
+    const issuerContext = await resolveIssuerContext({
+      requestUrl,
+      oidcHost,
+      tenantRepository
+    });
+
+    if (issuerContext === null) {
+      return { status: 404 as const };
+    }
+
+    if (mcpResourcePolicy === null) {
+      return { status: 404 as const };
+    }
+
+    const now = Date.now();
+    const currentBucket = mcpRegistrationBuckets.get(clientIp);
+    if (currentBucket === undefined || now - currentBucket.windowStartedAt >= 60_000) {
+      mcpRegistrationBuckets.set(clientIp, { windowStartedAt: now, count: 1 });
+    } else if (currentBucket.count >= 30) {
+      return {
+        status: 429 as const,
+        body: { error: "too_many_requests" }
+      };
+    } else {
+      currentBucket.count += 1;
+    }
+
+    try {
+      const result = await registerMcpClient({
+        clientRepository,
+        input: payload,
+        issuerContext,
+        resourcePolicy: mcpResourcePolicy
+      });
+      const tokenHash = await sha256Base64Url(result.registrationAccessToken);
+
+      try {
+        await registrationAccessTokenRepository.store({
+          clientId: result.client.clientId,
+          expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+          issuer: issuerContext.issuer,
+          tenantId: issuerContext.tenant.id,
+          tokenHash
+        });
+
+        await auditRepository.record({
+          id: crypto.randomUUID(),
+          actorType: "mcp_dcr",
+          actorId: null,
+          tenantId: issuerContext.tenant.id,
+          eventType: "oidc.client.registered",
+          targetType: "oidc_client",
+          targetId: result.client.clientId,
+          payload: {
+            application_type: result.client.applicationType,
+            client_name: result.client.clientName,
+            resource: mcpResourcePolicy.resource,
+            scopes: result.client.allowedScopes ?? []
+          },
+          occurredAt: new Date().toISOString()
+        });
+      } catch (error) {
+        await Promise.allSettled([
+          clientRepository.deleteByClientId(result.client.clientId),
+          registrationAccessTokenRepository.deleteByTokenHash(tokenHash)
+        ]);
+        throw error;
+      }
+
+      return {
+        status: 201 as const,
+        body: {
+          client_id: result.client.clientId,
+          client_secret: null,
+          registration_access_token: result.registrationAccessToken,
+          registration_client_uri: `${issuerContext.issuer}/connect/mcp/register/${result.client.clientId}`,
+          client_name: result.client.clientName,
+          redirect_uris: result.client.redirectUris,
+          application_type: result.client.applicationType,
+          token_endpoint_auth_method: result.client.tokenEndpointAuthMethod,
+          grant_types: result.client.grantTypes,
+          response_types: result.client.responseTypes,
+          scope: ["openid", ...(result.client.allowedScopes ?? [])].join(" "),
+          resource: mcpResourcePolicy.resource
+        }
+      };
+    } catch (error) {
+      if (error instanceof ZodError) {
+        return {
+          status: 400 as const,
+          body: {
+            error: "invalid_client_metadata",
+            issues: error.issues
+          }
+        };
+      }
+
+      if (error instanceof Error && /resource|scope/u.test(error.message)) {
+        return {
+          status: 400 as const,
+          body: {
+            error: "invalid_client_metadata",
+            error_description: error.message
+          }
+        };
+      }
+
+      throw error;
+    }
+  };
+
+  const mcpRegistrationToken = (authorizationHeader: string | undefined): string | null =>
+    authorizationHeader?.match(/^Bearer\s+([^\s]+)$/iu)?.[1] ?? null;
+
+  const mcpClientRegistrationMetadata = (client: Client) => ({
+    client_id: client.clientId,
+    client_secret: null,
+    client_name: client.clientName,
+    redirect_uris: client.redirectUris,
+    application_type: client.applicationType,
+    token_endpoint_auth_method: client.tokenEndpointAuthMethod,
+    grant_types: client.grantTypes,
+    response_types: client.responseTypes,
+    scope: ["openid", ...(client.allowedScopes ?? [])].join(" "),
+    resource: client.accessTokenAudience
+  });
+
+  const resolveMcpRegistrationClient = async (context: Context, clientId: string) => {
+    const issuerContext = await resolveIssuerContext({
+      requestUrl: context.req.url,
+      oidcHost,
+      tenantRepository
+    });
+
+    if (issuerContext === null || mcpResourcePolicy === null) {
+      return { kind: "not_found" as const };
+    }
+
+    const token = mcpRegistrationToken(context.req.header("authorization"));
+    if (token === null) {
+      context.header("WWW-Authenticate", 'Bearer realm="mcp-registration", error="invalid_token"');
+      return { kind: "unauthorized" as const };
+    }
+
+    const tokenRecord = await registrationAccessTokenRepository.findByTokenHash(
+      await sha256Base64Url(token)
+    );
+    if (
+      tokenRecord === null
+      || tokenRecord.clientId !== clientId
+      || tokenRecord.tenantId !== issuerContext.tenant.id
+      || tokenRecord.issuer !== issuerContext.issuer
+    ) {
+      context.header("WWW-Authenticate", 'Bearer realm="mcp-registration", error="invalid_token"');
+      return { kind: "unauthorized" as const };
+    }
+
+    const client = await clientRepository.findByClientId(clientId);
+    if (
+      client === null
+      || client.tenantId !== issuerContext.tenant.id
+      || client.tokenEndpointAuthMethod !== "none"
+      || client.trustLevel !== "third_party"
+      || client.accessTokenAudience !== mcpResourcePolicy.resource
+    ) {
+      return { kind: "not_found" as const };
+    }
+
+    return { kind: "authorized" as const, client, token };
+  };
+
   app.post("/connect/register", async (context) => {
     const result = await handleDynamicClientRegistration(
       context.req.header("authorization"),
@@ -2751,6 +3405,90 @@ export const createApp = (options: AppOptions) => {
 
     return context.json(result.body ?? { error: "unauthorized" }, result.status);
   });
+
+  app.post("/connect/mcp/register", async (context) => {
+    let payload: unknown;
+    try {
+      payload = await context.req.json();
+    } catch {
+      return context.json({ error: "invalid_client_metadata" }, 400);
+    }
+
+    const result = await handleMcpClientRegistration(
+      context.req.url,
+      payload,
+      context.req.header("cf-connecting-ip") ??
+        context.req.header("x-forwarded-for")?.split(",")[0]?.trim() ??
+        "unknown"
+    );
+
+    if (result.status === 404) {
+      return context.notFound();
+    }
+
+    return context.json(result.body ?? { error: "too_many_requests" }, result.status);
+  });
+
+  app.post("/t/:tenant/connect/mcp/register", async (context) => {
+    let payload: unknown;
+    try {
+      payload = await context.req.json();
+    } catch {
+      return context.json({ error: "invalid_client_metadata" }, 400);
+    }
+
+    const result = await handleMcpClientRegistration(
+      context.req.url,
+      payload,
+      context.req.header("cf-connecting-ip") ??
+        context.req.header("x-forwarded-for")?.split(",")[0]?.trim() ??
+        "unknown"
+    );
+
+    if (result.status === 404) {
+      return context.notFound();
+    }
+
+    return context.json(result.body ?? { error: "too_many_requests" }, result.status);
+  });
+
+  const handleMcpClientRegistrationConfiguration = async (context: Context) => {
+    const clientId = context.req.param("clientId");
+    if (clientId === undefined || clientId.length === 0) {
+      return context.notFound();
+    }
+    const result = await resolveMcpRegistrationClient(context, clientId);
+    if (result.kind === "not_found") return context.notFound();
+    if (result.kind === "unauthorized") return context.json({ error: "invalid_token" }, 401);
+
+    if (context.req.method === "GET") {
+      return context.json(mcpClientRegistrationMetadata(result.client), 200);
+    }
+
+    if (context.req.method === "DELETE") {
+      await clientRepository.deleteByClientId(result.client.clientId);
+      await registrationAccessTokenRepository.deleteByTokenHash(
+        await sha256Base64Url(result.token)
+      );
+      await recordAuditEventBestEffort({
+        actorType: "mcp_dcr",
+        actorId: result.client.clientId,
+        tenantId: result.client.tenantId,
+        eventType: "oidc.client.deleted",
+        targetType: "oidc_client",
+        targetId: result.client.clientId,
+        payload: { resource: mcpResourcePolicy?.resource ?? null }
+      });
+      return context.body(null, 204);
+    }
+
+    return context.json({ error: "method_not_allowed" }, 405);
+  };
+
+  app.get("/connect/mcp/register/:clientId", handleMcpClientRegistrationConfiguration);
+  app.delete("/connect/mcp/register/:clientId", handleMcpClientRegistrationConfiguration);
+  app.get("/t/:tenant/connect/mcp/register/:clientId", handleMcpClientRegistrationConfiguration);
+  app.delete("/t/:tenant/connect/mcp/register/:clientId", handleMcpClientRegistrationConfiguration);
 
   app.post("/t/:tenant/register", async (context) => {
     const issuerContext = await resolveIssuerContextBySlug({
@@ -2889,12 +3627,14 @@ export const createApp = (options: AppOptions) => {
         redirectUri: challenge.redirectUri,
         responseType: "code",
         scope: challenge.scope,
+        resource: challenge.resource ?? null,
         state: challenge.state.length === 0 ? null : challenge.state,
         nonce: challenge.nonce,
         codeChallenge: challenge.codeChallenge,
         codeChallengeMethod: challenge.codeChallengeMethod
       },
-      session: { userId: newUser.id, tenantId: newUser.tenantId }
+      session: { userId: newUser.id, tenantId: newUser.tenantId },
+      resourcePolicy: mcpResourcePolicy
     });
 
     if (authorizationResult.kind === "error") {
@@ -2950,16 +3690,15 @@ export const createApp = (options: AppOptions) => {
         }
       });
 
-      return context.json(
-        {
-          redirect_uri: buildClientErrorRedirectUrl({
+      const redirectUri = consentUiEnabled
+        ? await createConsentChallenge(issuerContext, authorizationResult.request, newUser.id)
+        : buildClientErrorRedirectUrl({
             error: "consent_required",
             redirectUri: authorizationResult.request.redirectUri,
             state: authorizationResult.request.state
-          })
-        },
-        200
-      );
+          });
+
+      return context.json({ redirect_uri: redirectUri }, 200);
     }
 
     if (authorizationResult.kind !== "authorization_granted") {

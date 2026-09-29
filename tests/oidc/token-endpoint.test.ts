@@ -6,6 +6,7 @@ import { MemoryAuthorizationCodeRepository } from "../../src/adapters/db/memory/
 import { MemoryClientAuthMethodPolicyRepository } from "../../src/adapters/db/memory/memory-client-auth-method-policy-repository";
 import { MemoryClientRepository } from "../../src/adapters/db/memory/memory-client-repository";
 import { MemoryRefreshTokenRepository } from "../../src/adapters/db/memory/memory-refresh-token-repository";
+import { MemoryAccessTokenRevocationRepository } from "../../src/adapters/db/memory/memory-access-token-revocation-repository";
 import { MemoryTenantRepository } from "../../src/adapters/db/memory/memory-tenant-repository";
 import { MemoryTotpRepository } from "../../src/adapters/db/memory/memory-totp-repository";
 import { MemoryMfaPasskeyChallengeRepository } from "../../src/adapters/db/memory/memory-mfa-passkey-challenge-repository";
@@ -114,13 +115,15 @@ const seedAuthorizationCode = async ({
   clientId,
   codeRepository,
   expiresAt,
-  issuer
+  issuer,
+  resource: codeResource
 }: {
   code: string;
   clientId: string;
   codeRepository: MemoryAuthorizationCodeRepository;
   expiresAt: string;
   issuer: string;
+  resource?: string | null;
 }) => {
   const authorizationCode: AuthorizationCode = {
     id: `authorization_code_${code}`,
@@ -130,6 +133,7 @@ const seedAuthorizationCode = async ({
     userId: "user_123",
     redirectUri: "https://app.acme.test/callback",
     scope: "openid profile",
+    resource: codeResource ?? null,
     nonce: "nonce_123",
     codeChallenge: await sha256Base64Url("verifier-123456"),
     codeChallengeMethod: "S256",
@@ -155,7 +159,8 @@ const exchangeCode = async ({
   secret,
   skipGrantType = false,
   useBasicAuth,
-  requestUrl
+  requestUrl,
+  resource
 }: {
   app: ReturnType<typeof createApp>;
   clientId: string;
@@ -170,6 +175,7 @@ const exchangeCode = async ({
   skipGrantType?: boolean;
   useBasicAuth: boolean;
   requestUrl: string;
+  resource?: string;
 }) => {
   const body = new URLSearchParams({
     code,
@@ -179,6 +185,10 @@ const exchangeCode = async ({
 
   if (!skipGrantType) {
     body.set("grant_type", "authorization_code");
+  }
+
+  if (resource !== undefined) {
+    body.set("resource", resource);
   }
 
   const shouldIncludeBodyCredentials = includeBodyCredentials ?? !useBasicAuth;
@@ -214,7 +224,8 @@ const exchangeRefreshToken = async ({
   refreshToken,
   requestUrl,
   secret,
-  useBasicAuth
+  useBasicAuth,
+  resource
 }: {
   app: ReturnType<typeof createApp>;
   clientId: string;
@@ -222,11 +233,16 @@ const exchangeRefreshToken = async ({
   requestUrl: string;
   secret: string | null;
   useBasicAuth: boolean;
+  resource?: string;
 }) => {
   const body = new URLSearchParams({
     grant_type: "refresh_token",
     refresh_token: refreshToken
   });
+
+  if (resource !== undefined) {
+    body.set("resource", resource);
+  }
 
   if (!useBasicAuth) {
     body.set("client_id", clientId);
@@ -1253,5 +1269,221 @@ describe("/token", () => {
     expect(mixedCaseInvalid.headers.get("www-authenticate")).toBe(
       'Basic realm="token", error="invalid_client"'
     );
+  });
+
+  it("keeps the managed resource as the access-token audience and rejects resource changes", async () => {
+    const { material, signer } = await createSigner();
+    const mcpResource = "https://auth.example.test/ops";
+    const client = {
+      ...(await createClient({
+        authMethod: "none",
+        clientId: "client_mcp_resource",
+        secret: null
+      })),
+      applicationType: "native" as const,
+      clientProfile: "native" as const,
+      accessTokenAudience: mcpResource,
+      allowedScopes: ["content.read"]
+    };
+    const codeRepository = new MemoryAuthorizationCodeRepository();
+    const refreshTokenRepository = new MemoryRefreshTokenRepository();
+
+    await seedAuthorizationCode({
+      code: "code-mcp-resource",
+      clientId: client.clientId,
+      codeRepository,
+      expiresAt: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+      issuer: "https://idp.example.test/t/acme",
+      resource: mcpResource
+    });
+
+    const app = createApp({
+      auditRepository: new MemoryAuditRepository(),
+      authorizationCodeRepository: codeRepository,
+      clientRepository: new MemoryClientRepository([client]),
+      refreshTokenRepository,
+      adminBootstrapPasswordHash: "",
+      adminWhitelist: [],
+      managementApiToken: "",
+      oidcHost: "idp.example.test",
+      authDomain: "auth.example.test",
+      signer,
+      tenantRepository,
+      totpRepository: new MemoryTotpRepository(),
+      mfaPasskeyChallengeRepository: new MemoryMfaPasskeyChallengeRepository(),
+      totpEncryptionKey: new Uint8Array(32).fill(0)
+    });
+
+    const success = await exchangeCode({
+      app,
+      clientId: client.clientId,
+      code: "code-mcp-resource",
+      codeVerifier: "verifier-123456",
+      redirectUri: "https://app.acme.test/callback",
+      secret: null,
+      useBasicAuth: false,
+      requestUrl: "https://idp.example.test/t/acme/token",
+      resource: mcpResource
+    });
+
+    expect(success.status).toBe(200);
+    const tokenSet = (await success.json()) as { access_token: string; refresh_token: string };
+    const verificationKey = await importJWK(material.key.publicJwk as JWK, "RS256");
+    const accessToken = await jwtVerify(tokenSet.access_token, verificationKey, {
+      issuer: "https://idp.example.test/t/acme",
+      audience: mcpResource
+    });
+    expect(accessToken.payload.aud).toBe(mcpResource);
+
+    const changedResource = await exchangeRefreshToken({
+      app,
+      clientId: client.clientId,
+      refreshToken: tokenSet.refresh_token,
+      requestUrl: "https://idp.example.test/t/acme/token",
+      secret: null,
+      useBasicAuth: false,
+      resource: "https://other.example.test/ops"
+    });
+    expect(changedResource.status).toBe(400);
+    await expect(changedResource.json()).resolves.toEqual({ error: "invalid_grant" });
+  });
+
+  it("revokes a refresh token and prevents a subsequent refresh", async () => {
+    const { signer } = await createSigner();
+    const client = await createClient({
+      authMethod: "none",
+      clientId: "client_revoke",
+      secret: null
+    });
+    const codeRepository = new MemoryAuthorizationCodeRepository();
+    const refreshTokenRepository = new MemoryRefreshTokenRepository();
+    await seedAuthorizationCode({
+      code: "code-revoke",
+      clientId: client.clientId,
+      codeRepository,
+      expiresAt: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+      issuer: "https://idp.example.test/t/acme"
+    });
+    const app = createApp({
+      authorizationCodeRepository: codeRepository,
+      clientRepository: new MemoryClientRepository([client]),
+      refreshTokenRepository,
+      adminBootstrapPasswordHash: "",
+      adminWhitelist: [],
+      managementApiToken: "",
+      oidcHost: "idp.example.test",
+      authDomain: "auth.example.test",
+      signer,
+      tenantRepository,
+      totpRepository: new MemoryTotpRepository(),
+      mfaPasskeyChallengeRepository: new MemoryMfaPasskeyChallengeRepository(),
+      totpEncryptionKey: new Uint8Array(32).fill(0)
+    });
+
+    const exchanged = await exchangeCode({
+      app,
+      clientId: client.clientId,
+      code: "code-revoke",
+      codeVerifier: "verifier-123456",
+      redirectUri: "https://app.acme.test/callback",
+      secret: null,
+      useBasicAuth: false,
+      requestUrl: "https://idp.example.test/t/acme/token"
+    });
+    expect(exchanged.status).toBe(200);
+    const tokenSet = (await exchanged.json()) as { refresh_token: string };
+
+    const revoked = await app.request("https://idp.example.test/t/acme/revoke", {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        client_id: client.clientId,
+        token: tokenSet.refresh_token
+      }).toString()
+    });
+    expect(revoked.status).toBe(200);
+    expect(revoked.headers.get("cache-control")).toBe("no-store");
+
+    const refresh = await exchangeRefreshToken({
+      app,
+      clientId: client.clientId,
+      refreshToken: tokenSet.refresh_token,
+      requestUrl: "https://idp.example.test/t/acme/token",
+      secret: null,
+      useBasicAuth: false
+    });
+    expect(refresh.status).toBe(400);
+    await expect(refresh.json()).resolves.toEqual({ error: "invalid_grant" });
+  });
+
+  it("marks a revoked access token inactive for an authenticated resource server", async () => {
+    const { signer } = await createSigner();
+    const client = await createClient({
+      authMethod: "client_secret_basic",
+      clientId: "client_access_revoke",
+      secret: "access-revoke-secret"
+    });
+    const codeRepository = new MemoryAuthorizationCodeRepository();
+    const accessTokenRevocationRepository = new MemoryAccessTokenRevocationRepository();
+    await seedAuthorizationCode({
+      code: "code-access-revoke",
+      clientId: client.clientId,
+      codeRepository,
+      expiresAt: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+      issuer: "https://idp.example.test/t/acme"
+    });
+
+    const app = createApp({
+      accessTokenRevocationRepository,
+      auditRepository: new MemoryAuditRepository(),
+      authorizationCodeRepository: codeRepository,
+      clientRepository: new MemoryClientRepository([client]),
+      adminBootstrapPasswordHash: "",
+      adminWhitelist: [],
+      managementApiToken: "",
+      oidcHost: "idp.example.test",
+      authDomain: "auth.example.test",
+      signer,
+      tenantRepository,
+      totpRepository: new MemoryTotpRepository(),
+      mfaPasskeyChallengeRepository: new MemoryMfaPasskeyChallengeRepository(),
+      totpEncryptionKey: new Uint8Array(32).fill(0)
+    });
+
+    const exchanged = await exchangeCode({
+      app,
+      clientId: client.clientId,
+      code: "code-access-revoke",
+      codeVerifier: "verifier-123456",
+      redirectUri: "https://app.acme.test/callback",
+      secret: "access-revoke-secret",
+      useBasicAuth: true,
+      requestUrl: "https://idp.example.test/t/acme/token"
+    });
+    const tokenSet = (await exchanged.json()) as { access_token: string };
+    const authorization = `Basic ${btoa(`${client.clientId}:access-revoke-secret`)}`;
+    const introspect = async () =>
+      await app.request("https://idp.example.test/t/acme/introspect", {
+        method: "POST",
+        headers: {
+          authorization,
+          "content-type": "application/x-www-form-urlencoded"
+        },
+        body: new URLSearchParams({ token: tokenSet.access_token }).toString()
+      });
+
+    await expect(introspect()).resolves.toMatchObject({ status: 200 });
+    await expect((await introspect()).json()).resolves.toEqual({ active: true });
+
+    const revoked = await app.request("https://idp.example.test/t/acme/revoke", {
+      method: "POST",
+      headers: {
+        authorization,
+        "content-type": "application/x-www-form-urlencoded"
+      },
+      body: new URLSearchParams({ token: tokenSet.access_token }).toString()
+    });
+    expect(revoked.status).toBe(200);
+    await expect((await introspect()).json()).resolves.toEqual({ active: false });
   });
 });

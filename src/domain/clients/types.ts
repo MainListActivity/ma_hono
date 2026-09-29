@@ -62,6 +62,8 @@ export interface Client {
   consentPolicy: ClientConsentPolicy;
   clientProfile: ClientProfile;
   accessTokenAudience: string | null;
+  /** Optional per-client ceiling for a managed resource (openid is implicit). */
+  allowedScopes?: string[];
   initiateLoginUri?: string | null;
   claimHookUrl?: string | null;
   claimHookAuthHeaderName?: string | null;

@@ -5,6 +5,8 @@ import type { AccessTokenCustomClaim } from "./access-token-claims-types";
 import { adminClientRegistrationSchema } from "./admin-registration-schema";
 import type { ClientRepository } from "./repository";
 import { dynamicClientRegistrationSchema } from "./registration-schema";
+import { mcpClientRegistrationSchema } from "./mcp-registration-schema";
+import type { ManagedResourcePolicy } from "../oidc/resource-policy";
 import type { Client, ClientTokenEndpointAuthMethod, RegisterClientResult } from "./types";
 
 export const createOpaqueToken = () => crypto.randomUUID().replaceAll("-", "");
@@ -62,6 +64,69 @@ export const registerClient = async ({
   return {
     client,
     clientSecret,
+    registrationAccessToken
+  };
+};
+
+/**
+ * Registers an untrusted MCP/native client.  The caller supplies the managed
+ * resource policy; no client-controlled trust, audience, claims, or database
+ * scope is accepted here.
+ */
+export const registerMcpClient = async ({
+  clientRepository,
+  input,
+  issuerContext,
+  resourcePolicy
+}: {
+  clientRepository: ClientRepository;
+  input: unknown;
+  issuerContext: ResolvedIssuerContext;
+  resourcePolicy: ManagedResourcePolicy;
+}): Promise<RegisterClientResult> => {
+  const payload = mcpClientRegistrationSchema.parse(input);
+  const requestedResource = payload.resource ?? resourcePolicy.resource;
+
+  if (requestedResource !== resourcePolicy.resource) {
+    throw new Error("resource is not managed by this authorization server");
+  }
+
+  const requestedScopes = [...new Set(payload.scope.split(/\s+/u).filter(Boolean))];
+  const allowedScopes = requestedScopes.filter((scope) => scope !== "openid");
+  const managedScopes = new Set(resourcePolicy.scopes);
+  if (allowedScopes.some((scope) => !managedScopes.has(scope))) {
+    throw new Error("scope is not allowed for the managed MCP resource");
+  }
+  const clientId = crypto.randomUUID();
+  const registrationAccessToken = createOpaqueToken();
+
+  const client: Client = {
+    id: crypto.randomUUID(),
+    tenantId: issuerContext.tenant.id,
+    clientId,
+    clientName: payload.client_name,
+    applicationType: payload.application_type,
+    grantTypes: payload.grant_types,
+    redirectUris: payload.redirect_uris,
+    responseTypes: payload.response_types,
+    tokenEndpointAuthMethod: "none",
+    clientSecretHash: null,
+    trustLevel: "third_party",
+    consentPolicy: "require",
+    clientProfile: payload.application_type === "native" ? "native" : "spa",
+    accessTokenAudience: resourcePolicy.resource,
+    allowedScopes,
+    initiateLoginUri: null,
+    claimHookUrl: null,
+    claimHookAuthHeaderName: null,
+    claimHookAuthHeaderValue: null
+  };
+
+  await clientRepository.create(client);
+
+  return {
+    client,
+    clientSecret: null,
     registrationAccessToken
   };
 };

@@ -5,7 +5,10 @@ import type { AuditRepository } from "../../../domain/audit/repository";
 import type { AuditEvent } from "../../../domain/audit/types";
 import type { AdminRepository } from "../../../domain/admin-auth/repository";
 import type { AdminSession, AdminUser } from "../../../domain/admin-auth/types";
-import type { RegistrationAccessTokenRepository } from "../../../domain/clients/registration-access-token-repository";
+import type {
+  RegistrationAccessTokenRecord,
+  RegistrationAccessTokenRepository
+} from "../../../domain/clients/registration-access-token-repository";
 import type { AccessTokenClaimsRepository } from "../../../domain/clients/access-token-claims-repository";
 import type { AccessTokenCustomClaim } from "../../../domain/clients/access-token-claims-types";
 import type {
@@ -20,6 +23,10 @@ import type {
   AuthorizationCodeRepository,
   LoginChallengeRepository
 } from "../../../domain/authorization/repository";
+import type {
+  ConsentChallenge,
+  ConsentChallengeRepository
+} from "../../../domain/authorization/consent-repository";
 import type { AuthenticationLoginChallengeRepository } from "../../../domain/authentication/login-challenge-repository";
 import type {
   AuthorizationCode,
@@ -29,6 +36,10 @@ import type {
   RefreshTokenRecord,
   RefreshTokenRepository
 } from "../../../domain/tokens/refresh-token-repository";
+import type {
+  AccessTokenRevocationRecord,
+  AccessTokenRevocationRepository
+} from "../../../domain/tokens/access-token-revocation-repository";
 import type {
   PasskeyCredential,
   PasskeyRepository
@@ -59,9 +70,11 @@ import type {
 } from "../../../domain/users/types";
 import { R2KeyMaterialStore } from "../../r2/r2-key-material-store";
 import {
+  accessTokenRevocations,
   adminUsers,
   auditEvents,
   authorizationCodes,
+  consentChallenges,
   clientAccessTokenClaims,
   clientAuthMethodPolicies,
   emailLoginTokens,
@@ -439,6 +452,7 @@ class D1ClientRepository implements ClientRepository {
       consentPolicy: row.consentPolicy as Client["consentPolicy"],
       clientProfile: row.clientProfile as Client["clientProfile"],
       accessTokenAudience: row.accessTokenAudience,
+      allowedScopes: row.allowedScopes ?? undefined,
       initiateLoginUri: row.initiateLoginUri,
       claimHookUrl: row.claimHookUrl,
       claimHookAuthHeaderName: row.claimHookAuthHeaderName,
@@ -460,6 +474,7 @@ class D1ClientRepository implements ClientRepository {
       consentPolicy: client.consentPolicy,
       clientProfile: client.clientProfile,
       accessTokenAudience: client.accessTokenAudience,
+      allowedScopes: client.allowedScopes ?? null,
       initiateLoginUri: client.initiateLoginUri ?? null,
       claimHookUrl: client.claimHookUrl ?? null,
       claimHookAuthHeaderName: client.claimHookAuthHeaderName ?? null,
@@ -488,6 +503,7 @@ class D1ClientRepository implements ClientRepository {
         grantTypes: client.grantTypes,
         responseTypes: client.responseTypes,
         accessTokenAudience: client.accessTokenAudience,
+        allowedScopes: client.allowedScopes ?? null,
         initiateLoginUri: client.initiateLoginUri ?? null,
         claimHookUrl: client.claimHookUrl ?? null,
         claimHookAuthHeaderName: client.claimHookAuthHeaderName ?? null,
@@ -654,6 +670,7 @@ class D1LoginChallengeRepository
       authMethod: challenge.authMethod ?? null,
       redirectUri: challenge.redirectUri,
       scope: challenge.scope,
+      resource: challenge.resource ?? null,
       state: challenge.state,
       codeChallenge: challenge.codeChallenge,
       codeChallengeMethod: challenge.codeChallengeMethod,
@@ -709,6 +726,7 @@ class D1LoginChallengeRepository
       authMethod: row.authMethod as LoginChallenge["authMethod"],
       redirectUri: row.redirectUri,
       scope: row.scope,
+      resource: row.resource,
       state: row.state,
       codeChallenge: row.codeChallenge,
       codeChallengeMethod: row.codeChallengeMethod as LoginChallenge["codeChallengeMethod"],
@@ -790,6 +808,7 @@ class D1AuthorizationCodeRepository implements AuthorizationCodeRepository {
       userId: code.userId,
       redirectUri: code.redirectUri,
       scope: code.scope,
+      resource: code.resource ?? null,
       nonce: code.nonce,
       codeChallenge: code.codeChallenge,
       codeChallengeMethod: code.codeChallengeMethod,
@@ -825,6 +844,7 @@ class D1AuthorizationCodeRepository implements AuthorizationCodeRepository {
       userId: row.userId,
       redirectUri: row.redirectUri,
       scope: row.scope,
+      resource: row.resource,
       nonce: row.nonce,
       codeChallenge: row.codeChallenge,
       codeChallengeMethod: row.codeChallengeMethod as AuthorizationCode["codeChallengeMethod"],
@@ -848,6 +868,85 @@ class D1AuthorizationCodeRepository implements AuthorizationCodeRepository {
         )
       )
       .returning({ id: authorizationCodes.id });
+
+    return row !== undefined;
+  }
+}
+
+class D1ConsentChallengeRepository implements ConsentChallengeRepository {
+  constructor(private readonly db: ReturnType<typeof drizzle>) {}
+
+  async create(challenge: ConsentChallenge): Promise<void> {
+    await this.db.insert(consentChallenges).values({
+      id: challenge.id,
+      tenantId: challenge.tenantId,
+      issuer: challenge.issuer,
+      clientId: challenge.clientId,
+      userId: challenge.userId,
+      redirectUri: challenge.redirectUri,
+      scope: challenge.scope,
+      resource: challenge.resource,
+      state: challenge.state,
+      nonce: challenge.nonce,
+      codeChallenge: challenge.codeChallenge,
+      codeChallengeMethod: challenge.codeChallengeMethod,
+      tokenHash: challenge.tokenHash,
+      expiresAt: challenge.expiresAt,
+      consumedAt: challenge.consumedAt,
+      createdAt: challenge.createdAt
+    });
+  }
+
+  async findActiveByTokenHash(tokenHash: string): Promise<ConsentChallenge | null> {
+    const now = new Date().toISOString();
+    const [row] = await this.db
+      .select()
+      .from(consentChallenges)
+      .where(
+        and(
+          eq(consentChallenges.tokenHash, tokenHash),
+          isNull(consentChallenges.consumedAt),
+          sql`${consentChallenges.expiresAt} > ${now}`
+        )
+      )
+      .limit(1);
+
+    if (row === undefined) {
+      return null;
+    }
+
+    return {
+      id: row.id,
+      tenantId: row.tenantId,
+      issuer: row.issuer,
+      clientId: row.clientId,
+      userId: row.userId,
+      redirectUri: row.redirectUri,
+      scope: row.scope,
+      resource: row.resource,
+      state: row.state,
+      nonce: row.nonce,
+      codeChallenge: row.codeChallenge,
+      codeChallengeMethod: row.codeChallengeMethod as ConsentChallenge["codeChallengeMethod"],
+      tokenHash: row.tokenHash,
+      expiresAt: row.expiresAt,
+      consumedAt: row.consumedAt,
+      createdAt: row.createdAt
+    };
+  }
+
+  async consumeById(id: string, consumedAt: string): Promise<boolean> {
+    const [row] = await this.db
+      .update(consentChallenges)
+      .set({ consumedAt })
+      .where(
+        and(
+          eq(consentChallenges.id, id),
+          isNull(consentChallenges.consumedAt),
+          sql`${consentChallenges.expiresAt} > ${consumedAt}`
+        )
+      )
+      .returning({ id: consentChallenges.id });
 
     return row !== undefined;
   }
@@ -1284,6 +1383,32 @@ class KvRegistrationAccessTokenRepository
 {
   constructor(private readonly kv: KVNamespace) {}
 
+  async findByTokenHash(tokenHash: string): Promise<RegistrationAccessTokenRecord | null> {
+    const raw = await this.kv.get(`${registrationTokenPrefix}${tokenHash}`);
+    if (raw === null) return null;
+
+    try {
+      const parsed = JSON.parse(raw) as Partial<RegistrationAccessTokenRecord>;
+      if (
+        typeof parsed.clientId !== "string" ||
+        typeof parsed.expiresAt !== "string" ||
+        typeof parsed.issuer !== "string" ||
+        typeof parsed.tenantId !== "string" ||
+        typeof parsed.tokenHash !== "string" ||
+        parsed.tokenHash !== tokenHash
+      ) {
+        return null;
+      }
+      if (new Date(parsed.expiresAt).getTime() <= Date.now()) {
+        await this.kv.delete(`${registrationTokenPrefix}${tokenHash}`);
+        return null;
+      }
+      return parsed as RegistrationAccessTokenRecord;
+    } catch {
+      return null;
+    }
+  }
+
   async deleteByTokenHash(tokenHash: string): Promise<void> {
     await this.kv.delete(`${registrationTokenPrefix}${tokenHash}`);
   }
@@ -1386,6 +1511,7 @@ class D1RefreshTokenRepository implements RefreshTokenRepository {
       clientId: record.clientId,
       userId: record.userId,
       scope: record.scope,
+      resource: record.resource ?? null,
       authMethod: record.authMethod,
       tokenHash: record.tokenHash,
       absoluteExpiresAt: record.absoluteExpiresAt,
@@ -1416,6 +1542,7 @@ class D1RefreshTokenRepository implements RefreshTokenRepository {
       clientId: row.clientId,
       userId: row.userId,
       scope: row.scope,
+      resource: row.resource,
       authMethod: row.authMethod as RefreshTokenRecord["authMethod"],
       tokenHash: row.tokenHash,
       absoluteExpiresAt: row.absoluteExpiresAt,
@@ -1440,6 +1567,33 @@ class D1RefreshTokenRepository implements RefreshTokenRepository {
       .where(and(eq(refreshTokens.id, id), isNull(refreshTokens.consumedAt)))
       .returning({ id: refreshTokens.id });
 
+    return row !== undefined;
+  }
+}
+
+class D1AccessTokenRevocationRepository implements AccessTokenRevocationRepository {
+  constructor(private readonly db: ReturnType<typeof drizzle>) {}
+
+  async revoke(record: AccessTokenRevocationRecord): Promise<void> {
+    await this.db
+      .insert(accessTokenRevocations)
+      .values({
+        id: record.id,
+        tenantId: record.tenantId,
+        clientId: record.clientId,
+        tokenHash: record.tokenHash,
+        expiresAt: record.expiresAt,
+        revokedAt: record.revokedAt
+      })
+      .onConflictDoNothing({ target: accessTokenRevocations.tokenHash });
+  }
+
+  async isRevoked(tokenHash: string): Promise<boolean> {
+    const [row] = await this.db
+      .select({ id: accessTokenRevocations.id })
+      .from(accessTokenRevocations)
+      .where(eq(accessTokenRevocations.tokenHash, tokenHash))
+      .limit(1);
     return row !== undefined;
   }
 }
@@ -1648,9 +1802,11 @@ export class D1PasskeyRepository implements PasskeyRepository {
 export const createRuntimeRepositories = async (config: RuntimeConfig) => {
   const db = drizzle(config.db, {
     schema: {
+      accessTokenRevocations,
       adminUsers,
       auditEvents,
       authorizationCodes,
+      consentChallenges,
       clientAccessTokenClaims,
       clientAuthMethodPolicies,
       emailLoginTokens,
@@ -1685,9 +1841,11 @@ export const createRuntimeRepositories = async (config: RuntimeConfig) => {
   const loginChallengeRepository = new D1LoginChallengeRepository(db);
 
   return {
+    accessTokenRevocationRepository: new D1AccessTokenRevocationRepository(db),
     adminRepository: new D1KvAdminRepository(db, config.adminSessionsKv),
     auditRepository: new D1AuditRepository(db),
     authorizationCodeRepository: new D1AuthorizationCodeRepository(db),
+    consentChallengeRepository: new D1ConsentChallengeRepository(db),
     accessTokenClaimsRepository: new D1AccessTokenClaimsRepository(db),
     clientAuthMethodPolicyRepository: new D1ClientAuthMethodPolicyRepository(db),
     clientRepository: new D1ClientRepository(db),

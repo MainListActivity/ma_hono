@@ -8,5 +8,6 @@ export interface RegistrationAccessTokenRecord {
 
 export interface RegistrationAccessTokenRepository {
   deleteByTokenHash(tokenHash: string): Promise<void>;
+  findByTokenHash(tokenHash: string): Promise<RegistrationAccessTokenRecord | null>;
   store(record: RegistrationAccessTokenRecord): Promise<void>;
 }

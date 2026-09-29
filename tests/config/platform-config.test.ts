@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { loadPlatformConfig } from "../../src/config/platform-config";
+import {
+  loadContentReaderIssuancePolicy,
+  loadPlatformConfig
+} from "../../src/config/platform-config";
 
 const makeDb = (rows: Array<{ key: string; value: string }>) => ({
   prepare: (sql: string) => ({
@@ -49,5 +52,34 @@ describe("loadPlatformConfig", () => {
     ]);
     const config = await loadPlatformConfig(db);
     expect(config!.adminWhitelist).toEqual(["admin@example.com", "ops@example.com"]);
+  });
+});
+
+describe("loadContentReaderIssuancePolicy", () => {
+  it("returns null when client allowlist is absent", async () => {
+    const db = makeDb([{ key: "content_reader_allowed_databases", value: "platform_content" }]);
+    expect(await loadContentReaderIssuancePolicy(db)).toBeNull();
+  });
+
+  it("loads allowlists and defaults the content database and max ttl", async () => {
+    const db = makeDb([
+      { key: "content_reader_allowed_client_ids", value: " surreal_ck_web , ops " },
+      { key: "content_reader_allowed_tenant_ids", value: "tenant_acme" }
+    ]);
+    const policy = await loadContentReaderIssuancePolicy(db);
+    expect(policy).toEqual({
+      allowedClientIds: ["surreal_ck_web", "ops"],
+      allowedTenantIds: ["tenant_acme"],
+      allowedContentDatabases: ["platform_content"],
+      maxTtlSeconds: 15 * 60
+    });
+  });
+
+  it("returns null for invalid max ttl values", async () => {
+    const db = makeDb([
+      { key: "content_reader_allowed_client_ids", value: "surreal_ck_web" },
+      { key: "content_reader_max_ttl_seconds", value: "0" }
+    ]);
+    expect(await loadContentReaderIssuancePolicy(db)).toBeNull();
   });
 });

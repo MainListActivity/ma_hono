@@ -20,6 +20,16 @@ export class MemoryRegistrationAccessTokenRepository
     this.records = this.records.filter((record) => record.tokenHash !== tokenHash);
   }
 
+  async findByTokenHash(tokenHash: string): Promise<RegistrationAccessTokenRecord | null> {
+    const record = this.records.find((candidate) => candidate.tokenHash === tokenHash);
+    if (record === undefined) return null;
+    if (new Date(record.expiresAt).getTime() <= Date.now()) {
+      this.records = this.records.filter((candidate) => candidate.tokenHash !== tokenHash);
+      return null;
+    }
+    return record;
+  }
+
   listTokens(): RegistrationAccessTokenRecord[] {
     return [...this.records];
   }

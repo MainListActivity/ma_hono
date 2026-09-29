@@ -14,13 +14,6 @@
 
 set -euo pipefail
 
-API_TOKEN_TMP="${CLOUDFLARE_API_TOKEN:-}"
-ACCOUNT_ID_TMP="${CLOUDFLARE_ACCOUNT_ID:-}"
-echo "=== Cloudflare Credentials ==="
-echo "CLOUDFLARE_API_TOKEN 前3位: ${API_TOKEN_TMP:0:3}"
-echo "CLOUDFLARE_ACCOUNT_ID 前3位: ${ACCOUNT_ID_TMP:0:3}"
-echo "=============================="
-
 if [ -z "${CLOUDFLARE_ACCOUNT_ID:-}" ]; then
   echo "[error] CLOUDFLARE_ACCOUNT_ID 未设置" >&2
   exit 1
@@ -62,25 +55,33 @@ echo "[domain] OIDC_DOMAIN=$OIDC_DOMAIN"
 
 # --- D1 ---
 echo "[D1] 查找或创建 $D1_NAME ..."
-DATABASE_ID=$(npx wrangler d1 list --json 2>/dev/null | jq -r ".[] | select(.name==\"$D1_NAME\") | .uuid // empty")
+DATABASE_ID=$(pnpm exec wrangler d1 list --json 2>/dev/null | jq -r ".[] | select(.name==\"$D1_NAME\") | .uuid // empty")
 if [ -z "$DATABASE_ID" ]; then
   echo "[D1] 不存在，创建中..."
-  npx wrangler d1 create "$D1_NAME" > /dev/null
-  DATABASE_ID=$(npx wrangler d1 list --json | jq -r ".[] | select(.name==\"$D1_NAME\") | .uuid")
+  pnpm exec wrangler d1 create "$D1_NAME" > /dev/null
+  DATABASE_ID=$(pnpm exec wrangler d1 list --json | jq -r ".[] | select(.name==\"$D1_NAME\") | .uuid")
 fi
 echo "[D1] DATABASE_ID=$DATABASE_ID"
 
 # --- KV ---
-declare -A KV_IDS
+# Keep this compatible with the macOS system Bash (3.2), which does not
+# support associative arrays.
+ADMIN_SESSIONS_KV_ID=""
+USER_SESSIONS_KV_ID=""
+REGISTRATION_TOKENS_KV_ID=""
 for KV_NAME in "${KV_NAMES[@]}"; do
   echo "[KV] 查找或创建 $KV_NAME ..."
-  KV_ID=$(npx wrangler kv namespace list 2>/dev/null | jq -r ".[] | select(.title==\"$KV_NAME\") | .id // empty")
+  KV_ID=$(pnpm exec wrangler kv namespace list 2>/dev/null | jq -r ".[] | select(.title==\"$KV_NAME\") | .id // empty")
   if [ -z "$KV_ID" ]; then
     echo "[KV] 不存在，创建中..."
-    npx wrangler kv namespace create "$KV_NAME" > /dev/null
-    KV_ID=$(npx wrangler kv namespace list | jq -r ".[] | select(.title==\"$KV_NAME\") | .id")
+    pnpm exec wrangler kv namespace create "$KV_NAME" > /dev/null
+    KV_ID=$(pnpm exec wrangler kv namespace list | jq -r ".[] | select(.title==\"$KV_NAME\") | .id")
   fi
-  KV_IDS[$KV_NAME]=$KV_ID
+  case "$KV_NAME" in
+    ADMIN_SESSIONS_KV) ADMIN_SESSIONS_KV_ID="$KV_ID" ;;
+    USER_SESSIONS_KV) USER_SESSIONS_KV_ID="$KV_ID" ;;
+    REGISTRATION_TOKENS_KV) REGISTRATION_TOKENS_KV_ID="$KV_ID" ;;
+  esac
   echo "[KV] ${KV_NAME}_ID=$KV_ID"
 done
 
@@ -88,21 +89,21 @@ done
 echo "[config] 写入真实 ID 到 wrangler.jsonc ..."
 sed -i.bak \
   -e "s|\"database_id\": \"[^\"]*\"|\"database_id\": \"$DATABASE_ID\"|" \
-  -e "s|\"id\": \"replace-with-admin-sessions-kv-id\"|\"id\": \"${KV_IDS[ADMIN_SESSIONS_KV]}\"|" \
-  -e "s|\"id\": \"replace-with-user-sessions-kv-id\"|\"id\": \"${KV_IDS[USER_SESSIONS_KV]}\"|" \
-  -e "s|\"id\": \"replace-with-registration-tokens-kv-id\"|\"id\": \"${KV_IDS[REGISTRATION_TOKENS_KV]}\"|" \
+  -e "s|\"id\": \"replace-with-admin-sessions-kv-id\"|\"id\": \"${ADMIN_SESSIONS_KV_ID}\"|" \
+  -e "s|\"id\": \"replace-with-user-sessions-kv-id\"|\"id\": \"${USER_SESSIONS_KV_ID}\"|" \
+  -e "s|\"id\": \"replace-with-registration-tokens-kv-id\"|\"id\": \"${REGISTRATION_TOKENS_KV_ID}\"|" \
   "$WRANGLER_FILE"
 rm -f "${WRANGLER_FILE}.bak"
 echo "[config] 完成，wrangler.jsonc 已更新"
 
 # --- Apply D1 migrations ---
 echo "[D1] Applying migrations ..."
-npx wrangler d1 migrations apply "$D1_NAME" --remote
+pnpm exec wrangler d1 migrations apply "$D1_NAME" --remote
 echo "[D1] Migrations applied"
 
 # --- Deploy Worker ---
 echo "[Worker] 部署 Worker ..."
-npx wrangler deploy
+pnpm exec wrangler deploy
 echo "[Worker] 部署完成"
 
 # --- 配置 Worker 路由 ---

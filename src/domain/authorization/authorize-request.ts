@@ -3,6 +3,10 @@ import type { ResolvedIssuerContext } from "../tenants/types";
 import { sha256Base64Url } from "../../lib/hash";
 import type { AuthorizationCodeRepository, LoginChallengeRepository } from "./repository";
 import { validatePkceParameters } from "./pkce";
+import {
+  validateResourceRequest,
+  type ManagedResourcePolicy
+} from "../oidc/resource-policy";
 import type {
   AuthorizationCode,
   AuthorizeRequestParameters,
@@ -45,11 +49,13 @@ const includesOpenIdScope = (scope: string) =>
 const buildValidatedAuthorizeRequest = async ({
   clientRepository,
   issuerContext,
-  request
+  request,
+  resourcePolicy
 }: {
   clientRepository: ClientRepository;
   issuerContext: ResolvedIssuerContext;
   request: AuthorizeRequestParameters;
+  resourcePolicy: ManagedResourcePolicy | null;
 }): Promise<ValidatedAuthorizeRequest | AuthorizeRequestResult> => {
   const clientId = request.clientId.trim();
   const redirectUri = request.redirectUri.trim();
@@ -134,6 +140,25 @@ const buildValidatedAuthorizeRequest = async ({
     };
   }
 
+  const resourceValidation = validateResourceRequest({
+    client,
+    policy: resourcePolicy,
+    resource: request.resource ?? null,
+    scope: request.scope
+  });
+
+  if (!resourceValidation.ok) {
+    return {
+      kind: "error",
+      error: "invalid_scope",
+      errorDescription: resourceValidation.reason,
+      clientId,
+      redirectUri,
+      state: request.state,
+      shouldRedirect: true
+    };
+  }
+
   const pkce = validatePkceParameters({
     codeChallenge: request.codeChallenge,
     codeChallengeMethod: request.codeChallengeMethod
@@ -156,7 +181,8 @@ const buildValidatedAuthorizeRequest = async ({
     clientId,
     issuer: issuerContext.issuer,
     redirectUri,
-    scope: request.scope.trim(),
+    scope: resourceValidation.scope,
+    resource: resourceValidation.resource,
     state: request.state,
     nonce: request.nonce,
     tenantId: issuerContext.tenant.id,
@@ -173,6 +199,8 @@ export const authorizeRequest = async ({
   loginChallengeRepository,
   now = new Date(),
   request,
+  resourcePolicy = null,
+  consentGranted = false,
   session
 }: {
   authMethod?: AuthorizationCode["authMethod"];
@@ -182,12 +210,16 @@ export const authorizeRequest = async ({
   loginChallengeRepository: LoginChallengeRepository;
   now?: Date;
   request: AuthorizeRequestParameters;
+  resourcePolicy?: ManagedResourcePolicy | null;
+  /** Set only after an authenticated user approved a server-stored consent challenge. */
+  consentGranted?: boolean;
   session: AuthorizeSession | null;
 }): Promise<AuthorizeRequestResult> => {
   const validatedRequest = await buildValidatedAuthorizeRequest({
     clientRepository,
     issuerContext,
-    request
+    request,
+    resourcePolicy
   });
 
   if ("kind" in validatedRequest) {
@@ -204,6 +236,7 @@ export const authorizeRequest = async ({
       authMethod: null,
       redirectUri: validatedRequest.redirectUri,
       scope: validatedRequest.scope,
+      resource: validatedRequest.resource,
       state: validatedRequest.state ?? "",
       codeChallenge: validatedRequest.codeChallenge,
       codeChallengeMethod: validatedRequest.codeChallengeMethod,
@@ -228,7 +261,7 @@ export const authorizeRequest = async ({
     };
   }
 
-  if (!canAutoApproveAuthorization(validatedRequest)) {
+  if (!canAutoApproveAuthorization(validatedRequest) && !consentGranted) {
     return {
       kind: "consent_required",
       request: validatedRequest
@@ -245,6 +278,7 @@ export const authorizeRequest = async ({
     userId: session.userId,
     redirectUri: validatedRequest.redirectUri,
     scope: validatedRequest.scope,
+    resource: validatedRequest.resource,
     nonce: validatedRequest.nonce,
     codeChallenge: validatedRequest.codeChallenge,
     codeChallengeMethod: validatedRequest.codeChallengeMethod,
