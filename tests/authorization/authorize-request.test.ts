@@ -655,6 +655,7 @@ describe("worker entrypoint wiring", () => {
       managementApiToken: "manage-token",
       rootDomain: "example.test"
     }));
+    const loadContentReaderIssuancePolicy = vi.fn(async () => null);
 
     vi.doMock("../../src/app/app", () => ({
       createApp
@@ -666,7 +667,8 @@ describe("worker entrypoint wiring", () => {
       readRuntimeConfig
     }));
     vi.doMock("../../src/config/platform-config", () => ({
-      loadPlatformConfig
+      loadPlatformConfig,
+      loadContentReaderIssuancePolicy
     }));
 
     try {
@@ -768,6 +770,7 @@ describe("worker entrypoint wiring", () => {
       managementApiToken: "manage-token",
       rootDomain: "example.test"
     }));
+    const loadContentReaderIssuancePolicy = vi.fn(async () => null);
 
     vi.doMock("../../src/adapters/db/drizzle/runtime", () => ({
       createRuntimeRepositories
@@ -776,7 +779,8 @@ describe("worker entrypoint wiring", () => {
       readRuntimeConfig
     }));
     vi.doMock("../../src/config/platform-config", () => ({
-      loadPlatformConfig
+      loadPlatformConfig,
+      loadContentReaderIssuancePolicy
     }));
 
     try {
@@ -903,6 +907,7 @@ describe("worker entrypoint wiring", () => {
       managementApiToken: "manage-token",
       rootDomain: "example.test"
     }));
+    const loadContentReaderIssuancePolicy = vi.fn(async () => null);
 
     vi.doMock("../../src/adapters/db/drizzle/runtime", () => ({
       createRuntimeRepositories
@@ -911,7 +916,8 @@ describe("worker entrypoint wiring", () => {
       readRuntimeConfig
     }));
     vi.doMock("../../src/config/platform-config", () => ({
-      loadPlatformConfig
+      loadPlatformConfig,
+      loadContentReaderIssuancePolicy
     }));
 
     try {

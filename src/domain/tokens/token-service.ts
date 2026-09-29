@@ -28,8 +28,24 @@ import type {
   RefreshTokenRecord,
   RefreshTokenRepository
 } from "./refresh-token-repository";
+import {
+  computeContentReaderTtlSeconds,
+  isContentReaderIdentity,
+  isContentReaderIssuanceAllowed,
+  mergeContentReaderClaims,
+  type ContentReaderIssuancePolicy
+} from "./content-reader-policy";
 
 type TokenErrorCode = OidcTokenErrorResponse["error"];
+
+export type ScopeTokenErrorCode =
+  | "invalid_client"
+  | "invalid_grant"
+  | "invalid_request"
+  | "invalid_scope"
+  | "invalid_lifetime"
+  | "temporarily_unavailable"
+  | "server_error";
 
 export interface ScopeTokenSuccessResponse {
   access_token: string;
@@ -49,21 +65,47 @@ export interface ScopeTokenRequest {
 type ScopeTokenErrorResult = {
   kind: "error";
   clientId: string | null;
-  error: "invalid_client" | "invalid_grant" | "invalid_request" | "server_error";
+  error: ScopeTokenErrorCode;
+  mode: "workspace" | "content_reader" | null;
   status: 400 | 401 | 503;
   tenantId: string | null;
   userId: string | null;
+  workspaceId?: string | null;
+  entitlementRevision?: string | null;
+  contentDatabase?: string | null;
 };
 
 type ScopeTokenSuccessResult = {
   kind: "success";
   clientId: string;
+  mode: "workspace" | "content_reader";
   response: ScopeTokenSuccessResponse;
   tenantId: string;
   userId: string;
+  workspaceId?: string | null;
+  entitlementRevision?: string | null;
+  contentDatabase?: string | null;
 };
 
 export type ScopeTokenResult = ScopeTokenErrorResult | ScopeTokenSuccessResult;
+
+type WorkspaceScopeClaims = {
+  mode: "workspace";
+  claims: Record<string, unknown>;
+};
+
+type ContentReaderScopeClaims = {
+  mode: "content_reader";
+  claims: {
+    ac: "content_reader";
+    db: string;
+    workspace_id: string;
+    entitlement_revision: string;
+    lease_end: number;
+  };
+};
+
+type NormalizedScopeClaims = WorkspaceScopeClaims | ContentReaderScopeClaims;
 
 type ClientCredentials =
   | { kind: "basic"; clientId: string; clientSecret: string }
@@ -295,11 +337,49 @@ const createSignedJwt = async ({
     .sign(privateKey);
 };
 
-const mutableScopeClaimNames = new Map([
+const verifyTenantAccessToken = async ({
+  issuerContext,
+  signer,
+  tenantId,
+  token
+}: {
+  issuerContext: ResolvedIssuerContext;
+  signer: SigningKeySigner | undefined;
+  tenantId: string;
+  token: string;
+}): Promise<Record<string, unknown> | null> => {
+  if (signer === undefined) return null;
+
+  const signingKeyMaterial = await signer.loadActiveSigningKeyMaterial(tenantId);
+  if (signingKeyMaterial === null) return null;
+
+  try {
+    const publicKey = await importJWK(
+      signingKeyMaterial.key.publicJwk,
+      signingKeyMaterial.key.alg
+    );
+    const verification = await jwtVerify(token, publicKey, {
+      issuer: issuerContext.issuer
+    });
+    return verification.payload as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+};
+
+const mutableWorkspaceScopeClaimNames = new Map([
   ["db", "db"],
   ["ac", "ac"],
   ["email", "email"],
   ["RL", "RL"]
+]);
+
+const contentReaderScopeClaimNames = new Set([
+  "ac",
+  "db",
+  "workspace_id",
+  "entitlement_revision",
+  "lease_end"
 ]);
 
 const surrealDbRoleClaimValues = new Set(["Viewer", "Editor", "Owner"]);
@@ -331,27 +411,72 @@ const normalizeSurrealDbRoleClaims = (value: unknown): string[] | null => {
   return roles;
 };
 
-const normalizeScopeClaims = (
-  input: unknown
-): { ok: true; claims: Record<string, unknown> } | { ok: false } => {
-  if (!isRecord(input)) {
+const normalizeContentReaderScopeClaims = (
+  input: Record<string, unknown>
+): { ok: true; value: ContentReaderScopeClaims } | { ok: false } => {
+  const keys = Object.keys(input);
+
+  if (keys.length !== contentReaderScopeClaimNames.size) {
     return { ok: false };
   }
 
+  for (const key of keys) {
+    if (!contentReaderScopeClaimNames.has(key)) {
+      return { ok: false };
+    }
+  }
+
+  const ac = input.ac;
+  const db = input.db;
+  const workspaceId = input.workspace_id;
+  const entitlementRevision = input.entitlement_revision;
+  const leaseEnd = input.lease_end;
+
+  if (ac !== "content_reader") {
+    return { ok: false };
+  }
+
+  if (typeof db !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(db)) {
+    return { ok: false };
+  }
+
+  if (!isContentReaderIdentity(workspaceId) || !isContentReaderIdentity(entitlementRevision)) {
+    return { ok: false };
+  }
+
+  if (typeof leaseEnd !== "number" || !Number.isInteger(leaseEnd)) {
+    return { ok: false };
+  }
+
+  return {
+    ok: true,
+    value: {
+      mode: "content_reader",
+      claims: {
+        ac: "content_reader",
+        db,
+        workspace_id: workspaceId,
+        entitlement_revision: entitlementRevision,
+        lease_end: leaseEnd
+      }
+    }
+  };
+};
+
+const normalizeWorkspaceScopeClaims = (
+  input: Record<string, unknown>
+): { ok: true; value: WorkspaceScopeClaims } | { ok: false } => {
   const claims: Record<string, unknown> = {};
 
   for (const [claimName, value] of Object.entries(input)) {
-    const normalizedClaimName = mutableScopeClaimNames.get(claimName);
+    const normalizedClaimName = mutableWorkspaceScopeClaimNames.get(claimName);
 
     if (normalizedClaimName === undefined || normalizedClaimName in claims) {
       return { ok: false };
     }
 
     if (normalizedClaimName === "db") {
-      if (
-        typeof value !== "string" ||
-        !/^[A-Za-z0-9_-]{1,128}$/.test(value)
-      ) {
+      if (typeof value !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(value)) {
         return { ok: false };
       }
 
@@ -395,7 +520,40 @@ const normalizeScopeClaims = (
     return { ok: false };
   }
 
-  return Object.keys(claims).length === 0 ? { ok: false } : { ok: true, claims };
+  return Object.keys(claims).length === 0
+    ? { ok: false }
+    : { ok: true, value: { mode: "workspace", claims } };
+};
+
+const normalizeScopeClaims = (
+  input: unknown
+): { ok: true; value: NormalizedScopeClaims } | { ok: false } => {
+  if (!isRecord(input)) {
+    return { ok: false };
+  }
+
+  if (input.ac === "content_reader") {
+    return normalizeContentReaderScopeClaims(input);
+  }
+
+  return normalizeWorkspaceScopeClaims(input);
+};
+
+const resolveSubjectTokenAudience = (payload: Record<string, unknown>): string | null => {
+  const audience = payload.aud;
+
+  if (typeof audience === "string" && audience.length > 0) {
+    return audience;
+  }
+
+  if (Array.isArray(audience)) {
+    const values = audience.filter(
+      (value): value is string => typeof value === "string" && value.length > 0
+    );
+    return values.length === 1 ? values[0]! : null;
+  }
+
+  return null;
 };
 
 const resolveConfiguredAccessTokenClaims = async ({
@@ -685,6 +843,7 @@ const issueTokenSet = async ({
 export const issueScopeToken = async ({
   accessTokenClaimsRepository,
   clientRepository,
+  contentReaderPolicy,
   issuerContext,
   request,
   signer,
@@ -693,24 +852,28 @@ export const issueScopeToken = async ({
 }: {
   accessTokenClaimsRepository: AccessTokenClaimsRepository;
   clientRepository: ClientRepository;
+  contentReaderPolicy?: ContentReaderIssuancePolicy | null;
   issuerContext: ResolvedIssuerContext;
   request: ScopeTokenRequest;
   signer: SigningKeySigner | undefined;
   userRepository: UserRepository;
   claimHookFetcher?: ClaimHookFetcher;
 }): Promise<ScopeTokenResult> => {
-  const mutableClaims = normalizeScopeClaims(request.claims);
+  const normalizedClaims = normalizeScopeClaims(request.claims);
 
-  if (!mutableClaims.ok || request.subjectToken.trim().length === 0) {
+  if (!normalizedClaims.ok || request.subjectToken.trim().length === 0) {
     return {
       kind: "error",
       clientId: null,
       error: "invalid_request",
+      mode: null,
       status: 400,
       tenantId: issuerContext.tenant.id,
       userId: null
     };
   }
+
+  const scopeMode = normalizedClaims.value.mode;
 
   const authenticatedClient = await authenticateClient({
     authorizationHeader: request.authorizationHeader,
@@ -726,6 +889,7 @@ export const issueScopeToken = async ({
       kind: "error",
       clientId: authenticatedClient.clientId,
       error: "invalid_client",
+      mode: scopeMode,
       status: 401,
       tenantId: issuerContext.tenant.id,
       userId: null
@@ -736,7 +900,8 @@ export const issueScopeToken = async ({
     return {
       kind: "error",
       clientId: authenticatedClient.client.clientId,
-      error: "server_error",
+      error: scopeMode === "content_reader" ? "temporarily_unavailable" : "server_error",
+      mode: scopeMode,
       status: 503,
       tenantId: issuerContext.tenant.id,
       userId: null
@@ -749,7 +914,8 @@ export const issueScopeToken = async ({
     return {
       kind: "error",
       clientId: authenticatedClient.client.clientId,
-      error: "server_error",
+      error: scopeMode === "content_reader" ? "temporarily_unavailable" : "server_error",
+      mode: scopeMode,
       status: 503,
       tenantId: issuerContext.tenant.id,
       userId: null
@@ -771,6 +937,7 @@ export const issueScopeToken = async ({
       kind: "error",
       clientId: authenticatedClient.client.clientId,
       error: "invalid_grant",
+      mode: scopeMode,
       status: 400,
       tenantId: issuerContext.tenant.id,
       userId: null
@@ -781,18 +948,37 @@ export const issueScopeToken = async ({
   const userId = typeof payload.sub === "string" ? payload.sub : null;
   const scope = typeof payload.scope === "string" ? payload.scope : null;
   const expiresAt = typeof payload.exp === "number" ? payload.exp : null;
+  const subjectAudience = resolveSubjectTokenAudience(payload);
+  const expectedAudience =
+    authenticatedClient.client.accessTokenAudience ?? authenticatedClient.client.clientId;
 
   if (
     clientId === null ||
     clientId !== authenticatedClient.client.clientId ||
     userId === null ||
     scope === null ||
-    expiresAt === null
+    expiresAt === null ||
+    subjectAudience === null ||
+    subjectAudience !== expectedAudience
   ) {
     return {
       kind: "error",
       clientId: authenticatedClient.client.clientId,
       error: "invalid_grant",
+      mode: scopeMode,
+      status: 400,
+      tenantId: issuerContext.tenant.id,
+      userId
+    };
+  }
+
+  // content_reader credentials are not an elevation path into workspace or publisher scopes.
+  if (payload.ac === "content_reader") {
+    return {
+      kind: "error",
+      clientId: authenticatedClient.client.clientId,
+      error: "invalid_scope",
+      mode: scopeMode,
       status: 400,
       tenantId: issuerContext.tenant.id,
       userId
@@ -808,23 +994,173 @@ export const issueScopeToken = async ({
       kind: "error",
       clientId,
       error: "invalid_grant",
+      mode: scopeMode,
       status: 400,
       tenantId: issuerContext.tenant.id,
       userId
     };
   }
 
+  if (scopeMode === "workspace") {
+    const workspaceClaims = normalizedClaims.value.claims;
+
+    if (
+      typeof workspaceClaims.email === "string" &&
+      workspaceClaims.email !== user.email
+    ) {
+      return {
+        kind: "error",
+        clientId,
+        error: "invalid_request",
+        mode: scopeMode,
+        status: 400,
+        tenantId: issuerContext.tenant.id,
+        userId
+      };
+    }
+
+    const configuredClaims = await resolveConfiguredAccessTokenClaims({
+      accessTokenClaimsRepository,
+      client,
+      tenantId: issuerContext.tenant.id,
+      user,
+      userRepository,
+      userId,
+      claimHookFetcher
+    });
+
+    if (configuredClaims === null) {
+      return {
+        kind: "error",
+        clientId,
+        error: "server_error",
+        mode: scopeMode,
+        status: 503,
+        tenantId: issuerContext.tenant.id,
+        userId
+      };
+    }
+
+    const now = new Date();
+    const nowSeconds = Math.floor(now.getTime() / 1000);
+    const ttlSeconds = expiresAt - nowSeconds;
+
+    if (ttlSeconds <= 0) {
+      return {
+        kind: "error",
+        clientId,
+        error: "invalid_grant",
+        mode: scopeMode,
+        status: 400,
+        tenantId: issuerContext.tenant.id,
+        userId
+      };
+    }
+
+    try {
+      // Merge order: configured (fixed → user_field → hook) then request claims overlay.
+      const accessToken = await issueClientAccessToken({
+        client,
+        extraClaims: {
+          ...configuredClaims,
+          ...workspaceClaims
+        },
+        issuer: issuerContext.issuer,
+        now,
+        scope,
+        signer,
+        subject: userId,
+        tenantId: issuerContext.tenant.id,
+        ttlSeconds
+      });
+
+      return {
+        kind: "success",
+        clientId,
+        mode: "workspace",
+        tenantId: issuerContext.tenant.id,
+        userId,
+        response: {
+          access_token: accessToken,
+          expires_in: ttlSeconds,
+          scope,
+          token_type: "Bearer"
+        }
+      };
+    } catch {
+      return {
+        kind: "error",
+        clientId,
+        error: "server_error",
+        mode: scopeMode,
+        status: 503,
+        tenantId: issuerContext.tenant.id,
+        userId
+      };
+    }
+  }
+
+  const contentClaims = normalizedClaims.value.claims;
+
   if (
-    typeof mutableClaims.claims.email === "string" &&
-    mutableClaims.claims.email !== user.email
+    !isContentReaderIssuanceAllowed({
+      clientId: client.clientId,
+      policy: contentReaderPolicy,
+      tenantId: issuerContext.tenant.id
+    })
   ) {
     return {
       kind: "error",
       clientId,
-      error: "invalid_request",
+      error: "invalid_scope",
+      mode: "content_reader",
       status: 400,
       tenantId: issuerContext.tenant.id,
-      userId
+      userId,
+      workspaceId: contentClaims.workspace_id,
+      entitlementRevision: contentClaims.entitlement_revision,
+      contentDatabase: contentClaims.db
+    };
+  }
+
+  const policy = contentReaderPolicy!;
+
+  if (!policy.allowedContentDatabases.includes(contentClaims.db)) {
+    return {
+      kind: "error",
+      clientId,
+      error: "invalid_scope",
+      mode: "content_reader",
+      status: 400,
+      tenantId: issuerContext.tenant.id,
+      userId,
+      workspaceId: contentClaims.workspace_id,
+      entitlementRevision: contentClaims.entitlement_revision,
+      contentDatabase: contentClaims.db
+    };
+  }
+
+  const now = new Date();
+  const nowSeconds = Math.floor(now.getTime() / 1000);
+  const ttl = computeContentReaderTtlSeconds({
+    leaseEndSeconds: contentClaims.lease_end,
+    maxTtlSeconds: policy.maxTtlSeconds,
+    nowSeconds,
+    subjectExpiresAt: expiresAt
+  });
+
+  if (!ttl.ok) {
+    return {
+      kind: "error",
+      clientId,
+      error: "invalid_lifetime",
+      mode: "content_reader",
+      status: 400,
+      tenantId: issuerContext.tenant.id,
+      userId,
+      workspaceId: contentClaims.workspace_id,
+      entitlementRevision: contentClaims.entitlement_revision,
+      contentDatabase: contentClaims.db
     };
   }
 
@@ -842,52 +1178,50 @@ export const issueScopeToken = async ({
     return {
       kind: "error",
       clientId,
-      error: "server_error",
+      error: "temporarily_unavailable",
+      mode: "content_reader",
       status: 503,
       tenantId: issuerContext.tenant.id,
-      userId
-    };
-  }
-
-  const now = new Date();
-  const nowSeconds = Math.floor(now.getTime() / 1000);
-  const ttlSeconds = expiresAt - nowSeconds;
-
-  if (ttlSeconds <= 0) {
-    return {
-      kind: "error",
-      clientId,
-      error: "invalid_grant",
-      status: 400,
-      tenantId: issuerContext.tenant.id,
-      userId
+      userId,
+      workspaceId: contentClaims.workspace_id,
+      entitlementRevision: contentClaims.entitlement_revision,
+      contentDatabase: contentClaims.db
     };
   }
 
   try {
     const accessToken = await issueClientAccessToken({
       client,
-      extraClaims: {
-        ...configuredClaims,
-        ...mutableClaims.claims
-      },
+      extraClaims: mergeContentReaderClaims({
+        configuredClaims,
+        contentClaims: {
+          ac: contentClaims.ac,
+          db: contentClaims.db,
+          workspace_id: contentClaims.workspace_id,
+          entitlement_revision: contentClaims.entitlement_revision
+        }
+      }),
       issuer: issuerContext.issuer,
       now,
       scope,
       signer,
       subject: userId,
       tenantId: issuerContext.tenant.id,
-      ttlSeconds
+      ttlSeconds: ttl.ttlSeconds
     });
 
     return {
       kind: "success",
       clientId,
+      mode: "content_reader",
       tenantId: issuerContext.tenant.id,
       userId,
+      workspaceId: contentClaims.workspace_id,
+      entitlementRevision: contentClaims.entitlement_revision,
+      contentDatabase: contentClaims.db,
       response: {
         access_token: accessToken,
-        expires_in: ttlSeconds,
+        expires_in: ttl.ttlSeconds,
         scope,
         token_type: "Bearer"
       }
@@ -896,10 +1230,14 @@ export const issueScopeToken = async ({
     return {
       kind: "error",
       clientId,
-      error: "server_error",
+      error: "temporarily_unavailable",
+      mode: "content_reader",
       status: 503,
       tenantId: issuerContext.tenant.id,
-      userId
+      userId,
+      workspaceId: contentClaims.workspace_id,
+      entitlementRevision: contentClaims.entitlement_revision,
+      contentDatabase: contentClaims.db
     };
   }
 };
