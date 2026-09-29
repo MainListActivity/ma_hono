@@ -4,7 +4,10 @@ import { createApp } from "./app/app";
 import { createSetupApp } from "./app/setup-app";
 import { createRuntimeRepositories } from "./adapters/db/drizzle/runtime";
 import { readRuntimeConfig } from "./config/env";
-import { loadPlatformConfig } from "./config/platform-config";
+import {
+  loadContentReaderIssuancePolicy,
+  loadPlatformConfig
+} from "./config/platform-config";
 import type { BrowserSessionRepository } from "./domain/authentication/repository";
 import {
   browserSessionCookieName
@@ -68,6 +71,7 @@ export default {
       return createSetupApp(runtimeConfig.db).fetch(request);
     }
 
+    const contentReaderPolicy = await loadContentReaderIssuancePolicy(runtimeConfig.db);
     const repositories = await createRuntimeRepositories(runtimeConfig);
     const browserSessionRepository = createKvBrowserSessionRepository(runtimeConfig.userSessionsKv);
     const oidcHost = `o.${platformConfig.rootDomain}`;
@@ -124,6 +128,7 @@ export default {
       // OIDC audience used to validate its bearer token.  Codex and other MCP
       // clients require the metadata resource to match the URL they connect to.
       mcpResource: `https://l.${platformConfig.rootDomain}/api/ops/mcp`,
+      contentReaderPolicy,
       oidcHost,
       browserSessionRepository,
       registrationAccessTokenRepository: repositories.registrationAccessTokenRepository,
