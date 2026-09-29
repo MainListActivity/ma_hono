@@ -85,6 +85,28 @@ export const resolveIssuerContext = async ({
   const requestHost = normalizeHost(url.hostname);
   const normalizedOidcHost = normalizeHost(oidcHost);
 
+  // Platform-path requests on the OIDC host skip the custom-domain lookup:
+  // the platform's own hostname can never be a tenant custom domain.
+  if (requestHost === normalizedOidcHost) {
+    const match = url.pathname.match(/^\/t\/([^/]+)(?:\/|$)/);
+
+    if (match === null) {
+      return null;
+    }
+
+    const tenant = await tenantRepository.findBySlug(match[1]);
+
+    if (tenant === null || !isActiveTenant(tenant)) {
+      return null;
+    }
+
+    const platformIssuer = findIssuerByType(tenant, "platform_path");
+
+    return platformIssuer === null
+      ? null
+      : toResolvedContext(tenant, platformIssuer, requestHost);
+  }
+
   const customDomainTenant = await tenantRepository.findByCustomDomain(requestHost);
 
   if (customDomainTenant !== null && isActiveTenant(customDomainTenant)) {
@@ -99,27 +121,5 @@ export const resolveIssuerContext = async ({
     }
   }
 
-  if (requestHost !== normalizedOidcHost) {
-    return null;
-  }
-
-  const match = url.pathname.match(/^\/t\/([^/]+)(?:\/|$)/);
-
-  if (match === null) {
-    return null;
-  }
-
-  const tenant = await tenantRepository.findBySlug(match[1]);
-
-  if (tenant === null) {
-    return null;
-  }
-
-  if (!isActiveTenant(tenant)) {
-    return null;
-  }
-
-  const platformIssuer = findIssuerByType(tenant, "platform_path");
-
-  return platformIssuer === null ? null : toResolvedContext(tenant, platformIssuer, requestHost);
+  return null;
 };

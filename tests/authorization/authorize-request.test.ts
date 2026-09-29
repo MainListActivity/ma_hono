@@ -661,7 +661,8 @@ describe("worker entrypoint wiring", () => {
       createApp
     }));
     vi.doMock("../../src/adapters/db/drizzle/runtime", () => ({
-      createRuntimeRepositories
+      createRuntimeRepositories,
+      ensureTenantSigningKeys: vi.fn(async () => undefined)
     }));
     vi.doMock("../../src/config/env", () => ({
       readRuntimeConfig
@@ -773,7 +774,8 @@ describe("worker entrypoint wiring", () => {
     const loadContentReaderIssuancePolicy = vi.fn(async () => null);
 
     vi.doMock("../../src/adapters/db/drizzle/runtime", () => ({
-      createRuntimeRepositories
+      createRuntimeRepositories,
+      ensureTenantSigningKeys: vi.fn(async () => undefined)
     }));
     vi.doMock("../../src/config/env", () => ({
       readRuntimeConfig
@@ -910,7 +912,8 @@ describe("worker entrypoint wiring", () => {
     const loadContentReaderIssuancePolicy = vi.fn(async () => null);
 
     vi.doMock("../../src/adapters/db/drizzle/runtime", () => ({
-      createRuntimeRepositories
+      createRuntimeRepositories,
+      ensureTenantSigningKeys: vi.fn(async () => undefined)
     }));
     vi.doMock("../../src/config/env", () => ({
       readRuntimeConfig

@@ -692,6 +692,45 @@ export const createApp = (options: AppOptions) => {
         });
   };
 
+  /**
+   * Serves a successful response through the Cloudflare Cache API so that
+   * public, tenant-agnostic metadata endpoints (JWKS, discovery) do not pay
+   * several serial D1 lookups per request. Entries live for max-age seconds
+   * per colo; unpublished tenants keep their fresh 404 because only 2xx is
+   * stored. In non-Workers test environments `caches` is undefined and the
+   * handler simply runs uncached.
+   */
+  const PUBLIC_METADATA_CACHE_SECONDS = 60;
+  const servePublicMetadata = async (
+    context: Context,
+    build: () => Promise<Response | null>
+  ): Promise<Response> => {
+    const cache =
+      typeof caches === "undefined"
+        ? undefined
+        : (caches as CacheStorage & { default: Cache }).default;
+    if (cache !== undefined) {
+      const cached = await cache.match(context.req.raw);
+      if (cached !== undefined) {
+        return cached;
+      }
+    }
+    const res = await build();
+    if (res === null) {
+      return context.notFound();
+    }
+    res.headers.set("Cache-Control", `public, max-age=${PUBLIC_METADATA_CACHE_SECONDS}`);
+    if (cache !== undefined) {
+      const put = cache.put(context.req.raw, res.clone());
+      if (context.executionCtx !== undefined) {
+        context.executionCtx.waitUntil(put);
+      } else {
+        await put;
+      }
+    }
+    return res;
+  };
+
   const buildClientErrorRedirectUrl = ({
     error,
     errorDescription,
@@ -3024,45 +3063,47 @@ export const createApp = (options: AppOptions) => {
     return context.json(result.response, 200);
   };
 
-  app.get("/.well-known/openid-configuration", async (context) => {
-    const metadata = await handleDiscovery(context.req.url);
+  app.get("/.well-known/openid-configuration", async (context) =>
+    servePublicMetadata(context, async () => {
+      const metadata = await handleDiscovery(context.req.url);
+      return metadata === null ? null : context.json(metadata);
+    })
+  );
 
-    return metadata === null ? context.notFound() : context.json(metadata);
-  });
+  app.get("/t/:tenant/.well-known/openid-configuration", async (context) =>
+    servePublicMetadata(context, async () => {
+      const metadata = await handleDiscovery(context.req.url);
+      return metadata === null ? null : context.json(metadata);
+    })
+  );
 
-  app.get("/t/:tenant/.well-known/openid-configuration", async (context) => {
-    const metadata = await handleDiscovery(context.req.url);
+  app.get("/jwks.json", async (context) =>
+    servePublicMetadata(context, async () => {
+      const issuerContext = await resolveIssuerContext({
+        requestUrl: context.req.url,
+        oidcHost,
+        tenantRepository
+      });
 
-    return metadata === null ? context.notFound() : context.json(metadata);
-  });
+      return issuerContext === null
+        ? null
+        : context.json(await buildJwks(keyRepository, issuerContext.tenant.id));
+    })
+  );
 
-  app.get("/jwks.json", async (context) => {
-    const issuerContext = await resolveIssuerContext({
-      requestUrl: context.req.url,
-      oidcHost,
-      tenantRepository
-    });
+  app.get("/t/:tenant/jwks.json", async (context) =>
+    servePublicMetadata(context, async () => {
+      const issuerContext = await resolveIssuerContext({
+        requestUrl: context.req.url,
+        oidcHost,
+        tenantRepository
+      });
 
-    if (issuerContext === null) {
-      return context.notFound();
-    }
-
-    return context.json(await buildJwks(keyRepository, issuerContext.tenant.id));
-  });
-
-  app.get("/t/:tenant/jwks.json", async (context) => {
-    const issuerContext = await resolveIssuerContext({
-      requestUrl: context.req.url,
-      oidcHost,
-      tenantRepository
-    });
-
-    if (issuerContext === null) {
-      return context.notFound();
-    }
-
-    return context.json(await buildJwks(keyRepository, issuerContext.tenant.id));
-  });
+      return issuerContext === null
+        ? null
+        : context.json(await buildJwks(keyRepository, issuerContext.tenant.id));
+    })
+  );
 
   // Custom-domain issuer login routes (host = tenant custom domain)
   app.get("/login", handleLoginEntry);

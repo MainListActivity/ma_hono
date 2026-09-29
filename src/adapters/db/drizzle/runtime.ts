@@ -424,13 +424,15 @@ export const ensureTenantSigningKeys = async ({
 }) => {
   const allTenants = await tenantRepository.list();
 
-  for (const tenant of allTenants) {
-    const existingMaterial = await signer.loadActiveSigningKeyMaterial(tenant.id);
+  await Promise.all(
+    allTenants.map(async (tenant) => {
+      const existingMaterial = await signer.loadActiveSigningKeyMaterial(tenant.id);
 
-    if (existingMaterial === null) {
-      await signer.ensureActiveSigningKeyMaterial(tenant.id);
-    }
-  }
+      if (existingMaterial === null) {
+        await signer.ensureActiveSigningKeyMaterial(tenant.id);
+      }
+    })
+  );
 };
 
 class D1ClientRepository implements ClientRepository {
@@ -1799,7 +1801,7 @@ export class D1PasskeyRepository implements PasskeyRepository {
   }
 }
 
-export const createRuntimeRepositories = async (config: RuntimeConfig) => {
+export const createRuntimeRepositories = (config: RuntimeConfig) => {
   const db = drizzle(config.db, {
     schema: {
       accessTokenRevocations,
@@ -1831,11 +1833,6 @@ export const createRuntimeRepositories = async (config: RuntimeConfig) => {
     bootstrapSigningKey: signingKeyBootstrapper.bootstrapSigningKey.bind(signingKeyBootstrapper),
     keyMaterialStore,
     keyRepository
-  });
-
-  await ensureTenantSigningKeys({
-    signer,
-    tenantRepository
   });
 
   const loginChallengeRepository = new D1LoginChallengeRepository(db);
