@@ -67,6 +67,7 @@ import {
   issueClientAccessToken,
   issueScopeToken
 } from "../domain/tokens/token-service";
+import type { ContentReaderIssuancePolicy } from "../domain/tokens/content-reader-policy";
 import type { RefreshTokenRepository } from "../domain/tokens/refresh-token-repository";
 import { activateUser } from "../domain/users/activate-user";
 import { hashPassword } from "../domain/users/passwords";
@@ -368,6 +369,11 @@ export interface AppOptions {
   totpEncryptionKey: Uint8Array;
   /** Optional test override for `hook`-source custom claim fetches. */
   claimHookFetcher?: ClaimHookFetcher;
+  /**
+   * Optional allowlist for content_reader credential issuance on `/scope`.
+   * When omitted, content_reader requests are rejected with `invalid_scope`.
+   */
+  contentReaderPolicy?: ContentReaderIssuancePolicy | null;
   /** OIDC protocol hostname, e.g. "o.maplayer.top". Used to resolve issuer context and build issuer URLs. */
   oidcHost: string;
   registrationAccessTokenRepository?: RegistrationAccessTokenRepository;
@@ -409,6 +415,7 @@ export const createApp = (options: AppOptions) => {
   const tenantRepository = options.tenantRepository ?? new EmptyTenantRepository();
   const userRepository = options.userRepository ?? new EmptyUserRepository();
   const claimHookFetcher = options.claimHookFetcher;
+  const contentReaderPolicy = options.contentReaderPolicy ?? null;
   const signer = options.signer;
   const registrationAccessTokenRepository =
     options.registrationAccessTokenRepository ?? new EmptyRegistrationAccessTokenRepository();
@@ -2488,6 +2495,7 @@ export const createApp = (options: AppOptions) => {
     const result = await issueScopeToken({
       accessTokenClaimsRepository,
       clientRepository,
+      contentReaderPolicy,
       issuerContext,
       request: {
         authorizationHeader: context.req.header("authorization"),
@@ -2509,12 +2517,23 @@ export const createApp = (options: AppOptions) => {
         actorType: "oidc_client",
         actorId: result.clientId,
         tenantId: result.tenantId ?? issuerContext.tenant.id,
-        eventType: "oidc.scope.switch.failed",
+        eventType:
+          result.mode === "content_reader"
+            ? "oidc.scope.content_reader.failed"
+            : "oidc.scope.switch.failed",
         targetType: "oidc_client",
         targetId: result.clientId,
         payload: {
           reason: result.error,
-          user_id: result.userId
+          mode: result.mode,
+          user_id: result.userId,
+          ...(result.mode === "content_reader"
+            ? {
+                workspace_id: result.workspaceId ?? null,
+                entitlement_revision: result.entitlementRevision ?? null,
+                content_database: result.contentDatabase ?? null
+              }
+            : {})
         }
       });
 
@@ -2533,17 +2552,29 @@ export const createApp = (options: AppOptions) => {
       actorType: "oidc_client",
       actorId: result.clientId,
       tenantId: result.tenantId,
-      eventType: "oidc.scope.switch.succeeded",
+      eventType:
+        result.mode === "content_reader"
+          ? "oidc.scope.content_reader.succeeded"
+          : "oidc.scope.switch.succeeded",
       targetType: "oidc_client",
       targetId: result.clientId,
       payload: {
+        mode: result.mode,
         claim_names:
           bodyRecord.claims !== null &&
           typeof bodyRecord.claims === "object" &&
           !Array.isArray(bodyRecord.claims)
             ? Object.keys(bodyRecord.claims as Record<string, unknown>)
             : [],
-        user_id: result.userId
+        user_id: result.userId,
+        ...(result.mode === "content_reader"
+          ? {
+              workspace_id: result.workspaceId ?? null,
+              entitlement_revision: result.entitlementRevision ?? null,
+              content_database: result.contentDatabase ?? null,
+              expires_in: result.response.expires_in
+            }
+          : {})
       }
     });
 

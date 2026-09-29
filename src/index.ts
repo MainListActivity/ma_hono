@@ -3,7 +3,10 @@ import { createApp } from "./app/app";
 import { createSetupApp } from "./app/setup-app";
 import { createRuntimeRepositories } from "./adapters/db/drizzle/runtime";
 import { readRuntimeConfig } from "./config/env";
-import { loadPlatformConfig } from "./config/platform-config";
+import {
+  loadContentReaderIssuancePolicy,
+  loadPlatformConfig
+} from "./config/platform-config";
 import type { BrowserSessionRepository } from "./domain/authentication/repository";
 import {
   browserSessionCookieName
@@ -67,6 +70,7 @@ export default {
       return createSetupApp(runtimeConfig.db).fetch(request);
     }
 
+    const contentReaderPolicy = await loadContentReaderIssuancePolicy(runtimeConfig.db);
     const repositories = await createRuntimeRepositories(runtimeConfig);
     const browserSessionRepository = createKvBrowserSessionRepository(runtimeConfig.userSessionsKv);
     const oidcHost = `o.${platformConfig.rootDomain}`;
@@ -118,6 +122,7 @@ export default {
       loginChallengeLookupRepository: repositories.authenticationLoginChallengeRepository,
       loginChallengeRepository: repositories.loginChallengeRepository,
       managementApiToken: platformConfig.managementApiToken,
+      contentReaderPolicy,
       oidcHost,
       browserSessionRepository,
       registrationAccessTokenRepository: repositories.registrationAccessTokenRepository,
