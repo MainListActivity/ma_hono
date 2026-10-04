@@ -18,8 +18,20 @@ import type { PasskeyRepository } from "../domain/authentication/passkey-reposit
 import type { TotpRepository } from "../domain/mfa/totp-repository";
 import type { MfaPasskeyChallengeRepository } from "../domain/mfa/mfa-passkey-challenge-repository";
 import type { AuditRepository } from "../domain/audit/repository";
-import { authenticateAdminSession, loginAdmin } from "../domain/admin-auth/service";
+import {
+  auditActorFromAuthorization,
+  authenticateAdminSession,
+  loginAdmin,
+  mintServicePrincipal,
+  parseServicePrincipalScopes,
+  resolveAdminAuthorization,
+  toPublicServicePrincipal
+} from "../domain/admin-auth/service";
 import type { AdminRepository } from "../domain/admin-auth/repository";
+import type {
+  AdminAuthorization,
+  ServicePrincipalScope
+} from "../domain/admin-auth/types";
 import type { AuthenticationLoginChallengeRepository } from "../domain/authentication/login-challenge-repository";
 import {
   findActiveLoginChallengeForTenant as findActiveLoginChallengeForTenantDomain
@@ -295,6 +307,26 @@ class EmptyAdminRepository implements AdminRepository {
   async findUserByEmail(): Promise<null> {
     return null;
   }
+
+  async createServicePrincipal(): Promise<void> {
+    return;
+  }
+
+  async findServicePrincipalByTokenHash(): Promise<null> {
+    return null;
+  }
+
+  async findServicePrincipalById(): Promise<null> {
+    return null;
+  }
+
+  async listServicePrincipals(): Promise<[]> {
+    return [];
+  }
+
+  async revokeServicePrincipal(): Promise<null> {
+    return null;
+  }
 }
 
 class EmptyAuditRepository implements AuditRepository {
@@ -482,6 +514,48 @@ export const createApp = (options: AppOptions) => {
     options.accessTokenRevocationRepository ?? new EmptyAccessTokenRevocationRepository();
   const oidcHost = options.oidcHost;
   const mcpRegistrationBuckets = new Map<string, { windowStartedAt: number; count: number }>();
+
+
+  type AdminAuthFailure = { ok: false; status: 401 | 403; error: "unauthorized" | "forbidden" };
+  type HumanAdminOk = { ok: true; session: NonNullable<Awaited<ReturnType<typeof authenticateAdminSession>>> };
+  type ScopedAdminOk = { ok: true; auth: AdminAuthorization };
+
+  const requireHumanAdmin = async (
+    authorizationHeader: string | undefined
+  ): Promise<HumanAdminOk | AdminAuthFailure> => {
+    const resolved = await resolveAdminAuthorization({
+      adminRepository,
+      authorizationHeader
+    });
+    if (!resolved.ok) {
+      return resolved;
+    }
+    if (resolved.auth.kind === "service_principal") {
+      return { ok: false, status: 403, error: "forbidden" };
+    }
+    return { ok: true, session: resolved.auth.session };
+  };
+
+  const requireAdminScope = async (
+    authorizationHeader: string | undefined,
+    scope: ServicePrincipalScope
+  ): Promise<ScopedAdminOk | AdminAuthFailure> => {
+    const resolved = await resolveAdminAuthorization({
+      adminRepository,
+      authorizationHeader
+    });
+    if (!resolved.ok) {
+      return resolved;
+    }
+    if (
+      resolved.auth.kind === "service_principal" &&
+      !resolved.auth.principal.scopes.includes(scope)
+    ) {
+      return { ok: false, status: 403, error: "forbidden" };
+    }
+    return { ok: true, auth: resolved.auth };
+  };
+
 
   const resolveAllowedCorsOrigin = (origin: string) => {
     try {
@@ -3778,15 +3852,112 @@ export const createApp = (options: AppOptions) => {
     });
   });
 
-  app.post("/admin/tenants", async (context) => {
-    const session = await authenticateAdminSession({
+  app.get("/admin/service-principals", async (context) => {
+    const humanGate = await requireHumanAdmin(context.req.header("authorization"));
+    if (!humanGate.ok) {
+      return context.json({ error: humanGate.error }, humanGate.status);
+    }
+
+    const principals = await adminRepository.listServicePrincipals();
+    return context.json({
+      service_principals: principals.map(toPublicServicePrincipal)
+    });
+  });
+
+  app.post("/admin/service-principals", async (context) => {
+    const humanGate = await requireHumanAdmin(context.req.header("authorization"));
+    if (!humanGate.ok) {
+      return context.json({ error: humanGate.error }, humanGate.status);
+    }
+    const session = humanGate.session;
+
+    const payload = await context.req.json<{ label?: string; scopes?: unknown }>();
+    const label = payload.label?.trim() ?? "";
+    const scopes = parseServicePrincipalScopes(payload.scopes);
+
+    if (label.length === 0 || scopes === null) {
+      return context.json({ error: "invalid_request" }, 400);
+    }
+
+    const { principal, token } = await mintServicePrincipal({
       adminRepository,
-      authorizationHeader: context.req.header("authorization")
+      label,
+      scopes,
+      createdBy: session.adminUserId
     });
 
-    if (session === null) {
-      return context.json({ error: "unauthorized" }, 401);
+    await auditRepository.record({
+      id: crypto.randomUUID(),
+      actorType: "admin_user",
+      actorId: session.adminUserId,
+      tenantId: null,
+      eventType: "admin.service_principal.minted",
+      targetType: "service_principal",
+      targetId: principal.id,
+      payload: {
+        label: principal.label,
+        scopes: principal.scopes
+      },
+      occurredAt: new Date().toISOString()
+    });
+
+    return context.json(
+      {
+        ...toPublicServicePrincipal(principal),
+        token
+      },
+      201
+    );
+  });
+
+  app.post("/admin/service-principals/:principalId/revoke", async (context) => {
+    const humanGate = await requireHumanAdmin(context.req.header("authorization"));
+    if (!humanGate.ok) {
+      return context.json({ error: humanGate.error }, humanGate.status);
     }
+    const session = humanGate.session;
+
+    const principalId = context.req.param("principalId");
+    const existing = await adminRepository.findServicePrincipalById(principalId);
+    if (existing === null) {
+      return context.json({ error: "not_found" }, 404);
+    }
+
+    const revokedAt = new Date().toISOString();
+    const revoked =
+      existing.status === "revoked"
+        ? existing
+        : await adminRepository.revokeServicePrincipal(principalId, revokedAt);
+
+    if (revoked === null) {
+      return context.json({ error: "not_found" }, 404);
+    }
+
+    if (existing.status !== "revoked") {
+      await auditRepository.record({
+        id: crypto.randomUUID(),
+        actorType: "admin_user",
+        actorId: session.adminUserId,
+        tenantId: null,
+        eventType: "admin.service_principal.revoked",
+        targetType: "service_principal",
+        targetId: principalId,
+        payload: {
+          label: revoked.label
+        },
+        occurredAt: revokedAt
+      });
+    }
+
+    return context.json(toPublicServicePrincipal(revoked));
+  });
+
+  app.post("/admin/tenants", async (context) => {
+    const humanGate = await requireHumanAdmin(context.req.header("authorization"));
+    if (!humanGate.ok) {
+      return context.json({ error: humanGate.error }, humanGate.status);
+    }
+    const session = humanGate.session;
 
     const payload = await context.req.json<{ display_name?: string; slug?: string }>();
     const slug = payload.slug?.trim() ?? "";
@@ -3844,14 +4015,11 @@ export const createApp = (options: AppOptions) => {
   });
 
   app.post("/admin/tenants/:tenantId/users", async (context) => {
-    const session = await authenticateAdminSession({
-      adminRepository,
-      authorizationHeader: context.req.header("authorization")
-    });
-
-    if (session === null) {
-      return context.json({ error: "unauthorized" }, 401);
+    const scopeGate = await requireAdminScope(context.req.header("authorization"), "user.provision");
+    if (!scopeGate.ok) {
+      return context.json({ error: scopeGate.error }, scopeGate.status);
     }
+    const actor = auditActorFromAuthorization(scopeGate.auth);
 
     const tenantId = context.req.param("tenantId");
     const payload = await context.req.json<{
@@ -3883,8 +4051,8 @@ export const createApp = (options: AppOptions) => {
       });
     } catch (error) {
       await recordAuditEventBestEffort({
-        actorType: "admin_user",
-        actorId: session.adminUserId,
+        actorType: actor.actorType,
+        actorId: actor.actorId,
         tenantId,
         eventType: "user.provision.failed",
         targetType: "user",
@@ -3903,8 +4071,8 @@ export const createApp = (options: AppOptions) => {
     activationUrl.searchParams.set("token", result.invitationToken);
 
     await recordAuditEventBestEffort({
-      actorType: "admin_user",
-      actorId: session.adminUserId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
       tenantId,
       eventType: "user.provisioned",
       targetType: "user",
@@ -3933,25 +4101,20 @@ export const createApp = (options: AppOptions) => {
   });
 
   app.get("/admin/tenants", async (context) => {
-    const session = await authenticateAdminSession({
-      adminRepository,
-      authorizationHeader: context.req.header("authorization")
-    });
-    if (session === null) {
-      return context.json({ error: "unauthorized" }, 401);
+    const scopeGate = await requireAdminScope(context.req.header("authorization"), "tenant.read");
+    if (!scopeGate.ok) {
+      return context.json({ error: scopeGate.error }, scopeGate.status);
     }
     const allTenants = await tenantRepository.list();
     return context.json({ tenants: allTenants.map(tenantToWire) });
   });
 
   app.get("/admin/tenants/:tenantId", async (context) => {
-    const session = await authenticateAdminSession({
-      adminRepository,
-      authorizationHeader: context.req.header("authorization")
-    });
-    if (session === null) {
-      return context.json({ error: "unauthorized" }, 401);
+    const humanGate = await requireHumanAdmin(context.req.header("authorization"));
+    if (!humanGate.ok) {
+      return context.json({ error: humanGate.error }, humanGate.status);
     }
+    const session = humanGate.session;
     const tenantId = context.req.param("tenantId");
     const tenant = await tenantRepository.findById(tenantId);
     if (tenant === null) {
@@ -3961,13 +4124,11 @@ export const createApp = (options: AppOptions) => {
   });
 
   app.patch("/admin/tenants/:tenantId", async (context) => {
-    const session = await authenticateAdminSession({
-      adminRepository,
-      authorizationHeader: context.req.header("authorization")
-    });
-    if (session === null) {
-      return context.json({ error: "unauthorized" }, 401);
+    const humanGate = await requireHumanAdmin(context.req.header("authorization"));
+    if (!humanGate.ok) {
+      return context.json({ error: humanGate.error }, humanGate.status);
     }
+    const session = humanGate.session;
     const tenantId = context.req.param("tenantId");
     const tenant = await tenantRepository.findById(tenantId);
     if (tenant === null) {
@@ -4001,13 +4162,11 @@ export const createApp = (options: AppOptions) => {
   });
 
   app.post("/admin/tenants/:tenantId/keys/rotate", async (context) => {
-    const session = await authenticateAdminSession({
-      adminRepository,
-      authorizationHeader: context.req.header("authorization")
-    });
-    if (session === null) {
-      return context.json({ error: "unauthorized" }, 401);
+    const humanGate = await requireHumanAdmin(context.req.header("authorization"));
+    if (!humanGate.ok) {
+      return context.json({ error: humanGate.error }, humanGate.status);
     }
+    const session = humanGate.session;
     if (signer === undefined) {
       return context.json({ error: "key_rotation_unavailable" }, 503);
     }
@@ -4038,13 +4197,11 @@ export const createApp = (options: AppOptions) => {
   });
 
   app.delete("/admin/tenants/:tenantId", async (context) => {
-    const session = await authenticateAdminSession({
-      adminRepository,
-      authorizationHeader: context.req.header("authorization")
-    });
-    if (session === null) {
-      return context.json({ error: "unauthorized" }, 401);
+    const humanGate = await requireHumanAdmin(context.req.header("authorization"));
+    if (!humanGate.ok) {
+      return context.json({ error: humanGate.error }, humanGate.status);
     }
+    const session = humanGate.session;
     const tenantId = context.req.param("tenantId");
     const tenant = await tenantRepository.findById(tenantId);
     if (tenant === null) {
@@ -4064,12 +4221,9 @@ export const createApp = (options: AppOptions) => {
   });
 
   app.get("/admin/tenants/:tenantId/users", async (context) => {
-    const session = await authenticateAdminSession({
-      adminRepository,
-      authorizationHeader: context.req.header("authorization")
-    });
-    if (session === null) {
-      return context.json({ error: "unauthorized" }, 401);
+    const scopeGate = await requireAdminScope(context.req.header("authorization"), "user.read");
+    if (!scopeGate.ok) {
+      return context.json({ error: scopeGate.error }, scopeGate.status);
     }
     const tenantId = context.req.param("tenantId");
     const tenant = await tenantRepository.findById(tenantId);
@@ -4088,13 +4242,11 @@ export const createApp = (options: AppOptions) => {
   });
 
   app.get("/admin/tenants/:tenantId/clients", async (context) => {
-    const session = await authenticateAdminSession({
-      adminRepository,
-      authorizationHeader: context.req.header("authorization")
-    });
-    if (session === null) {
-      return context.json({ error: "unauthorized" }, 401);
+    const humanGate = await requireHumanAdmin(context.req.header("authorization"));
+    if (!humanGate.ok) {
+      return context.json({ error: humanGate.error }, humanGate.status);
     }
+    const session = humanGate.session;
     const tenantId = context.req.param("tenantId");
     const tenant = await tenantRepository.findById(tenantId);
     if (tenant === null) {
@@ -4137,13 +4289,11 @@ export const createApp = (options: AppOptions) => {
   });
 
   app.get("/admin/tenants/:tenantId/clients/:clientId", async (context) => {
-    const session = await authenticateAdminSession({
-      adminRepository,
-      authorizationHeader: context.req.header("authorization")
-    });
-    if (session === null) {
-      return context.json({ error: "unauthorized" }, 401);
+    const humanGate = await requireHumanAdmin(context.req.header("authorization"));
+    if (!humanGate.ok) {
+      return context.json({ error: humanGate.error }, humanGate.status);
     }
+    const session = humanGate.session;
     const tenantId = context.req.param("tenantId");
     const clientId = context.req.param("clientId");
     const tenant = await tenantRepository.findById(tenantId);
@@ -4190,13 +4340,11 @@ export const createApp = (options: AppOptions) => {
   });
 
   app.patch("/admin/tenants/:tenantId/clients/:clientId/auth-method-policy", async (context) => {
-    const session = await authenticateAdminSession({
-      adminRepository,
-      authorizationHeader: context.req.header("authorization")
-    });
-    if (session === null) {
-      return context.json({ error: "unauthorized" }, 401);
+    const humanGate = await requireHumanAdmin(context.req.header("authorization"));
+    if (!humanGate.ok) {
+      return context.json({ error: humanGate.error }, humanGate.status);
     }
+    const session = humanGate.session;
     const tenantId = context.req.param("tenantId");
     const clientId = context.req.param("clientId");
     const tenant = await tenantRepository.findById(tenantId);
@@ -4315,13 +4463,11 @@ export const createApp = (options: AppOptions) => {
   });
 
   app.post("/admin/tenants/:tenantId/clients", async (context) => {
-    const session = await authenticateAdminSession({
-      adminRepository,
-      authorizationHeader: context.req.header("authorization")
-    });
-    if (session === null) {
-      return context.json({ error: "unauthorized" }, 401);
+    const humanGate = await requireHumanAdmin(context.req.header("authorization"));
+    if (!humanGate.ok) {
+      return context.json({ error: humanGate.error }, humanGate.status);
     }
+    const session = humanGate.session;
     const tenantId = context.req.param("tenantId");
     const tenant = await tenantRepository.findById(tenantId);
     if (tenant === null) {
@@ -4421,13 +4567,11 @@ export const createApp = (options: AppOptions) => {
   });
 
   app.delete("/admin/tenants/:tenantId/clients/:clientId", async (context) => {
-    const session = await authenticateAdminSession({
-      adminRepository,
-      authorizationHeader: context.req.header("authorization")
-    });
-    if (session === null) {
-      return context.json({ error: "unauthorized" }, 401);
+    const humanGate = await requireHumanAdmin(context.req.header("authorization"));
+    if (!humanGate.ok) {
+      return context.json({ error: humanGate.error }, humanGate.status);
     }
+    const session = humanGate.session;
     const tenantId = context.req.param("tenantId");
     const clientId = context.req.param("clientId");
     const tenant = await tenantRepository.findById(tenantId);
@@ -4455,13 +4599,11 @@ export const createApp = (options: AppOptions) => {
   });
 
   app.post("/admin/tenants/:tenantId/clients/:clientId/secret/reset", async (context) => {
-    const session = await authenticateAdminSession({
-      adminRepository,
-      authorizationHeader: context.req.header("authorization")
-    });
-    if (session === null) {
-      return context.json({ error: "unauthorized" }, 401);
+    const humanGate = await requireHumanAdmin(context.req.header("authorization"));
+    if (!humanGate.ok) {
+      return context.json({ error: humanGate.error }, humanGate.status);
     }
+    const session = humanGate.session;
     const tenantId = context.req.param("tenantId");
     const clientId = context.req.param("clientId");
     const tenant = await tenantRepository.findById(tenantId);
@@ -4503,13 +4645,11 @@ export const createApp = (options: AppOptions) => {
   });
 
   app.patch("/admin/tenants/:tenantId/clients/:clientId", async (context) => {
-    const session = await authenticateAdminSession({
-      adminRepository,
-      authorizationHeader: context.req.header("authorization")
-    });
-    if (session === null) {
-      return context.json({ error: "unauthorized" }, 401);
+    const humanGate = await requireHumanAdmin(context.req.header("authorization"));
+    if (!humanGate.ok) {
+      return context.json({ error: humanGate.error }, humanGate.status);
     }
+    const session = humanGate.session;
     const tenantId = context.req.param("tenantId");
     const clientId = context.req.param("clientId");
     const tenant = await tenantRepository.findById(tenantId);

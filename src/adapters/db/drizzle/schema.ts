@@ -149,6 +149,24 @@ export const adminUsers = sqliteTable(
   })
 );
 
+export const adminServicePrincipals = sqliteTable(
+  "admin_service_principals",
+  {
+    id: text("id").primaryKey(),
+    label: text("label").notNull(),
+    tokenHash: text("token_hash").notNull(),
+    scopes: text("scopes", { mode: "json" }).$type<string[]>().notNull(),
+    status: text("status").notNull(),
+    createdAt: text("created_at").notNull(),
+    revokedAt: text("revoked_at"),
+    createdBy: text("created_by").notNull()
+  },
+  (table) => ({
+    tokenHashUnique: uniqueIndex("admin_service_principals_token_hash_unique").on(table.tokenHash),
+    statusIdx: index("admin_service_principals_status_idx").on(table.status)
+  })
+);
+
 export const auditEvents = sqliteTable(
   "audit_events",
   {

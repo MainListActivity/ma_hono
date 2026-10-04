@@ -68,17 +68,17 @@ On startup, the IdP retires any existing active signing keys and ensures each te
 
 ## User Provisioning
 
-Provision a user via the admin API (requires a valid admin session):
+Provision a user via the admin API (human admin session **or** a scoped service principal):
 
 ```bash
-# Login as admin
+# Login as admin (human bootstrap — do not put this password in app/CI secrets)
 curl -X POST https://your-idp.example.com/admin/login \
   -H "Content-Type: application/json" \
   -d '{"email":"admin@example.com","password":"your-password"}'
 
 # Provision a user for a tenant
 curl -X POST https://your-idp.example.com/admin/tenants/{tenantId}/users \
-  -H "Authorization: Bearer <admin-session-token>" \
+  -H "Authorization: Bearer <admin-session-token-or-service-token>" \
   -H "Content-Type: application/json" \
   -d '{"email":"user@example.com","display_name":"Alice","username":"alice"}'
 
@@ -88,6 +88,8 @@ curl -X POST https://your-idp.example.com/activate-account \
   -H "Content-Type: application/json" \
   -d '{"invitation_token":"<token>","password":"new-password"}'
 ```
+
+For machine callers (invite bots, ops automation), mint a revocable service principal instead of embedding the human password. See [docs/admin-service-principals.md](docs/admin-service-principals.md).
 
 ## OIDC Flow
 
