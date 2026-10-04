@@ -71,6 +71,7 @@ import type {
 import { R2KeyMaterialStore } from "../../r2/r2-key-material-store";
 import {
   accessTokenRevocations,
+  adminServicePrincipals,
   adminUsers,
   auditEvents,
   authorizationCodes,
@@ -92,6 +93,7 @@ import {
   totpCredentials,
   mfaPasskeyChallenges
 } from "./schema";
+import type { AdminServicePrincipal } from "../../../domain/admin-auth/types";
 
 const adminSessionPrefix = "admin_session:";
 const registrationTokenPrefix = "registration_access_token:";
@@ -952,6 +954,26 @@ class D1ConsentChallengeRepository implements ConsentChallengeRepository {
   }
 }
 
+const mapServicePrincipalRow = (row: {
+  id: string;
+  label: string;
+  tokenHash: string;
+  scopes: string[];
+  status: string;
+  createdAt: string;
+  revokedAt: string | null;
+  createdBy: string;
+}): AdminServicePrincipal => ({
+  id: row.id,
+  label: row.label,
+  tokenHash: row.tokenHash,
+  scopes: row.scopes as AdminServicePrincipal["scopes"],
+  status: row.status as AdminServicePrincipal["status"],
+  createdAt: row.createdAt,
+  revokedAt: row.revokedAt,
+  createdBy: row.createdBy
+});
+
 class D1KvAdminRepository implements AdminRepository {
   constructor(
     private readonly db: ReturnType<typeof drizzle>,
@@ -989,6 +1011,70 @@ class D1KvAdminRepository implements AdminRepository {
           email: row.email,
           status: row.status as AdminUser["status"]
         };
+  }
+
+  async createServicePrincipal(principal: AdminServicePrincipal): Promise<void> {
+    await this.db.insert(adminServicePrincipals).values({
+      id: principal.id,
+      label: principal.label,
+      tokenHash: principal.tokenHash,
+      scopes: principal.scopes,
+      status: principal.status,
+      createdAt: principal.createdAt,
+      revokedAt: principal.revokedAt,
+      createdBy: principal.createdBy
+    });
+  }
+
+  async findServicePrincipalByTokenHash(
+    tokenHash: string
+  ): Promise<AdminServicePrincipal | null> {
+    const [row] = await this.db
+      .select()
+      .from(adminServicePrincipals)
+      .where(eq(adminServicePrincipals.tokenHash, tokenHash))
+      .limit(1);
+
+    return row === undefined ? null : mapServicePrincipalRow(row);
+  }
+
+  async findServicePrincipalById(id: string): Promise<AdminServicePrincipal | null> {
+    const [row] = await this.db
+      .select()
+      .from(adminServicePrincipals)
+      .where(eq(adminServicePrincipals.id, id))
+      .limit(1);
+
+    return row === undefined ? null : mapServicePrincipalRow(row);
+  }
+
+  async listServicePrincipals(): Promise<AdminServicePrincipal[]> {
+    const rows = await this.db.select().from(adminServicePrincipals);
+    return rows.map(mapServicePrincipalRow);
+  }
+
+  async revokeServicePrincipal(
+    id: string,
+    revokedAt: string
+  ): Promise<AdminServicePrincipal | null> {
+    const existing = await this.findServicePrincipalById(id);
+    if (existing === null) {
+      return null;
+    }
+
+    await this.db
+      .update(adminServicePrincipals)
+      .set({
+        status: "revoked",
+        revokedAt
+      })
+      .where(eq(adminServicePrincipals.id, id));
+
+    return {
+      ...existing,
+      status: "revoked",
+      revokedAt
+    };
   }
 }
 
@@ -1803,6 +1889,7 @@ export const createRuntimeRepositories = async (config: RuntimeConfig) => {
   const db = drizzle(config.db, {
     schema: {
       accessTokenRevocations,
+      adminServicePrincipals,
       adminUsers,
       auditEvents,
       authorizationCodes,
