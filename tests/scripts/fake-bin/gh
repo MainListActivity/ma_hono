@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# fake gh：模拟 `gh secret set <name> --repo <r> --env <e>`，stdin 的值写入
+# $FAKE_GH_CAPTURE_DIR/<name>（供断言），FAKE_GH_EXIT 控制退出码模拟注入失败。
+set -euo pipefail
+if [[ "${1:-}" == "secret" && "${2:-}" == "set" ]]; then
+  NAME="$3"
+  mkdir -p "$FAKE_GH_CAPTURE_DIR"
+  cat > "$FAKE_GH_CAPTURE_DIR/$NAME"
+  exit "${FAKE_GH_EXIT:-0}"
+fi
+echo "fake gh: unsupported args $*" >&2
+exit 2

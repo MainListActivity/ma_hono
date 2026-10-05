@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# fake pnpm：只模拟 `pnpm exec wrangler d1 execute <name> --remote --json --command "<sql>"`，
+# 把最后一条 SQL 交给 fake-d1.mjs（FAKE_D1_STATE 指向的 JSON 状态文件）。
+set -euo pipefail
+SQL="${@: -1}"
+exec node "$(cd "$(dirname "$0")" && pwd)/../fake-d1.mjs" "$SQL"
