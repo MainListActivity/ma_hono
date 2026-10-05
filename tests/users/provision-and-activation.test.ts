@@ -11,7 +11,7 @@ import { createApp } from "../../src/app/app";
 import { activateUser } from "../../src/domain/users/activate-user";
 import { hashPassword, verifyPassword } from "../../src/domain/users/passwords";
 import * as passwords from "../../src/domain/users/passwords";
-import { provisionUser } from "../../src/domain/users/provision-user";
+import { provisionUser, reissueUserActivation } from "../../src/domain/users/provision-user";
 import type { PasswordCredential, TenantAuthMethodPolicy } from "../../src/domain/users/types";
 import {
   authenticateBrowserSession,
@@ -465,6 +465,107 @@ describe("user provisioning and activation domain", () => {
         now: new Date("2026-03-21T12:06:00.000Z")
       })
     ).toBeNull();
+  });
+
+  it("reissues an activation invitation, expiring the old token and minting a usable new one", async () => {
+    const repository = new MemoryUserRepository({
+      policies: [tenantPolicy]
+    });
+    const provisioned = await provisionUser({
+      userRepository: repository,
+      tenantId: "tenant_acme",
+      email: "reissue@acme.test",
+      displayName: "Reissue Me",
+      now: new Date("2026-03-21T09:00:00.000Z")
+    });
+
+    const reissued = await reissueUserActivation({
+      userRepository: repository,
+      tenantId: "tenant_acme",
+      userId: provisioned.user.id,
+      now: new Date("2026-03-21T10:00:00.000Z")
+    });
+
+    expect(reissued.ok).toBe(true);
+    if (!reissued.ok) {
+      throw new Error("expected reissue to succeed");
+    }
+    expect(reissued.invitationToken).not.toBe(provisioned.invitationToken);
+    expect(reissued.invitation.userId).toBe(provisioned.user.id);
+    expect(reissued.invitation.purpose).toBe("account_activation");
+    expect(reissued.user.status).toBe("provisioned");
+
+    const invitations = repository.listInvitations();
+    expect(invitations).toHaveLength(2);
+    const oldInvitation = invitations.find(
+      (invitation) => invitation.id === provisioned.invitation.id
+    );
+    expect(oldInvitation?.expiresAt).toBe("2026-03-21T10:00:00.000Z");
+
+    // 旧链接立即失效（视为过期），新链接可激活
+    expect(
+      await activateUser({
+        userRepository: repository,
+        invitationToken: provisioned.invitationToken,
+        password: "CorrectHorseBatteryStaple!42",
+        now: new Date("2026-03-21T10:01:00.000Z")
+      })
+    ).toEqual({ ok: false, reason: "invitation_expired" });
+
+    const activated = await activateUser({
+      userRepository: repository,
+      invitationToken: reissued.invitationToken,
+      password: "CorrectHorseBatteryStaple!42",
+      now: new Date("2026-03-21T10:02:00.000Z")
+    });
+    expect(activated.ok).toBe(true);
+  });
+
+  it("refuses to reissue activation for missing, active, or disabled users", async () => {
+    const repository = new MemoryUserRepository({
+      policies: [tenantPolicy]
+    });
+
+    expect(
+      await reissueUserActivation({
+        userRepository: repository,
+        tenantId: "tenant_acme",
+        userId: "user_missing"
+      })
+    ).toEqual({ ok: false, reason: "user_not_found" });
+
+    const provisioned = await provisionUser({
+      userRepository: repository,
+      tenantId: "tenant_acme",
+      email: "activated@acme.test",
+      displayName: "Activated"
+    });
+    await activateUser({
+      userRepository: repository,
+      invitationToken: provisioned.invitationToken,
+      password: "CorrectHorseBatteryStaple!42"
+    });
+
+    expect(
+      await reissueUserActivation({
+        userRepository: repository,
+        tenantId: "tenant_acme",
+        userId: provisioned.user.id
+      })
+    ).toEqual({ ok: false, reason: "user_not_provisioned" });
+
+    const disabledUser = {
+      ...repository.listUsers()[0]!,
+      status: "disabled" as const
+    };
+    await repository.updateUser(disabledUser);
+    expect(
+      await reissueUserActivation({
+        userRepository: repository,
+        tenantId: "tenant_acme",
+        userId: disabledUser.id
+      })
+    ).toEqual({ ok: false, reason: "user_not_provisioned" });
   });
 });
 
@@ -1084,5 +1185,160 @@ describe("user provisioning and activation routes", () => {
     expect(response.status).toBe(400);
     expect(await response.json()).toEqual({ error: "invalid_request" });
     expect(userRepository.listInvitations()[0]?.consumedAt).toBeNull();
+  });
+});
+
+describe("reissue activation route", () => {
+  const loginAdmin = async (app: ReturnType<typeof createApp>) => {
+    const loginResponse = await app.request("https://idp.example.test/admin/login", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        email: "admin@example.test",
+        password: "bootstrap-secret"
+      })
+    });
+    return ((await loginResponse.json()) as AdminLoginResponse).session_token;
+  };
+
+  const createAdminApp = ({
+    auditRepository,
+    userRepository
+  }: {
+    auditRepository?: MemoryAuditRepository;
+    userRepository: MemoryUserRepository;
+  }) =>
+    createApp({
+      adminBootstrapPasswordHash:
+        "1:AQEBAQEBAQEBAQEBAQEBAQ:-niO1HggQYX5120bMdQ1NLtflreXdKdYKUoUQe1oPdI",
+      adminWhitelist: ["admin@example.test"],
+      adminRepository: new MemoryAdminRepository({
+        adminUsers: [{ email: "admin@example.test", id: "admin_1", status: "active" }]
+      }),
+      auditRepository,
+      managementApiToken: "",
+      oidcHost: "idp.example.test",
+      authDomain: "auth.example.test",
+      tenantRepository: createTenantRepositoryWithAcmeTenant(),
+      userRepository,
+      totpRepository: new MemoryTotpRepository(),
+      mfaPasskeyChallengeRepository: new MemoryMfaPasskeyChallengeRepository(),
+      totpEncryptionKey: new Uint8Array(32).fill(0)
+    });
+
+  it("reissues a one-time activation url for a provisioned user and expires the old link", async () => {
+    const userRepository = new MemoryUserRepository({ policies: [tenantPolicy] });
+    const auditRepository = new MemoryAuditRepository();
+    const app = createAdminApp({ auditRepository, userRepository });
+    const sessionToken = await loginAdmin(app);
+
+    const provisioned = await provisionUser({
+      userRepository,
+      tenantId: "tenant_acme",
+      email: "lawyer@acme.test",
+      displayName: "Lawyer"
+    });
+
+    const response = await app.request(
+      `https://idp.example.test/admin/tenants/tenant_acme/users/${provisioned.user.id}/reissue-activation`,
+      {
+        method: "POST",
+        headers: { authorization: `Bearer ${sessionToken}` }
+      }
+    );
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      activation_url: string;
+      invitation_token: string;
+      user: { id: string; status: string };
+    };
+    expect(body.user.id).toBe(provisioned.user.id);
+    expect(body.invitation_token).not.toBe(provisioned.invitationToken);
+    expect(body.activation_url).toContain(`token=${body.invitation_token}`);
+
+    // 旧链接作废：激活按过期处理；新链接可激活
+    const stale = await app.request("https://idp.example.test/activate-account", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        invitation_token: provisioned.invitationToken,
+        password: "CorrectHorseBatteryStaple!42"
+      })
+    });
+    expect(stale.status).toBe(400);
+    expect(await stale.json()).toEqual({ error: "invitation_expired" });
+
+    const activated = await app.request("https://idp.example.test/activate-account", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        invitation_token: body.invitation_token,
+        password: "CorrectHorseBatteryStaple!42"
+      })
+    });
+    expect(activated.status).toBe(200);
+
+    const resentEvent = auditRepository
+      .listEvents()
+      .find((event) => event.eventType === "user.activation.resent");
+    expect(resentEvent).toMatchObject({
+      actorType: "admin_user",
+      actorId: "admin_1",
+      tenantId: "tenant_acme",
+      targetType: "user",
+      targetId: provisioned.user.id
+    });
+    expect(JSON.stringify(resentEvent?.payload ?? {})).not.toContain(body.invitation_token);
+    expect(JSON.stringify(resentEvent?.payload ?? {})).not.toContain("activation_url");
+  });
+
+  it("returns 409 for an already-activated user and 404 for a missing user", async () => {
+    const userRepository = new MemoryUserRepository({ policies: [tenantPolicy] });
+    const app = createAdminApp({ userRepository });
+    const sessionToken = await loginAdmin(app);
+
+    const provisioned = await provisionUser({
+      userRepository,
+      tenantId: "tenant_acme",
+      email: "done@acme.test",
+      displayName: "Done"
+    });
+    await activateUser({
+      userRepository,
+      invitationToken: provisioned.invitationToken,
+      password: "CorrectHorseBatteryStaple!42"
+    });
+
+    const conflicted = await app.request(
+      `https://idp.example.test/admin/tenants/tenant_acme/users/${provisioned.user.id}/reissue-activation`,
+      {
+        method: "POST",
+        headers: { authorization: `Bearer ${sessionToken}` }
+      }
+    );
+    expect(conflicted.status).toBe(409);
+    expect(await conflicted.json()).toEqual({ error: "invalid_state" });
+
+    const missing = await app.request(
+      "https://idp.example.test/admin/tenants/tenant_acme/users/user_missing/reissue-activation",
+      {
+        method: "POST",
+        headers: { authorization: `Bearer ${sessionToken}` }
+      }
+    );
+    expect(missing.status).toBe(404);
+    expect(await missing.json()).toEqual({ error: "user_not_found" });
+  });
+
+  it("requires admin auth for reissue-activation", async () => {
+    const userRepository = new MemoryUserRepository({ policies: [tenantPolicy] });
+    const app = createAdminApp({ userRepository });
+
+    const response = await app.request(
+      "https://idp.example.test/admin/tenants/tenant_acme/users/user_x/reissue-activation",
+      { method: "POST" }
+    );
+    expect(response.status).toBe(401);
   });
 });

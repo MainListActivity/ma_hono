@@ -101,7 +101,7 @@ import type { RefreshTokenRepository } from "../domain/tokens/refresh-token-repo
 import type { AccessTokenRevocationRepository } from "../domain/tokens/access-token-revocation-repository";
 import { activateUser } from "../domain/users/activate-user";
 import { hashPassword } from "../domain/users/passwords";
-import { provisionUser } from "../domain/users/provision-user";
+import { provisionUser, reissueUserActivation } from "../domain/users/provision-user";
 import type { UserRepository } from "../domain/users/repository";
 
 class EmptyTenantRepository implements TenantRepository {
@@ -411,6 +411,12 @@ class EmptyUserRepository implements UserRepository {
 
   async listByTenantId(): Promise<[]> {
     return [];
+  }
+
+  async reissueActivationInvitation() {
+    return {
+      kind: "not_found" as const
+    };
   }
 
   async updateUser(): Promise<void> {
@@ -4102,6 +4108,78 @@ export const createApp = (options: AppOptions) => {
         activation_url: activationUrl.toString()
       },
       201
+    );
+  });
+
+  app.post("/admin/tenants/:tenantId/users/:userId/reissue-activation", async (context) => {
+    const scopeGate = await requireAdminScope(context.req.header("authorization"), "user.provision");
+    if (!scopeGate.ok) {
+      return context.json({ error: scopeGate.error }, scopeGate.status);
+    }
+    const actor = auditActorFromAuthorization(scopeGate.auth);
+
+    const tenantId = context.req.param("tenantId");
+    const userId = context.req.param("userId");
+
+    if ((await tenantRepository.findById(tenantId)) === null) {
+      return context.json({ error: "tenant_not_found" }, 404);
+    }
+
+    const result = await reissueUserActivation({
+      userRepository,
+      tenantId,
+      userId
+    });
+
+    if (!result.ok) {
+      await recordAuditEventBestEffort({
+        actorType: actor.actorType,
+        actorId: actor.actorId,
+        tenantId,
+        eventType: "user.activation.resend_failed",
+        targetType: "user",
+        targetId: userId,
+        payload: {
+          reason: result.reason
+        }
+      });
+
+      return result.reason === "user_not_found"
+        ? context.json({ error: "user_not_found" }, 404)
+        : context.json({ error: "invalid_state" }, 409);
+    }
+
+    const activationUrl = new URL("/activate-account", context.req.url);
+
+    activationUrl.searchParams.set("token", result.invitationToken);
+
+    await recordAuditEventBestEffort({
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      tenantId,
+      eventType: "user.activation.resent",
+      targetType: "user",
+      targetId: result.user.id,
+      payload: {
+        email: result.user.email
+      }
+    });
+
+    return context.json(
+      {
+        user: {
+          id: result.user.id,
+          tenant_id: result.user.tenantId,
+          email: result.user.email,
+          username: result.user.username,
+          display_name: result.user.displayName,
+          status: result.user.status,
+          email_verified: result.user.emailVerified
+        },
+        invitation_token: result.invitationToken,
+        activation_url: activationUrl.toString()
+      },
+      200
     );
   });
 

@@ -2,6 +2,8 @@ import type {
   ActivateUserByInvitationTokenInput,
   ActivateUserByInvitationTokenResult,
   CreateProvisionedUserWithInvitationInput,
+  ReissueActivationInvitationInput,
+  ReissueActivationInvitationResult,
   UserRepository
 } from "../../../domain/users/repository";
 import type {
@@ -203,6 +205,44 @@ export class MemoryUserRepository implements UserRepository {
 
   listUsers(): User[] {
     return [...this.users];
+  }
+
+  async reissueActivationInvitation({
+    invitation,
+    now,
+    tenantId,
+    userId
+  }: ReissueActivationInvitationInput): Promise<ReissueActivationInvitationResult> {
+    const user = this.users.find(
+      (storedUser) => storedUser.tenantId === tenantId && storedUser.id === userId
+    );
+
+    if (user === undefined) {
+      return { kind: "not_found" };
+    }
+
+    if (user.status !== "provisioned") {
+      return { kind: "not_provisioned" };
+    }
+
+    const nowIso = now.toISOString();
+
+    this.invitations.forEach((storedInvitation, index) => {
+      if (
+        storedInvitation.tenantId === tenantId &&
+        storedInvitation.userId === userId &&
+        storedInvitation.consumedAt === null
+      ) {
+        this.invitations[index] = { ...storedInvitation, expiresAt: nowIso };
+      }
+    });
+
+    this.invitations.push(invitation);
+
+    return {
+      kind: "reissued",
+      user
+    };
   }
 
   async updateUser(user: User): Promise<void> {

@@ -74,3 +74,64 @@ export const provisionUser = async ({
     user
   };
 };
+
+export type ReissueUserActivationResult =
+  | {
+      ok: true;
+      invitation: UserInvitation;
+      invitationToken: string;
+      user: User;
+    }
+  | {
+      ok: false;
+      reason: "user_not_found" | "user_not_provisioned";
+    };
+
+export const reissueUserActivation = async ({
+  invitationTtlMs = defaultInvitationTtlMs,
+  now = new Date(),
+  tenantId,
+  userId,
+  userRepository
+}: {
+  invitationTtlMs?: number;
+  now?: Date;
+  tenantId: string;
+  userId: string;
+  userRepository: UserRepository;
+}): Promise<ReissueUserActivationResult> => {
+  const invitationToken = createOpaqueToken();
+  const createdAt = now.toISOString();
+  const invitation: UserInvitation = {
+    id: crypto.randomUUID(),
+    tenantId,
+    userId,
+    tokenHash: await sha256Base64Url(invitationToken),
+    purpose: "account_activation",
+    expiresAt: new Date(now.getTime() + invitationTtlMs).toISOString(),
+    consumedAt: null,
+    createdAt
+  };
+
+  const result = await userRepository.reissueActivationInvitation({
+    invitation,
+    now,
+    tenantId,
+    userId
+  });
+
+  if (result.kind === "not_found") {
+    return { ok: false, reason: "user_not_found" };
+  }
+
+  if (result.kind === "not_provisioned") {
+    return { ok: false, reason: "user_not_provisioned" };
+  }
+
+  return {
+    ok: true,
+    invitation,
+    invitationToken,
+    user: result.user
+  };
+};

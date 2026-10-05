@@ -60,6 +60,8 @@ import type {
   ActivateUserByInvitationTokenInput,
   ActivateUserByInvitationTokenResult,
   CreateProvisionedUserWithInvitationInput,
+  ReissueActivationInvitationInput,
+  ReissueActivationInvitationResult,
   UserRepository
 } from "../../../domain/users/repository";
 import type {
@@ -1427,6 +1429,57 @@ export class D1UserRepository implements UserRepository {
       createdAt: row.createdAt,
       updatedAt: row.updatedAt
     }));
+  }
+
+  async reissueActivationInvitation({
+    invitation,
+    now,
+    tenantId,
+    userId
+  }: ReissueActivationInvitationInput): Promise<ReissueActivationInvitationResult> {
+    const [userRow] = await this.db
+      .select()
+      .from(users)
+      .where(and(eq(users.tenantId, tenantId), eq(users.id, userId)))
+      .limit(1);
+
+    if (userRow === undefined) {
+      return { kind: "not_found" };
+    }
+
+    if (userRow.status !== "provisioned") {
+      return { kind: "not_provisioned" };
+    }
+
+    const nowIso = now.toISOString();
+
+    await this.db.batch([
+      this.db
+        .update(userInvitations)
+        .set({ expiresAt: nowIso })
+        .where(
+          and(
+            eq(userInvitations.tenantId, tenantId),
+            eq(userInvitations.userId, userId),
+            isNull(userInvitations.consumedAt)
+          )
+        ),
+      this.db.insert(userInvitations).values({
+        id: invitation.id,
+        tenantId: invitation.tenantId,
+        userId: invitation.userId,
+        tokenHash: invitation.tokenHash,
+        purpose: invitation.purpose,
+        expiresAt: invitation.expiresAt,
+        consumedAt: invitation.consumedAt,
+        createdAt: invitation.createdAt
+      })
+    ]);
+
+    return {
+      kind: "reissued",
+      user: toUser(userRow)
+    };
   }
 
   async updateUser(user: User): Promise<void> {
