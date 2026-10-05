@@ -20,3 +20,13 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: bash scripts/setup-cf-resources.sh
+
+      # 幂等 bootstrap：迁移已应用后保证存在一个 active 的 provision service
+      # principal，并把 token 注入 surreal_ck 生产环境 secret。已存在则跳过；
+      # 日常轮换走 ops_idp_provision_rotate，不经此步。
+      - name: Bootstrap sck-provisioner service principal
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          SCK_REPO_TOKEN: ${{ secrets.SCK_REPO_TOKEN }}
+        run: bash scripts/bootstrap-sck-provisioner.sh
