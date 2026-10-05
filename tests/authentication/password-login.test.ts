@@ -877,4 +877,178 @@ describe("password login", () => {
     expect(eventTypes).toContain("user.password_login.succeeded");
     expect(eventTypes).toContain("user.password_login.failed");
   });
+
+  it("resolves an email identifier for invited users who never chose a username", async () => {
+    const loginChallengeToken = "challenge-email-identifier";
+    const loginChallengeRepository = new TestLoginChallengeRepository([
+      await buildChallenge({ token: loginChallengeToken })
+    ]);
+    const sessionRepository = new MemoryUserSessionRepository();
+    const authorizationCodeRepository = new MemoryAuthorizationCodeRepository();
+    const userRepository = new MemoryUserRepository({
+      policies: [
+        {
+          tenantId: "tenant_acme",
+          password: { enabled: true },
+          emailMagicLink: { enabled: true },
+          passkey: { enabled: true }
+        }
+      ],
+      users: [
+        {
+          id: "user_invited",
+          tenantId: "tenant_acme",
+          email: "invitee@acme.test",
+          emailVerified: true,
+          username: null,
+          displayName: "Invited User",
+          status: "active",
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        }
+      ],
+      passwordCredentials: [
+        {
+          id: "credential_invited",
+          tenantId: "tenant_acme",
+          userId: "user_invited",
+          passwordHash: await hashPassword("invitee-password-123"),
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        }
+      ]
+    });
+    const app = createApp({
+      authorizationCodeRepository,
+      browserSessionRepository: sessionRepository,
+      clientRepository: new MemoryClientRepository(clients),
+      loginChallengeLookupRepository: loginChallengeRepository,
+      loginChallengeRepository,
+      adminBootstrapPasswordHash: "",
+      adminWhitelist: [],
+      managementApiToken: "",
+      oidcHost: "idp.example.test", authDomain: "auth.example.test",
+      tenantRepository,
+      totpRepository: new MemoryTotpRepository(),
+      mfaPasskeyChallengeRepository: new MemoryMfaPasskeyChallengeRepository(),
+      totpEncryptionKey: new Uint8Array(32).fill(7),
+      userRepository
+    });
+
+    const response = await app.request("https://idp.example.test/login/acme/password", {
+      body: new URLSearchParams({
+        login_challenge: loginChallengeToken,
+        username: "invitee@acme.test",
+        password: "invitee-password-123"
+      }),
+      headers: {
+        "content-type": "application/x-www-form-urlencoded"
+      },
+      method: "POST"
+    });
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { redirect_uri: string };
+    expect(new URL(body.redirect_uri).origin + new URL(body.redirect_uri).pathname).toBe(
+      "https://app.acme.test/callback"
+    );
+    expect(authorizationCodeRepository.listAuthorizationCodes()[0]).toMatchObject({
+      userId: "user_invited"
+    });
+  });
+
+  it("keeps username resolution authoritative when both username and email could match", async () => {
+    const loginChallengeToken = "challenge-identifier-precedence";
+    const loginChallengeRepository = new TestLoginChallengeRepository([
+      await buildChallenge({ token: loginChallengeToken })
+    ]);
+    const userRepository = new MemoryUserRepository({
+      policies: [
+        {
+          tenantId: "tenant_acme",
+          password: { enabled: true },
+          emailMagicLink: { enabled: true },
+          passkey: { enabled: true }
+        }
+      ],
+      users: [
+        {
+          id: "user_named",
+          tenantId: "tenant_acme",
+          email: "named@acme.test",
+          emailVerified: true,
+          username: "someone@other.test",
+          displayName: "Named",
+          status: "active",
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        },
+        {
+          id: "user_owner_of_email",
+          tenantId: "tenant_acme",
+          email: "someone@other.test",
+          emailVerified: true,
+          username: "otheruser",
+          displayName: "Other",
+          status: "active",
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        }
+      ],
+      passwordCredentials: [
+        {
+          id: "credential_named",
+          tenantId: "tenant_acme",
+          userId: "user_named",
+          passwordHash: await hashPassword("named-password-123"),
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        },
+        {
+          id: "credential_email_owner",
+          tenantId: "tenant_acme",
+          userId: "user_owner_of_email",
+          passwordHash: await hashPassword("emailowner-password-123"),
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        }
+      ]
+    });
+    const authorizationCodeRepository = new MemoryAuthorizationCodeRepository();
+    const app = createApp({
+      authorizationCodeRepository,
+      browserSessionRepository: new MemoryUserSessionRepository(),
+      clientRepository: new MemoryClientRepository(clients),
+      loginChallengeLookupRepository: loginChallengeRepository,
+      loginChallengeRepository,
+      adminBootstrapPasswordHash: "",
+      adminWhitelist: [],
+      managementApiToken: "",
+      oidcHost: "idp.example.test", authDomain: "auth.example.test",
+      tenantRepository,
+      totpRepository: new MemoryTotpRepository(),
+      mfaPasskeyChallengeRepository: new MemoryMfaPasskeyChallengeRepository(),
+      totpEncryptionKey: new Uint8Array(32).fill(7),
+      userRepository
+    });
+
+    // username "someone@other.test" 命中 user_named——标识符先按 username 精确解析，
+    // 邮箱兜底只在 username 未命中时启用，不会抢占既有 username 归属。
+    const response = await app.request("https://idp.example.test/login/acme/password", {
+      body: new URLSearchParams({
+        login_challenge: loginChallengeToken,
+        username: "someone@other.test",
+        password: "named-password-123"
+      }),
+      headers: {
+        "content-type": "application/x-www-form-urlencoded"
+      },
+      method: "POST"
+    });
+
+    expect(response.status).toBe(200);
+    expect(authorizationCodeRepository.listAuthorizationCodes()[0]).toMatchObject({
+      userId: "user_named"
+    });
+  });
 });

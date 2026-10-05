@@ -3,6 +3,11 @@ import { cors } from "hono/cors";
 import { ZodError } from "zod";
 import { createLocalJWKSet, jwtVerify } from "jose";
 
+import {
+  ACTIVATION_PAGE_HEADERS,
+  renderActivationDone,
+  renderActivationForm
+} from "./activation-page";
 import { authenticateWithPassword } from "../adapters/auth/local-auth/password-auth-service";
 import { consumeMagicLink, requestMagicLink } from "../adapters/auth/local-auth/magic-link-service";
 import { decryptTotpSecret, encryptTotpSecret } from "../adapters/auth/totp/totp-crypto";
@@ -5027,19 +5032,63 @@ export const createApp = (options: AppOptions) => {
     return context.json({ result }, surrealResponse.ok ? 200 : 400);
   });
 
+  // 邀请链接的浏览器落地页（激活交接物是 GET 链接）：纯表单 POST 回本路由，
+  // 浏览器请求回 HTML、JSON 请求维持原 API 契约。
+  const activationHtml = (
+    context: Context,
+    page: string | Promise<string>,
+    status: 200 | 400 | 403 | 409 = 200
+  ) => {
+    for (const [name, value] of Object.entries(ACTIVATION_PAGE_HEADERS)) {
+      context.header(name, value);
+    }
+    return context.html(page, status);
+  };
+
+  app.get("/activate-account", (context) => {
+    const token = new URL(context.req.url).searchParams.get("token")?.trim() ?? "";
+    return activationHtml(context, renderActivationForm({ token }));
+  });
+
   app.post("/activate-account", async (context) => {
-    const payload = await context.req.json<{
-      invitation_token?: string;
-      password?: string;
-    }>();
-    const invitationTokenFromBody = payload.invitation_token?.trim() ?? "";
+    const contentType = context.req.header("content-type") ?? "";
+    const browserForm = !contentType.includes("application/json");
+    const fields = browserForm
+      ? ((await context.req.parseBody()) as Record<string, unknown>)
+      : ((await context.req.json().catch(() => ({}))) as Record<string, unknown>);
+    const invitationTokenFromBody = String(fields.invitation_token ?? "").trim();
     const invitationTokenFromQuery = new URL(context.req.url).searchParams.get("token")?.trim() ?? "";
     const invitationToken =
       invitationTokenFromBody.length > 0 ? invitationTokenFromBody : invitationTokenFromQuery;
-    const password = payload.password ?? "";
+    const password = String(fields.password ?? "");
 
-    if (invitationToken.length === 0 || password.length === 0) {
-      return context.json({ error: "invalid_request" }, 400);
+    if (invitationToken.length === 0) {
+      return browserForm
+        ? activationHtml(
+            context,
+            renderActivationForm({ token: "", error: "缺少激活码，请从邀请链接打开本页。" }),
+            400
+          )
+        : context.json({ error: "invalid_request" }, 400);
+    }
+
+    // 密码下限与注册一致（>=8）；表单模式先校验两次输入一致。
+    if (browserForm && password !== String(fields.password_confirm ?? "")) {
+      return activationHtml(
+        context,
+        renderActivationForm({ token: invitationToken, error: "两次输入的密码不一致，请重新输入。" }),
+        400
+      );
+    }
+
+    if (password.length < 8) {
+      return browserForm
+        ? activationHtml(
+            context,
+            renderActivationForm({ token: invitationToken, error: "密码至少需要 8 位。" }),
+            400
+          )
+        : context.json({ error: "invalid_request" }, 400);
     }
 
     const result = await activateUser({
@@ -5062,14 +5111,35 @@ export const createApp = (options: AppOptions) => {
       });
 
       if (result.reason === "invalid_invitation" || result.reason === "invitation_expired") {
-        return context.json({ error: result.reason }, 400);
+        return browserForm
+          ? activationHtml(
+              context,
+              renderActivationForm({ token: invitationToken, error: "激活链接无效或已过期，请联系邀请方重新签发。" }),
+              400
+            )
+          : context.json({ error: result.reason }, 400);
       }
 
       if (result.reason === "invitation_already_used" || result.reason === "user_already_initialized") {
-        return context.json({ error: result.reason }, 409);
+        return browserForm
+          ? activationHtml(
+              context,
+              renderActivationForm({
+                token: invitationToken,
+                error: "此激活链接已被使用或账号已激活，请直接用邮箱和密码登录。"
+              }),
+              409
+            )
+          : context.json({ error: result.reason }, 409);
       }
 
-      return context.json({ error: result.reason }, 403);
+      return browserForm
+        ? activationHtml(
+            context,
+            renderActivationForm({ token: invitationToken, error: "账号已停用，无法激活，请联系邀请方。" }),
+            403
+          )
+        : context.json({ error: result.reason }, 403);
     }
 
     await recordAuditEventBestEffort({
@@ -5082,17 +5152,19 @@ export const createApp = (options: AppOptions) => {
       payload: null
     });
 
-    return context.json({
-      user: {
-        id: result.user.id,
-        tenant_id: result.user.tenantId,
-        email: result.user.email,
-        username: result.user.username,
-        display_name: result.user.displayName,
-        status: result.user.status,
-        email_verified: result.user.emailVerified
-      }
-    });
+    return browserForm
+      ? activationHtml(context, renderActivationDone())
+      : context.json({
+          user: {
+            id: result.user.id,
+            tenant_id: result.user.tenantId,
+            email: result.user.email,
+            username: result.user.username,
+            display_name: result.user.displayName,
+            status: result.user.status,
+            email_verified: result.user.emailVerified
+          }
+        });
   });
 
   return app;

@@ -875,4 +875,214 @@ describe("user provisioning and activation routes", () => {
       error: "invalid_invitation"
     });
   });
+
+  it("serves a self-contained activation form for the published activation url (GET)", async () => {
+    const app = createApp({
+      adminBootstrapPasswordHash: "",
+      adminWhitelist: [],
+      managementApiToken: "",
+      oidcHost: "idp.example.test", authDomain: "auth.example.test",
+      tenantRepository: createTenantRepositoryWithAcmeTenant(),
+      userRepository: new MemoryUserRepository({ policies: [tenantPolicy] }),
+      totpRepository: new MemoryTotpRepository(),
+      mfaPasskeyChallengeRepository: new MemoryMfaPasskeyChallengeRepository(),
+      totpEncryptionKey: new Uint8Array(32).fill(0)
+    });
+
+    const response = await app.request(
+      "https://idp.example.test/activate-account?token=abc123token",
+      { method: "GET" }
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toContain("text/html");
+    expect(response.headers.get("content-security-policy")).toContain("default-src 'none'");
+    expect(response.headers.get("referrer-policy")).toBe("no-referrer");
+    const body = await response.text();
+    expect(body).toContain('name="invitation_token" value="abc123token"');
+    expect(body).toContain('name="password"');
+    expect(body).toContain('name="password_confirm"');
+    expect(body).toContain('action="/activate-account"');
+  });
+
+  it("renders a visible token input when the activation link has no token", async () => {
+    const app = createApp({
+      adminBootstrapPasswordHash: "",
+      adminWhitelist: [],
+      managementApiToken: "",
+      oidcHost: "idp.example.test", authDomain: "auth.example.test",
+      userRepository: new MemoryUserRepository({ policies: [tenantPolicy] }),
+      totpRepository: new MemoryTotpRepository(),
+      mfaPasskeyChallengeRepository: new MemoryMfaPasskeyChallengeRepository(),
+      totpEncryptionKey: new Uint8Array(32).fill(0)
+    });
+
+    const response = await app.request("https://idp.example.test/activate-account", { method: "GET" });
+    const body = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(body).toContain('type="text" id="invitation_token"');
+  });
+
+  it("activates a provisioned account through the browser form post (urlencoded → html)", async () => {
+    const userRepository = new MemoryUserRepository({ policies: [tenantPolicy] });
+    const auditRepository = new MemoryAuditRepository();
+    const app = createApp({
+      adminBootstrapPasswordHash: "",
+      adminWhitelist: [],
+      auditRepository,
+      managementApiToken: "",
+      oidcHost: "idp.example.test", authDomain: "auth.example.test",
+      tenantRepository: createTenantRepositoryWithAcmeTenant(),
+      userRepository,
+      totpRepository: new MemoryTotpRepository(),
+      mfaPasskeyChallengeRepository: new MemoryMfaPasskeyChallengeRepository(),
+      totpEncryptionKey: new Uint8Array(32).fill(0)
+    });
+
+    const provisioned = await provisionUser({
+      userRepository,
+      tenantId: "tenant_acme",
+      email: "browser-form@acme.test",
+      displayName: "Browser Form"
+    });
+
+    const response = await app.request("https://idp.example.test/activate-account", {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        invitation_token: provisioned.invitationToken,
+        password: "CorrectHorseBatteryStaple!42",
+        password_confirm: "CorrectHorseBatteryStaple!42"
+      }).toString()
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toContain("text/html");
+    const body = await response.text();
+    expect(body).toContain("账号已激活");
+    expect(userRepository.listUsers()[0]).toMatchObject({ status: "active", emailVerified: true });
+    expect(userRepository.listInvitations()[0]?.consumedAt).not.toBeNull();
+    expect(auditRepository.listEvents().map((event) => event.eventType)).toContain(
+      "user.activation.succeeded"
+    );
+  });
+
+  it("re-renders the activation form with an error when passwords do not match", async () => {
+    const userRepository = new MemoryUserRepository({ policies: [tenantPolicy] });
+    const app = createApp({
+      adminBootstrapPasswordHash: "",
+      adminWhitelist: [],
+      managementApiToken: "",
+      oidcHost: "idp.example.test", authDomain: "auth.example.test",
+      userRepository: new MemoryUserRepository({ policies: [tenantPolicy] }),
+      totpRepository: new MemoryTotpRepository(),
+      mfaPasskeyChallengeRepository: new MemoryMfaPasskeyChallengeRepository(),
+      totpEncryptionKey: new Uint8Array(32).fill(0)
+    });
+
+    const provisioned = await provisionUser({
+      userRepository,
+      tenantId: "tenant_acme",
+      email: "mismatch@acme.test",
+      displayName: "Mismatch"
+    });
+
+    const response = await app.request("https://idp.example.test/activate-account", {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        invitation_token: provisioned.invitationToken,
+        password: "CorrectHorseBatteryStaple!42",
+        password_confirm: "SomethingElse!42"
+      }).toString()
+    });
+
+    expect(response.status).toBe(400);
+    const body = await response.text();
+    expect(body).toContain("两次输入的密码不一致");
+    // 邀请未被消耗，用户未激活——可重试
+    expect(userRepository.listInvitations()[0]?.consumedAt).toBeNull();
+    expect(userRepository.listUsers()[0]?.status).toBe("provisioned");
+  });
+
+  it("returns an html error page for an already-used invitation in browser form mode", async () => {
+    const userRepository = new MemoryUserRepository({ policies: [tenantPolicy] });
+    const app = createApp({
+      adminBootstrapPasswordHash: "",
+      adminWhitelist: [],
+      managementApiToken: "",
+      oidcHost: "idp.example.test", authDomain: "auth.example.test",
+      userRepository,
+      totpRepository: new MemoryTotpRepository(),
+      mfaPasskeyChallengeRepository: new MemoryMfaPasskeyChallengeRepository(),
+      totpEncryptionKey: new Uint8Array(32).fill(0)
+    });
+
+    const provisioned = await provisionUser({
+      userRepository,
+      tenantId: "tenant_acme",
+      email: "replay@acme.test",
+      displayName: "Replay"
+    });
+
+    const first = await app.request("https://idp.example.test/activate-account", {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        invitation_token: provisioned.invitationToken,
+        password: "CorrectHorseBatteryStaple!42",
+        password_confirm: "CorrectHorseBatteryStaple!42"
+      }).toString()
+    });
+    expect(first.status).toBe(200);
+
+    const replay = await app.request("https://idp.example.test/activate-account", {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        invitation_token: provisioned.invitationToken,
+        password: "AnotherPassword!42",
+        password_confirm: "AnotherPassword!42"
+      }).toString()
+    });
+
+    expect(replay.status).toBe(409);
+    const body = await replay.text();
+    expect(body).toContain("已被使用");
+  });
+
+  it("rejects short passwords on the json activation contract", async () => {
+    const userRepository = new MemoryUserRepository({ policies: [tenantPolicy] });
+    const app = createApp({
+      adminBootstrapPasswordHash: "",
+      adminWhitelist: [],
+      managementApiToken: "",
+      oidcHost: "idp.example.test", authDomain: "auth.example.test",
+      userRepository: new MemoryUserRepository({ policies: [tenantPolicy] }),
+      totpRepository: new MemoryTotpRepository(),
+      mfaPasskeyChallengeRepository: new MemoryMfaPasskeyChallengeRepository(),
+      totpEncryptionKey: new Uint8Array(32).fill(0)
+    });
+
+    const provisioned = await provisionUser({
+      userRepository,
+      tenantId: "tenant_acme",
+      email: "shortpw@acme.test",
+      displayName: "Short Pw"
+    });
+
+    const response = await app.request("https://idp.example.test/activate-account", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        invitation_token: provisioned.invitationToken,
+        password: "short7!"
+      })
+    });
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: "invalid_request" });
+    expect(userRepository.listInvitations()[0]?.consumedAt).toBeNull();
+  });
 });
