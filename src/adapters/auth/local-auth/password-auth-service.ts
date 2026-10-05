@@ -80,7 +80,13 @@ export const authenticateWithPassword = async ({
     };
   }
 
-  const user = await userRepository.findUserByUsername(tenantId, normalizedUsername);
+  // 登录框文案是「用户名或邮箱」：按 username 精确匹配；未命中且标识符形似
+  // 邮箱时按 email 兜底（email 落库统一小写，users(tenant_id,email) 唯一索引）。
+  const user =
+    (await userRepository.findUserByUsername(tenantId, normalizedUsername)) ??
+    (normalizedUsername.includes("@")
+      ? await userRepository.findUserByEmail(tenantId, normalizedUsername.toLowerCase())
+      : null);
 
   if (user === null || user.status !== "active") {
     return {
