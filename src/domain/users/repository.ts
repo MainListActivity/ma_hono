@@ -10,6 +10,25 @@ export interface CreateProvisionedUserWithInvitationInput {
   user: User;
 }
 
+export interface ReissueActivationInvitationInput {
+  invitation: UserInvitation;
+  now: Date;
+  tenantId: string;
+  userId: string;
+}
+
+export type ReissueActivationInvitationResult =
+  | {
+      kind: "reissued";
+      user: User;
+    }
+  | {
+      kind: "not_found";
+    }
+  | {
+      kind: "not_provisioned";
+    };
+
 export interface ActivateUserByInvitationTokenInput {
   createPasswordHash: () => Promise<string>;
   tokenHash: string;
@@ -53,6 +72,9 @@ export interface UserRepository {
   findUserById(tenantId: string, userId: string): Promise<User | null>;
   findUserByUsername(tenantId: string, username: string): Promise<User | null>;
   listByTenantId(tenantId: string): Promise<User[]>;
+  reissueActivationInvitation(
+    input: ReissueActivationInvitationInput
+  ): Promise<ReissueActivationInvitationResult>;
   updateUser(user: User): Promise<void>;
   upsertPasswordCredential(credential: PasswordCredential): Promise<void>;
 }
