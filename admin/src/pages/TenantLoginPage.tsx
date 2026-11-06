@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams, useSearchParams } from "react-router";
 import {
   type ChallengeInfo,
@@ -31,6 +31,7 @@ import {
   UserIcon
 } from "../components/auth/icons";
 import { useDocumentTitle } from "../hooks/useDocumentTitle";
+import { isEmbedded, useEmbedReporter } from "../embed";
 
 type MfaState = "pending_totp" | "pending_passkey_step_up" | "pending_enrollment";
 
@@ -764,10 +765,15 @@ export default function TenantLoginPage() {
   const tenantName = info?.tenant_display_name ?? "Workspace";
   const tenantInitial = tenantName.trim().charAt(0) || "·";
 
+  const rootRef = useRef<HTMLDivElement>(null);
+  useEmbedReporter(rootRef, info !== null || loadError !== null);
+
   useDocumentTitle(info ? `登录到 ${info.tenant_display_name}` : undefined);
 
   return (
+    <div ref={rootRef}>
     <AuthShell>
+      {!isEmbedded && (
       <BrandPanel
         heading={<>一次登录<br />畅行工作区</>}
         description="密码、邮箱链接或通行密钥，选择你习惯的方式安全登入。"
@@ -783,9 +789,10 @@ export default function TenantLoginPage() {
           </div>
         }
       />
+      )}
 
       {/* Form panel */}
-      <div style={{ flex: 1, padding: "44px 44px", display: "flex", flexDirection: "column", background: "#ffffff", minWidth: 0 }}>
+      <div style={{ flex: 1, padding: isEmbedded ? "28px 28px 24px" : "44px 44px", display: "flex", flexDirection: "column", background: isEmbedded ? "transparent" : "#ffffff", minWidth: 0 }}>
         {loadError ? (
           <div style={{ margin: "auto 0", textAlign: "center" }}>
             <h1 className="font-serif" style={{ margin: "0 0 10px", fontWeight: 600, fontSize: "22px", color: "var(--accent-orange)" }}>会话错误</h1>
@@ -821,8 +828,10 @@ export default function TenantLoginPage() {
           </div>
         ) : (
           <>
-            <div style={{ fontSize: "11px", fontWeight: 700, letterSpacing: "0.18em", textTransform: "uppercase", color: "var(--accent-orange)", marginBottom: "10px" }}>Sign in</div>
-            <h1 className="font-serif" style={{ margin: "0 0 8px", fontWeight: 600, fontSize: "30px", color: "var(--text-primary)", letterSpacing: "0.2px" }}>欢迎回来</h1>
+            <div style={{ fontSize: "11px", fontWeight: 700, letterSpacing: "0.18em", textTransform: "uppercase", color: "var(--accent-orange)", marginBottom: "10px" }}>
+              {isEmbedded ? `登录到 ${tenantName}` : "Sign in"}
+            </div>
+            <h1 className="font-serif" style={{ margin: "0 0 8px", fontWeight: 600, fontSize: isEmbedded ? "24px" : "30px", color: "var(--text-primary)", letterSpacing: "0.2px" }}>欢迎回来</h1>
             <p style={{ margin: "0 0 24px", fontSize: "13.5px", lineHeight: 1.6, color: "var(--text-secondary)" }}>选择一种方式登录以继续。</p>
 
             {info.methods.length > 1 && (
@@ -861,5 +870,6 @@ export default function TenantLoginPage() {
         )}
       </div>
     </AuthShell>
+    </div>
   );
 }

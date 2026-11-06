@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { isEmbedded } from "../../embed";
 import { BrandMark, SproutDecor } from "./icons";
 
 // ─── Shared field/button styles ───────────────────────────────────────────────
@@ -55,6 +56,14 @@ export function FieldLabel({ children }: { children: ReactNode }) {
 // ─── Layout shell: centered split card on the warm ambient page ───────────────
 
 export function AuthShell({ children }: { children: ReactNode }) {
+  if (isEmbedded) {
+    return (
+      <div style={{ fontFamily: "var(--font-sans)" }}>
+        {children}
+      </div>
+    );
+  }
+
   return (
     <div className="dot-grid" style={{
       minHeight: "100vh",

@@ -1,0 +1,4 @@
+/login
+  Content-Security-Policy: frame-ancestors 'self' https://*.maplayer.top
+/login/*
+  Content-Security-Policy: frame-ancestors 'self' https://*.maplayer.top

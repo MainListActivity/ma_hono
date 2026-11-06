@@ -44,6 +44,12 @@ body {
 
 input::placeholder { color: var(--text-dim); }
 
+/* 嵌入弹窗模式：页面背景透明，交由外层弹窗呈现 */
+html[data-embedded],
+html[data-embedded] body {
+  background: transparent;
+}
+
 /* Eyebrow / label display font — clean sans, not terminal mono */
 .font-display {
   font-family: var(--font-sans);
