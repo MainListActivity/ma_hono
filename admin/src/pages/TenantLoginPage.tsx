@@ -65,6 +65,22 @@ const linkStyle: React.CSSProperties = {
   background: "none", border: "none", cursor: "pointer", padding: 0
 };
 
+const LOGIN_ERROR_MESSAGES: Record<string, string> = {
+  invalid_credentials: "用户名或密码错误",
+  invalid_request: "登录会话已过期，请重新打开登录",
+  password_login_disabled: "当前未开放密码登录"
+};
+
+const REGISTER_ERROR_MESSAGES: Record<string, string> = {
+  email_already_exists: "该邮箱已注册，请直接登录。",
+  invalid_login_challenge: "登录会话已过期，请重新打开登录",
+  invalid_request: "登录会话已过期，请重新打开登录"
+};
+
+function authErrorMessage(code: string | undefined, messages: Record<string, string>, fallback: string): string {
+  return (code && messages[code]) ?? fallback;
+}
+
 function ErrorBanner({ message }: { message: string }) {
   return (
     <div style={{
@@ -166,11 +182,7 @@ function RegisterForm({
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({})) as { error?: string };
-        if (body.error === "email_already_exists") {
-          setError("该邮箱已注册，请直接登录。");
-        } else {
-          setError(body.error ?? "注册失败");
-        }
+        setError(authErrorMessage(body.error, REGISTER_ERROR_MESSAGES, "注册失败，请重试"));
         return;
       }
       const body = await res.json().catch(() => ({})) as { redirect_uri?: string };
@@ -247,7 +259,7 @@ function PasswordForm({
       const res = await loginWithPassword(tenantSlug, loginChallenge, username, password);
       if (!res.ok) {
         const body = await res.json().catch(() => ({})) as { error?: string };
-        setError(body.error ?? "登录失败");
+        setError(authErrorMessage(body.error, LOGIN_ERROR_MESSAGES, "登录失败，请重试"));
         return;
       }
       const body = await res.json().catch(() => ({})) as {
@@ -764,6 +776,7 @@ export default function TenantLoginPage() {
 
   const tenantName = info?.tenant_display_name ?? "Workspace";
   const tenantInitial = tenantName.trim().charAt(0) || "·";
+  const passwordAllowRegistration = info?.methods.find((m) => m.method === "password")?.allow_registration ?? false;
 
   const rootRef = useRef<HTMLDivElement>(null);
   useEmbedReporter(rootRef, info !== null || loadError !== null);
@@ -850,7 +863,7 @@ export default function TenantLoginPage() {
               <PasswordForm
                 tenantSlug={tenantSlug!}
                 loginChallenge={loginChallenge}
-                allowRegistration={info.methods.find((m) => m.method === "password")?.allow_registration ?? false}
+                allowRegistration={passwordAllowRegistration}
                 onMfaRequired={(ctx) => setMfaContext(ctx)}
               />
             ) : activeMethod === "magic_link" ? (
@@ -863,9 +876,11 @@ export default function TenantLoginPage() {
               />
             ) : null}
 
-            <div style={{ marginTop: "auto", paddingTop: "26px", textAlign: "center", fontSize: "12.5px", color: "var(--text-muted)" }}>
-              还没有账号？<a href="#" style={{ color: "var(--accent-green)", fontWeight: 600, textDecoration: "none" }}>联系管理员邀请</a>
-            </div>
+            {!passwordAllowRegistration && (
+              <div style={{ marginTop: "auto", paddingTop: "26px", textAlign: "center", fontSize: "12.5px", color: "var(--text-muted)" }}>
+                还没有账号？<a href="#" style={{ color: "var(--accent-green)", fontWeight: 600, textDecoration: "none" }}>联系管理员邀请</a>
+              </div>
+            )}
           </>
         )}
       </div>
