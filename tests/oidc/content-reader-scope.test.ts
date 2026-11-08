@@ -626,6 +626,36 @@ describe("content_reader scope issuance", () => {
     expect(await response.json()).toEqual({ error: "invalid_grant" });
   });
 
+  it("rejects agent accounts even when they hold a token minted for them", async () => {
+    const client = createClient();
+    const agentUser = { ...baseUser, kind: "agent" as const };
+    const { app, authorizationCodeRepository } = await createContentReaderTestApp({
+      clients: [client],
+      users: [agentUser]
+    });
+    await seedAuthorizationCode({
+      clientId: client.clientId,
+      code: "code-agent",
+      codeRepository: authorizationCodeRepository,
+      issuer: "https://idp.example.test/t/acme"
+    });
+    const tokenBody = await exchangeCode({
+      app,
+      clientId: client.clientId,
+      code: "code-agent",
+      requestUrl: "https://idp.example.test/t/acme/token"
+    });
+
+    const response = await callScopeEndpoint({
+      app,
+      subjectToken: tokenBody.access_token,
+      claims: contentReaderClaims()
+    });
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: "invalid_grant" });
+  });
+
   it("rejects forged and expired subject tokens", async () => {
     const client = createClient();
     const { app, material } = await createContentReaderTestApp({ clients: [client] });
