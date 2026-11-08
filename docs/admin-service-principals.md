@@ -8,9 +8,11 @@ Surreal CK (and similar callers) need to:
 
 1. `GET /admin/tenants` — resolve tenant by slug (`tenant.read`)
 2. `GET /admin/tenants/:tenantId/users` — look up users (`user.read`)
-3. `POST /admin/tenants/:tenantId/users` — provision a user (`user.provision`)
+3. `POST /admin/tenants/:tenantId/users` — provision a user (`user.provision` or `user.write`)
 
 without embedding the human admin bootstrap password in application secrets.
+
+Provisioning a company tenant (see `docs/company-tenant.md`) also creates tenants and OIDC clients, sets client agent policy, and rotates signing keys. Those routes have their own scopes, listed below.
 
 ## Red line: human admin password
 
@@ -23,13 +25,26 @@ without embedding the human admin bootstrap password in application secrets.
 
 ## Allowed scopes
 
-| Scope | Route |
+| Scope | Routes |
 | --- | --- |
 | `tenant.read` | `GET /admin/tenants` |
+| `tenant.write` | `POST /admin/tenants`, `PATCH /admin/tenants/:tenantId` |
 | `user.read` | `GET /admin/tenants/:tenantId/users` |
-| `user.provision` | `POST /admin/tenants/:tenantId/users` |
+| `user.provision` | `POST /admin/tenants/:tenantId/users`, `POST /admin/tenants/:tenantId/users/:userId/reissue-activation` |
+| `user.write` | `POST /admin/tenants/:tenantId/users`, `POST /admin/tenants/:tenantId/users/:userId/reissue-activation`, `PATCH /admin/tenants/:tenantId/users/:userId` |
+| `client.read` | `GET /admin/tenants/:tenantId/clients`, `GET /admin/tenants/:tenantId/clients/:clientId` |
+| `client.write` | `POST /admin/tenants/:tenantId/clients`, `PATCH /admin/tenants/:tenantId/clients/:clientId`, `DELETE /admin/tenants/:tenantId/clients/:clientId`, `POST /admin/tenants/:tenantId/clients/:clientId/secret/reset`, `PATCH /admin/tenants/:tenantId/clients/:clientId/auth-method-policy` |
+| `key.rotate` | `POST /admin/tenants/:tenantId/keys/rotate` |
 
-Any other `/admin/*` route returns **403** for a service principal (including mint/revoke/list of principals, tenant create/delete, clients, key rotate).
+`user.provision` is kept for compatibility: it opens users and reissues activation, as `user.write` does. A principal without the route's scope gets **403**. Human admin sessions are not limited by scope.
+
+These routes are human-only. A service principal gets **403** on them whatever its scopes:
+
+- `GET /admin/service-principals`, `POST /admin/service-principals`, `POST /admin/service-principals/:principalId/revoke` (mint, list, revoke)
+- `GET /admin/tenants/:tenantId`
+- `DELETE /admin/tenants/:tenantId`
+
+`tenant.delete` is not a scope. Deleting a tenant needs a human admin session.
 
 ## Auth outcomes
 
@@ -98,6 +113,14 @@ curl -X POST https://o.maplayer.top/admin/tenants/<tenantId>/users \
 ```
 
 Successful `user.provisioned` / `user.provision.failed` audit events use `actorType=service_principal` and `actorId=<principal id>` (table id, not the token). Payloads never include the bearer, invitation token, or activation URL.
+
+Client, tenant, and key routes write the same actor fields for their audit events (for example `oidc.client.registered`, `oidc.client.updated`, `tenant.created`, `tenant.updated`, `signing_key.rotated`).
+
+## Notes
+
+- `kind` (`human` or `agent`) is set when a user is opened and cannot change afterwards. A `PATCH` that includes `kind` returns **400** `kind_immutable`.
+- `user.write` covers enabling and disabling users with `PATCH /admin/tenants/:tenantId/users/:userId` and body `{"status":"active"|"disabled"}`.
+- `client.write` covers the custom claims and agent policy fields on `PATCH /admin/tenants/:tenantId/clients/:clientId`: `access_token_custom_claims`, `machine_token_ttl_seconds`, `agent_token_exchange_enabled`, and `agent_claim_source_client_id`. Clients that use `client_credentials` accept only fixed custom claims.
 
 ## Storage
 
