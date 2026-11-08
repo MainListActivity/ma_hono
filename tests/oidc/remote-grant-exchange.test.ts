@@ -348,6 +348,17 @@ describe("remote grant token exchange", () => {
     });
     expect((await redeem(app)).status).toBe(400);
   });
+
+  it("refuses a remote grant whose user is an agent account", async () => {
+    const { app } = await appWithSigner({
+      grants: [await makeGrant()],
+      users: [testUser({ kind: "agent" })]
+    });
+
+    const response = await redeem(app);
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ error: "invalid_grant" });
+  });
 });
 
 describe("GET /t/:tenant/remote", () => {

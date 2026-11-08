@@ -60,9 +60,11 @@ import type { AccessTokenClaimsRepository } from "../domain/clients/access-token
 import type { RegistrationAccessTokenRepository } from "../domain/clients/registration-access-token-repository";
 import { sha256Base64Url } from "../lib/hash";
 import {
+  AgentClaimSourceError,
   clientAuthMethodRequiresSecret,
   createOpaqueToken,
   DuplicateDbClientError,
+  isValidAgentClaimSource,
   registerClient,
   registerMcpClient,
   registerClientFromAdmin
@@ -70,8 +72,11 @@ import {
 import type { AccessTokenCustomClaim, AccessTokenClaimUserField } from "../domain/clients/access-token-claims-types";
 import type { ClaimHookFetcher } from "../domain/clients/claim-hook-client";
 import { adminClientUpdateSchema } from "../domain/clients/admin-registration-schema";
+import { resolveFixedClaimValue } from "../domain/clients/fixed-claim-value";
 import {
+  CLIENT_CREDENTIALS_GRANT_TYPE,
   DEFAULT_TOKEN_TTL_SECONDS,
+  isMachineGrantSet,
   type Client,
   type ClientAuthMethodName,
   type ClientAuthMethodPolicy
@@ -92,6 +97,7 @@ import {
 import {
   exchangeAuthorizationCode,
   introspectAccessToken,
+  isAgentTokenExchangeRequest,
   issueClientAccessToken,
   issueScopeToken,
   revokeToken
@@ -101,9 +107,11 @@ import type { RefreshTokenRepository } from "../domain/tokens/refresh-token-repo
 import type { RemoteGrantRepository } from "../domain/tokens/remote-grant-repository";
 import type { AccessTokenRevocationRepository } from "../domain/tokens/access-token-revocation-repository";
 import { activateUser } from "../domain/users/activate-user";
+import { changeUserStatus } from "../domain/users/change-user-status";
 import { hashPassword } from "../domain/users/passwords";
-import { provisionUser, reissueUserActivation } from "../domain/users/provision-user";
+import { provisionAgentUser, provisionUser, reissueUserActivation } from "../domain/users/provision-user";
 import type { UserRepository } from "../domain/users/repository";
+import type { User, UserKind } from "../domain/users/types";
 
 class EmptyTenantRepository implements TenantRepository {
   async create(): Promise<void> {
@@ -394,6 +402,10 @@ class EmptyUserRepository implements UserRepository {
     };
   }
 
+  async createAgentUser(): Promise<void> {
+    return;
+  }
+
   async createProvisionedUserWithInvitation(): Promise<void> {
     return;
   }
@@ -558,9 +570,10 @@ export const createApp = (options: AppOptions) => {
     return { ok: true, session: resolved.auth.session };
   };
 
+  /** 服务主体须持有 scope 之一（列表表示任一即可）；人类管理员会话不受 scope 限制。 */
   const requireAdminScope = async (
     authorizationHeader: string | undefined,
-    scope: ServicePrincipalScope
+    scope: ServicePrincipalScope | readonly ServicePrincipalScope[]
   ): Promise<ScopedAdminOk | AdminAuthFailure> => {
     const resolved = await resolveAdminAuthorization({
       adminRepository,
@@ -569,13 +582,15 @@ export const createApp = (options: AppOptions) => {
     if (!resolved.ok) {
       return resolved;
     }
-    if (
-      resolved.auth.kind === "service_principal" &&
-      !resolved.auth.principal.scopes.includes(scope)
-    ) {
-      return { ok: false, status: 403, error: "forbidden" };
+    const requiredScopes = typeof scope === "string" ? [scope] : scope;
+    const { auth } = resolved;
+    if (auth.kind === "service_principal") {
+      const grantedScopes = auth.principal.scopes;
+      if (!requiredScopes.some((required) => grantedScopes.includes(required))) {
+        return { ok: false, status: 403, error: "forbidden" };
+      }
     }
-    return { ok: true, auth: resolved.auth };
+    return { ok: true, auth };
   };
 
 
@@ -659,7 +674,7 @@ export const createApp = (options: AppOptions) => {
     typeof value === "number" && Number.isInteger(value) && value > 0 ? value : fallback;
 
   const validateClientConfiguration = (client: Client): string | null => {
-    if (client.clientProfile !== "db") {
+    if (client.clientProfile !== "db" && !isMachineGrantSet(client.grantTypes)) {
       if (client.redirectUris.length === 0) {
         return "interactive clients require at least one redirect uri";
       }
@@ -689,6 +704,17 @@ export const createApp = (options: AppOptions) => {
 
     if (client.clientProfile === "web" && client.tokenEndpointAuthMethod === "none") {
       return "web clients must use a confidential auth method";
+    }
+
+    if (
+      client.grantTypes.includes(CLIENT_CREDENTIALS_GRANT_TYPE) &&
+      client.tokenEndpointAuthMethod === "none"
+    ) {
+      return "client_credentials requires a confidential auth method";
+    }
+
+    if (client.agentTokenExchangeEnabled === true && client.tokenEndpointAuthMethod === "none") {
+      return "agent token exchange requires a confidential auth method";
     }
 
     if (client.clientProfile === "db") {
@@ -2831,6 +2857,9 @@ export const createApp = (options: AppOptions) => {
       return context.json(error, 400);
     }
 
+    const grantType = String(formData.get("grant_type") ?? "");
+    const subjectTokenType = formData.get("subject_token_type")?.toString() ?? null;
+    const isAgentExchange = isAgentTokenExchangeRequest({ grantType, subjectTokenType });
     const result = await exchangeAuthorizationCode({
       authorizationCodeRepository,
       accessTokenClaimsRepository,
@@ -2841,14 +2870,16 @@ export const createApp = (options: AppOptions) => {
       remoteGrantRepository,
       request: {
         authorizationHeader: context.req.header("authorization"),
-        grantType: String(formData.get("grant_type") ?? ""),
+        grantType,
         subjectToken: formData.get("subject_token")?.toString() ?? null,
-        subjectTokenType: formData.get("subject_token_type")?.toString() ?? null,
+        subjectTokenType,
         code: String(formData.get("code") ?? ""),
         refreshToken: formData.get("refresh_token")?.toString() ?? null,
         redirectUri: String(formData.get("redirect_uri") ?? ""),
         codeVerifier: String(formData.get("code_verifier") ?? ""),
         resource: formData.get("resource")?.toString() || null,
+        taskId: formData.get("task_id")?.toString() || null,
+        ttl: formData.get("ttl")?.toString() || null,
         requestedClientId: formData.get("client_id")?.toString() ?? null,
         requestedClientSecret: formData.get("client_secret")?.toString() ?? null
       },
@@ -2862,16 +2893,21 @@ export const createApp = (options: AppOptions) => {
         actorType: "oidc_client",
         actorId: result.clientId,
         tenantId: issuerContext.tenant.id,
-        eventType: result.remoteGrantRevoked === true
-          ? "oidc.remote_grant.revoked_on_reuse"
-          : result.remoteGrantId !== undefined
-            ? "oidc.remote_grant.redeem_failed"
-            : "oidc.token.exchange.failed",
+        eventType: grantType === CLIENT_CREDENTIALS_GRANT_TYPE
+          ? "oidc.client_credentials.failed"
+          : isAgentExchange
+            ? "oidc.agent_token.exchange.failed"
+            : result.remoteGrantRevoked === true
+              ? "oidc.remote_grant.revoked_on_reuse"
+              : result.remoteGrantId !== undefined
+                ? "oidc.remote_grant.redeem_failed"
+                : "oidc.token.exchange.failed",
         targetType: "oidc_client",
         targetId: result.clientId,
         payload: {
           reason: result.error,
-          ...(result.remoteGrantId === undefined ? {} : { grant_id: result.remoteGrantId })
+          ...(result.remoteGrantId === undefined ? {} : { grant_id: result.remoteGrantId }),
+          ...(result.taskId === undefined ? {} : { task_id: result.taskId })
         }
       });
 
@@ -2891,17 +2927,45 @@ export const createApp = (options: AppOptions) => {
       );
     }
 
-    await recordAuditEventBestEffort({
-      actorType: "oidc_client",
-      actorId: result.clientId,
-      tenantId: result.tenantId,
-      eventType: "oidc.token.exchange.succeeded",
-      targetType: "oidc_client",
-      targetId: result.clientId,
-      payload: {
-        user_id: result.userId
-      }
-    });
+    if (grantType === CLIENT_CREDENTIALS_GRANT_TYPE) {
+      await recordAuditEventBestEffort({
+        actorType: "oidc_client",
+        actorId: result.clientId,
+        tenantId: result.tenantId,
+        eventType: "oidc.client_credentials.succeeded",
+        targetType: "oidc_client",
+        targetId: result.clientId,
+        payload: {
+          expires_in: result.response.expires_in
+        }
+      });
+    } else if (isAgentExchange) {
+      await recordAuditEventBestEffort({
+        actorType: "oidc_client",
+        actorId: result.clientId,
+        tenantId: result.tenantId,
+        eventType: "oidc.agent_token.exchange.succeeded",
+        targetType: "oidc_client",
+        targetId: result.clientId,
+        payload: {
+          agent_user_id: result.userId,
+          task_id: result.taskId,
+          expires_in: result.response.expires_in
+        }
+      });
+    } else {
+      await recordAuditEventBestEffort({
+        actorType: "oidc_client",
+        actorId: result.clientId,
+        tenantId: result.tenantId,
+        eventType: "oidc.token.exchange.succeeded",
+        targetType: "oidc_client",
+        targetId: result.clientId,
+        payload: {
+          user_id: result.userId
+        }
+      });
+    }
 
     setTokenResponseHeaders();
     return context.json(result.response, 200);
@@ -4022,11 +4086,11 @@ export const createApp = (options: AppOptions) => {
   });
 
   app.post("/admin/tenants", async (context) => {
-    const humanGate = await requireHumanAdmin(context.req.header("authorization"));
-    if (!humanGate.ok) {
-      return context.json({ error: humanGate.error }, humanGate.status);
+    const scopeGate = await requireAdminScope(context.req.header("authorization"), "tenant.write");
+    if (!scopeGate.ok) {
+      return context.json({ error: scopeGate.error }, scopeGate.status);
     }
-    const session = humanGate.session;
+    const actor = auditActorFromAuthorization(scopeGate.auth);
 
     const payload = await context.req.json<{ display_name?: string; slug?: string }>();
     const slug = payload.slug?.trim() ?? "";
@@ -4060,8 +4124,8 @@ export const createApp = (options: AppOptions) => {
 
     await auditRepository.record({
       id: crypto.randomUUID(),
-      actorType: "admin_user",
-      actorId: session.adminUserId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
       tenantId,
       eventType: "tenant.created",
       targetType: "tenant",
@@ -4083,8 +4147,24 @@ export const createApp = (options: AppOptions) => {
     );
   });
 
+  /** 管理 API 返回的用户形状；kind 缺省视为 human（存量行）。 */
+  const userAdminWire = (user: User) => ({
+    id: user.id,
+    tenant_id: user.tenantId,
+    email: user.email,
+    username: user.username,
+    display_name: user.displayName,
+    status: user.status,
+    email_verified: user.emailVerified,
+    kind: user.kind ?? "human"
+  });
+
+  // user.provision 与 user.write 均可开户、重发激活（前者为旧有 scope，保持兼容）。
   app.post("/admin/tenants/:tenantId/users", async (context) => {
-    const scopeGate = await requireAdminScope(context.req.header("authorization"), "user.provision");
+    const scopeGate = await requireAdminScope(context.req.header("authorization"), [
+      "user.provision",
+      "user.write"
+    ]);
     if (!scopeGate.ok) {
       return context.json({ error: scopeGate.error }, scopeGate.status);
     }
@@ -4094,30 +4174,49 @@ export const createApp = (options: AppOptions) => {
     const payload = await context.req.json<{
       display_name?: string;
       email?: string;
+      kind?: unknown;
       username?: string | null;
     }>();
     const email = payload.email?.trim() ?? "";
     const displayName = payload.display_name?.trim() ?? "";
     const username = payload.username?.trim();
+    const requestedKind = payload.kind ?? "human";
 
-    if (email.length === 0 || displayName.length === 0) {
+    if (
+      email.length === 0 ||
+      displayName.length === 0 ||
+      (requestedKind !== "human" && requestedKind !== "agent")
+    ) {
       return context.json({ error: "invalid_request" }, 400);
     }
+    const kind: UserKind = requestedKind;
 
     if ((await tenantRepository.findById(tenantId)) === null) {
       return context.json({ error: "tenant_not_found" }, 404);
     }
 
-    let result: Awaited<ReturnType<typeof provisionUser>>;
+    let provisioned: { user: User; invitationToken: string | null };
 
     try {
-      result = await provisionUser({
-        userRepository,
-        tenantId,
-        email,
-        username,
-        displayName
-      });
+      if (kind === "agent") {
+        const { user } = await provisionAgentUser({
+          userRepository,
+          tenantId,
+          email,
+          username,
+          displayName
+        });
+        provisioned = { user, invitationToken: null };
+      } else {
+        const result = await provisionUser({
+          userRepository,
+          tenantId,
+          email,
+          username,
+          displayName
+        });
+        provisioned = { user: result.user, invitationToken: result.invitationToken };
+      }
     } catch (error) {
       await recordAuditEventBestEffort({
         actorType: actor.actorType,
@@ -4128,16 +4227,22 @@ export const createApp = (options: AppOptions) => {
         targetId: null,
         payload: {
           error: error instanceof Error ? error.message : "unknown_error",
-          email
+          email,
+          kind
         }
       });
 
       return context.json({ error: isProvisionConflictError(error) ? "conflict" : "internal_error" }, isProvisionConflictError(error) ? 409 : 500);
     }
 
-    const activationUrl = new URL("/activate-account", context.req.url);
+    let activationUrl: string | null = null;
 
-    activationUrl.searchParams.set("token", result.invitationToken);
+    if (provisioned.invitationToken !== null) {
+      const activationLink = new URL("/activate-account", context.req.url);
+
+      activationLink.searchParams.set("token", provisioned.invitationToken);
+      activationUrl = activationLink.toString();
+    }
 
     await recordAuditEventBestEffort({
       actorType: actor.actorType,
@@ -4145,32 +4250,28 @@ export const createApp = (options: AppOptions) => {
       tenantId,
       eventType: "user.provisioned",
       targetType: "user",
-      targetId: result.user.id,
+      targetId: provisioned.user.id,
       payload: {
-        email: result.user.email
+        email: provisioned.user.email,
+        kind
       }
     });
 
     return context.json(
       {
-        user: {
-          id: result.user.id,
-          tenant_id: result.user.tenantId,
-          email: result.user.email,
-          username: result.user.username,
-          display_name: result.user.displayName,
-          status: result.user.status,
-          email_verified: result.user.emailVerified
-        },
-        invitation_token: result.invitationToken,
-        activation_url: activationUrl.toString()
+        user: userAdminWire(provisioned.user),
+        invitation_token: provisioned.invitationToken,
+        activation_url: activationUrl
       },
       201
     );
   });
 
   app.post("/admin/tenants/:tenantId/users/:userId/reissue-activation", async (context) => {
-    const scopeGate = await requireAdminScope(context.req.header("authorization"), "user.provision");
+    const scopeGate = await requireAdminScope(context.req.header("authorization"), [
+      "user.provision",
+      "user.write"
+    ]);
     if (!scopeGate.ok) {
       return context.json({ error: scopeGate.error }, scopeGate.status);
     }
@@ -4225,20 +4326,82 @@ export const createApp = (options: AppOptions) => {
 
     return context.json(
       {
-        user: {
-          id: result.user.id,
-          tenant_id: result.user.tenantId,
-          email: result.user.email,
-          username: result.user.username,
-          display_name: result.user.displayName,
-          status: result.user.status,
-          email_verified: result.user.emailVerified
-        },
+        user: userAdminWire(result.user),
         invitation_token: result.invitationToken,
         activation_url: activationUrl.toString()
       },
       200
     );
+  });
+
+  app.patch("/admin/tenants/:tenantId/users/:userId", async (context) => {
+    const scopeGate = await requireAdminScope(context.req.header("authorization"), "user.write");
+    if (!scopeGate.ok) {
+      return context.json({ error: scopeGate.error }, scopeGate.status);
+    }
+    const actor = auditActorFromAuthorization(scopeGate.auth);
+
+    const tenantId = context.req.param("tenantId");
+    const userId = context.req.param("userId");
+    const payload = await context.req.json<{ kind?: unknown; status?: unknown }>();
+
+    // kind 只在开户时指定，之后不可改，防止人与 agent 之间互相转换。
+    if (payload.kind !== undefined) {
+      return context.json({ error: "kind_immutable" }, 400);
+    }
+
+    const requestedStatus = payload.status;
+
+    if (requestedStatus !== "active" && requestedStatus !== "disabled") {
+      return context.json({ error: "invalid_request" }, 400);
+    }
+
+    if ((await tenantRepository.findById(tenantId)) === null) {
+      return context.json({ error: "tenant_not_found" }, 404);
+    }
+
+    const result = await changeUserStatus({
+      status: requestedStatus,
+      tenantId,
+      userId,
+      userRepository
+    });
+
+    if (!result.ok) {
+      await recordAuditEventBestEffort({
+        actorType: actor.actorType,
+        actorId: actor.actorId,
+        tenantId,
+        eventType: "user.status_change.failed",
+        targetType: "user",
+        targetId: userId,
+        payload: {
+          reason: result.reason,
+          requested_status: requestedStatus
+        }
+      });
+
+      return result.reason === "user_not_found"
+        ? context.json({ error: "user_not_found" }, 404)
+        : context.json({ error: "invalid_state" }, 409);
+    }
+
+    if (result.previousStatus !== result.user.status) {
+      await recordAuditEventBestEffort({
+        actorType: actor.actorType,
+        actorId: actor.actorId,
+        tenantId,
+        eventType: "user.status_changed",
+        targetType: "user",
+        targetId: result.user.id,
+        payload: {
+          from: result.previousStatus,
+          to: result.user.status
+        }
+      });
+    }
+
+    return context.json({ user: userAdminWire(result.user) }, 200);
   });
 
   app.get("/admin/tenants", async (context) => {
@@ -4265,11 +4428,11 @@ export const createApp = (options: AppOptions) => {
   });
 
   app.patch("/admin/tenants/:tenantId", async (context) => {
-    const humanGate = await requireHumanAdmin(context.req.header("authorization"));
-    if (!humanGate.ok) {
-      return context.json({ error: humanGate.error }, humanGate.status);
+    const scopeGate = await requireAdminScope(context.req.header("authorization"), "tenant.write");
+    if (!scopeGate.ok) {
+      return context.json({ error: scopeGate.error }, scopeGate.status);
     }
-    const session = humanGate.session;
+    const actor = auditActorFromAuthorization(scopeGate.auth);
     const tenantId = context.req.param("tenantId");
     const tenant = await tenantRepository.findById(tenantId);
     if (tenant === null) {
@@ -4298,16 +4461,33 @@ export const createApp = (options: AppOptions) => {
       input.primaryIssuerUrl = v;
     }
     await tenantRepository.update(tenantId, input);
+
+    const changed: Record<string, unknown> = {};
+    if (input.displayName !== undefined) changed.display_name = input.displayName;
+    if (input.status !== undefined) changed.status = input.status;
+    if (input.primaryIssuerUrl !== undefined) changed.primary_issuer_url = input.primaryIssuerUrl;
+    await auditRepository.record({
+      id: crypto.randomUUID(),
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      tenantId,
+      eventType: "tenant.updated",
+      targetType: "tenant",
+      targetId: tenantId,
+      payload: changed,
+      occurredAt: new Date().toISOString()
+    });
+
     const updated = await tenantRepository.findById(tenantId);
     return context.json(tenantToWire(updated!));
   });
 
   app.post("/admin/tenants/:tenantId/keys/rotate", async (context) => {
-    const humanGate = await requireHumanAdmin(context.req.header("authorization"));
-    if (!humanGate.ok) {
-      return context.json({ error: humanGate.error }, humanGate.status);
+    const scopeGate = await requireAdminScope(context.req.header("authorization"), "key.rotate");
+    if (!scopeGate.ok) {
+      return context.json({ error: scopeGate.error }, scopeGate.status);
     }
-    const session = humanGate.session;
+    const actor = auditActorFromAuthorization(scopeGate.auth);
     if (signer === undefined) {
       return context.json({ error: "key_rotation_unavailable" }, 503);
     }
@@ -4322,8 +4502,8 @@ export const createApp = (options: AppOptions) => {
       const material = await signer.ensureActiveSigningKeyMaterial(tenantId);
       await auditRepository.record({
         id: crypto.randomUUID(),
-        actorType: "admin_user",
-        actorId: session.adminUserId,
+        actorType: actor.actorType,
+        actorId: actor.actorId,
         tenantId,
         eventType: "signing_key.rotated",
         targetType: "signing_key",
@@ -4366,28 +4546,34 @@ export const createApp = (options: AppOptions) => {
     if (!scopeGate.ok) {
       return context.json({ error: scopeGate.error }, scopeGate.status);
     }
+    const kindFilter = context.req.query("kind");
+    if (kindFilter !== undefined && kindFilter !== "human" && kindFilter !== "agent") {
+      return context.json({ error: "invalid_request" }, 400);
+    }
     const tenantId = context.req.param("tenantId");
     const tenant = await tenantRepository.findById(tenantId);
     if (tenant === null) {
       return context.notFound();
     }
-    const userList = await userRepository.listByTenantId(tenantId);
+    const userList = (await userRepository.listByTenantId(tenantId)).filter(
+      (u) => kindFilter === undefined || (u.kind ?? "human") === kindFilter
+    );
     return context.json({
       users: userList.map((u) => ({
         id: u.id,
         email: u.email,
         display_name: u.displayName,
-        status: u.status
+        status: u.status,
+        kind: u.kind ?? "human"
       }))
     });
   });
 
   app.get("/admin/tenants/:tenantId/clients", async (context) => {
-    const humanGate = await requireHumanAdmin(context.req.header("authorization"));
-    if (!humanGate.ok) {
-      return context.json({ error: humanGate.error }, humanGate.status);
+    const scopeGate = await requireAdminScope(context.req.header("authorization"), "client.read");
+    if (!scopeGate.ok) {
+      return context.json({ error: scopeGate.error }, scopeGate.status);
     }
-    const session = humanGate.session;
     const tenantId = context.req.param("tenantId");
     const tenant = await tenantRepository.findById(tenantId);
     if (tenant === null) {
@@ -4424,17 +4610,18 @@ export const createApp = (options: AppOptions) => {
         token_endpoint_auth_method: c.tokenEndpointAuthMethod,
         trust_level: c.trustLevel,
         consent_policy: c.consentPolicy,
+        agent_token_exchange_enabled: c.agentTokenExchangeEnabled ?? false,
+        agent_claim_source_client_id: c.agentClaimSourceClientId ?? null,
         auth_method_policy: policyToWire(policies[i])
       }))
     });
   });
 
   app.get("/admin/tenants/:tenantId/clients/:clientId", async (context) => {
-    const humanGate = await requireHumanAdmin(context.req.header("authorization"));
-    if (!humanGate.ok) {
-      return context.json({ error: humanGate.error }, humanGate.status);
+    const scopeGate = await requireAdminScope(context.req.header("authorization"), "client.read");
+    if (!scopeGate.ok) {
+      return context.json({ error: scopeGate.error }, scopeGate.status);
     }
-    const session = humanGate.session;
     const tenantId = context.req.param("tenantId");
     const clientId = context.req.param("clientId");
     const tenant = await tenantRepository.findById(tenantId);
@@ -4467,9 +4654,13 @@ export const createApp = (options: AppOptions) => {
         claim_name: c.claimName,
         source_type: c.sourceType,
         fixed_value: c.fixedValue,
+        value_type: c.valueType ?? "string",
         user_field: c.userField,
         hook_field: c.hookField
       })),
+      machine_token_ttl_seconds: client.machineTokenTtlSeconds ?? null,
+      agent_token_exchange_enabled: client.agentTokenExchangeEnabled ?? false,
+      agent_claim_source_client_id: client.agentClaimSourceClientId ?? null,
       redirect_uris: client.redirectUris,
       grant_types: client.grantTypes,
       response_types: client.responseTypes,
@@ -4481,11 +4672,11 @@ export const createApp = (options: AppOptions) => {
   });
 
   app.patch("/admin/tenants/:tenantId/clients/:clientId/auth-method-policy", async (context) => {
-    const humanGate = await requireHumanAdmin(context.req.header("authorization"));
-    if (!humanGate.ok) {
-      return context.json({ error: humanGate.error }, humanGate.status);
+    const scopeGate = await requireAdminScope(context.req.header("authorization"), "client.write");
+    if (!scopeGate.ok) {
+      return context.json({ error: scopeGate.error }, scopeGate.status);
     }
-    const session = humanGate.session;
+    const actor = auditActorFromAuthorization(scopeGate.auth);
     const tenantId = context.req.param("tenantId");
     const clientId = context.req.param("clientId");
     const tenant = await tenantRepository.findById(tenantId);
@@ -4590,8 +4781,8 @@ export const createApp = (options: AppOptions) => {
 
     await auditRepository.record({
       id: crypto.randomUUID(),
-      actorType: "admin_user",
-      actorId: session.adminUserId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
       tenantId,
       eventType: "oidc.client.auth_method_policy.updated",
       targetType: "oidc_client",
@@ -4604,11 +4795,11 @@ export const createApp = (options: AppOptions) => {
   });
 
   app.post("/admin/tenants/:tenantId/clients", async (context) => {
-    const humanGate = await requireHumanAdmin(context.req.header("authorization"));
-    if (!humanGate.ok) {
-      return context.json({ error: humanGate.error }, humanGate.status);
+    const scopeGate = await requireAdminScope(context.req.header("authorization"), "client.write");
+    if (!scopeGate.ok) {
+      return context.json({ error: scopeGate.error }, scopeGate.status);
     }
-    const session = humanGate.session;
+    const actor = auditActorFromAuthorization(scopeGate.auth);
     const tenantId = context.req.param("tenantId");
     const tenant = await tenantRepository.findById(tenantId);
     if (tenant === null) {
@@ -4650,8 +4841,8 @@ export const createApp = (options: AppOptions) => {
         );
         await auditRepository.record({
           id: crypto.randomUUID(),
-          actorType: "admin_user",
-          actorId: session.adminUserId,
+          actorType: actor.actorType,
+          actorId: actor.actorId,
           tenantId,
           eventType: "oidc.client.registered",
           targetType: "oidc_client",
@@ -4691,13 +4882,20 @@ export const createApp = (options: AppOptions) => {
           initiate_login_uri: result.client.initiateLoginUri ?? null,
           claim_hook_url: result.client.claimHookUrl ?? null,
           claim_hook_auth_header_name: result.client.claimHookAuthHeaderName ?? null,
-          claim_hook_auth_header_value: null
+          claim_hook_auth_header_value: null,
+          machine_token_ttl_seconds: result.client.machineTokenTtlSeconds ?? null,
+          agent_token_exchange_enabled: result.client.agentTokenExchangeEnabled ?? false,
+          agent_claim_source_client_id: result.client.agentClaimSourceClientId ?? null
         },
         201
       );
     } catch (error) {
       if (error instanceof DuplicateDbClientError) {
         return context.json({ error: "db_client_already_exists" }, 409);
+      }
+
+      if (error instanceof AgentClaimSourceError) {
+        return context.json({ error: "invalid_client_metadata", message: error.message }, 400);
       }
 
       if (error instanceof ZodError) {
@@ -4708,11 +4906,11 @@ export const createApp = (options: AppOptions) => {
   });
 
   app.delete("/admin/tenants/:tenantId/clients/:clientId", async (context) => {
-    const humanGate = await requireHumanAdmin(context.req.header("authorization"));
-    if (!humanGate.ok) {
-      return context.json({ error: humanGate.error }, humanGate.status);
+    const scopeGate = await requireAdminScope(context.req.header("authorization"), "client.write");
+    if (!scopeGate.ok) {
+      return context.json({ error: scopeGate.error }, scopeGate.status);
     }
-    const session = humanGate.session;
+    const actor = auditActorFromAuthorization(scopeGate.auth);
     const tenantId = context.req.param("tenantId");
     const clientId = context.req.param("clientId");
     const tenant = await tenantRepository.findById(tenantId);
@@ -4726,8 +4924,8 @@ export const createApp = (options: AppOptions) => {
 
     await auditRepository.record({
       id: crypto.randomUUID(),
-      actorType: "admin_user",
-      actorId: session.adminUserId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
       tenantId,
       eventType: "oidc.client.deleted",
       targetType: "oidc_client",
@@ -4740,11 +4938,11 @@ export const createApp = (options: AppOptions) => {
   });
 
   app.post("/admin/tenants/:tenantId/clients/:clientId/secret/reset", async (context) => {
-    const humanGate = await requireHumanAdmin(context.req.header("authorization"));
-    if (!humanGate.ok) {
-      return context.json({ error: humanGate.error }, humanGate.status);
+    const scopeGate = await requireAdminScope(context.req.header("authorization"), "client.write");
+    if (!scopeGate.ok) {
+      return context.json({ error: scopeGate.error }, scopeGate.status);
     }
-    const session = humanGate.session;
+    const actor = auditActorFromAuthorization(scopeGate.auth);
     const tenantId = context.req.param("tenantId");
     const clientId = context.req.param("clientId");
     const tenant = await tenantRepository.findById(tenantId);
@@ -4767,8 +4965,8 @@ export const createApp = (options: AppOptions) => {
 
     await auditRepository.record({
       id: crypto.randomUUID(),
-      actorType: "admin_user",
-      actorId: session.adminUserId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
       tenantId,
       eventType: "oidc.client.secret.reset",
       targetType: "oidc_client",
@@ -4786,11 +4984,11 @@ export const createApp = (options: AppOptions) => {
   });
 
   app.patch("/admin/tenants/:tenantId/clients/:clientId", async (context) => {
-    const humanGate = await requireHumanAdmin(context.req.header("authorization"));
-    if (!humanGate.ok) {
-      return context.json({ error: humanGate.error }, humanGate.status);
+    const scopeGate = await requireAdminScope(context.req.header("authorization"), "client.write");
+    if (!scopeGate.ok) {
+      return context.json({ error: scopeGate.error }, scopeGate.status);
     }
-    const session = humanGate.session;
+    const actor = auditActorFromAuthorization(scopeGate.auth);
     const tenantId = context.req.param("tenantId");
     const clientId = context.req.param("clientId");
     const tenant = await tenantRepository.findById(tenantId);
@@ -4833,11 +5031,36 @@ export const createApp = (options: AppOptions) => {
       if (parsed.claim_hook_auth_header_value !== undefined) {
         updated.claimHookAuthHeaderValue = parsed.claim_hook_auth_header_value;
       }
+      if (parsed.machine_token_ttl_seconds !== undefined) {
+        updated.machineTokenTtlSeconds = parsed.machine_token_ttl_seconds;
+      }
+      if (parsed.agent_token_exchange_enabled !== undefined) {
+        updated.agentTokenExchangeEnabled = parsed.agent_token_exchange_enabled;
+      }
+      if (parsed.agent_claim_source_client_id !== undefined) {
+        updated.agentClaimSourceClientId = parsed.agent_claim_source_client_id;
+      }
 
       const validationError = validateClientConfiguration(updated);
       if (validationError !== null) {
         return context.json(
           { error: "invalid_client_metadata", message: validationError },
+          400
+        );
+      }
+
+      if (
+        !(await isValidAgentClaimSource({
+          clientId: updated.agentClaimSourceClientId ?? null,
+          clientRepository,
+          tenantId
+        }))
+      ) {
+        return context.json(
+          {
+            error: "invalid_client_metadata",
+            message: "agent_claim_source_client_id must reference a client in this tenant"
+          },
           400
         );
       }
@@ -4874,6 +5097,7 @@ export const createApp = (options: AppOptions) => {
               claimName: c.claim_name,
               sourceType: c.source_type,
               fixedValue: c.source_type === "fixed" ? (c.fixed_value ?? null) : null,
+              valueType: c.value_type ?? "string",
               userField:
                 c.source_type === "user_field"
                   ? ((c.user_field ?? null) as AccessTokenClaimUserField | null)
@@ -4882,6 +5106,20 @@ export const createApp = (options: AppOptions) => {
               createdAt: claimUpdatedAt,
               updatedAt: claimUpdatedAt
             }));
+
+      // Checked against the merged state: grant types may change without claims in the body.
+      if (
+        updated.grantTypes.includes(CLIENT_CREDENTIALS_GRANT_TYPE) &&
+        nextClaims.some((claim) => claim.sourceType !== "fixed")
+      ) {
+        return context.json(
+          {
+            error: "invalid_client_metadata",
+            message: "client_credentials clients may only use fixed custom claims"
+          },
+          400
+        );
+      }
 
       const claimHookValidationError = validateClaimHookConfiguration(updated, nextClaims);
       if (claimHookValidationError !== null) {
@@ -4913,8 +5151,8 @@ export const createApp = (options: AppOptions) => {
 
       await auditRepository.record({
         id: crypto.randomUUID(),
-        actorType: "admin_user",
-        actorId: session.adminUserId,
+        actorType: actor.actorType,
+        actorId: actor.actorId,
         tenantId,
         eventType: "oidc.client.updated",
         targetType: "oidc_client",
@@ -4935,6 +5173,9 @@ export const createApp = (options: AppOptions) => {
         claim_hook_auth_header_name: updated.claimHookAuthHeaderName ?? null,
         claim_hook_auth_header_value: null,
         access_token_custom_claims_count: claims.length,
+        machine_token_ttl_seconds: updated.machineTokenTtlSeconds ?? null,
+        agent_token_exchange_enabled: updated.agentTokenExchangeEnabled ?? false,
+        agent_claim_source_client_id: updated.agentClaimSourceClientId ?? null,
         redirect_uris: updated.redirectUris,
         grant_types: updated.grantTypes,
         response_types: updated.responseTypes,
@@ -5123,7 +5364,7 @@ export const createApp = (options: AppOptions) => {
         )
       )
         .filter((claim) => claim.sourceType === "fixed" && claim.fixedValue !== null)
-        .map((claim) => [claim.claimName, claim.fixedValue])
+        .map((claim) => [claim.claimName, resolveFixedClaimValue(claim)])
     );
     const surrealAccessToken = await issueClientAccessToken({
       client: dbClient,

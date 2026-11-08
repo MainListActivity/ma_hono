@@ -25,8 +25,13 @@ export const RESERVED_CLAIM_NAMES = new Set([
   "jti",
   "scope",
   "client_id",
-  "nonce"
+  "nonce",
+  "act",
+  "task"
 ]);
+
+/** "json": fixedValue is JSON text, emitted as the parsed value (e.g. an array). */
+export type AccessTokenClaimValueType = "string" | "json";
 
 export interface AccessTokenCustomClaim {
   id: string;
@@ -35,6 +40,8 @@ export interface AccessTokenCustomClaim {
   claimName: string;
   sourceType: AccessTokenClaimSourceType;
   fixedValue: string | null;
+  /** Absent means "string". */
+  valueType?: AccessTokenClaimValueType;
   userField: AccessTokenClaimUserField | null;
   hookField: string | null;
   createdAt: string;

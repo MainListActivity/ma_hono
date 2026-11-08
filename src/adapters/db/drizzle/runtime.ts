@@ -59,6 +59,7 @@ import type { Tenant, TenantIssuer } from "../../../domain/tenants/types";
 import type {
   ActivateUserByInvitationTokenInput,
   ActivateUserByInvitationTokenResult,
+  CreateAgentUserInput,
   CreateProvisionedUserWithInvitationInput,
   ReissueActivationInvitationInput,
   ReissueActivationInvitationResult,
@@ -463,7 +464,10 @@ class D1ClientRepository implements ClientRepository {
       initiateLoginUri: row.initiateLoginUri,
       claimHookUrl: row.claimHookUrl,
       claimHookAuthHeaderName: row.claimHookAuthHeaderName,
-      claimHookAuthHeaderValue: row.claimHookAuthHeaderValue
+      claimHookAuthHeaderValue: row.claimHookAuthHeaderValue,
+      machineTokenTtlSeconds: row.machineTokenTtlSeconds,
+      agentTokenExchangeEnabled: row.agentTokenExchangeEnabled,
+      agentClaimSourceClientId: row.agentClaimSourceClientId
     };
   }
 
@@ -486,6 +490,9 @@ class D1ClientRepository implements ClientRepository {
       claimHookUrl: client.claimHookUrl ?? null,
       claimHookAuthHeaderName: client.claimHookAuthHeaderName ?? null,
       claimHookAuthHeaderValue: client.claimHookAuthHeaderValue ?? null,
+      machineTokenTtlSeconds: client.machineTokenTtlSeconds ?? null,
+      agentTokenExchangeEnabled: client.agentTokenExchangeEnabled ?? false,
+      agentClaimSourceClientId: client.agentClaimSourceClientId ?? null,
       tokenEndpointAuthMethod: client.tokenEndpointAuthMethod,
       redirectUris: client.redirectUris,
       grantTypes: client.grantTypes,
@@ -515,6 +522,9 @@ class D1ClientRepository implements ClientRepository {
         claimHookUrl: client.claimHookUrl ?? null,
         claimHookAuthHeaderName: client.claimHookAuthHeaderName ?? null,
         claimHookAuthHeaderValue: client.claimHookAuthHeaderValue ?? null,
+        machineTokenTtlSeconds: client.machineTokenTtlSeconds,
+        agentTokenExchangeEnabled: client.agentTokenExchangeEnabled,
+        agentClaimSourceClientId: client.agentClaimSourceClientId,
         updatedAt: now
       })
       .where(eq(oidcClients.clientId, client.clientId));
@@ -575,6 +585,7 @@ class D1AccessTokenClaimsRepository implements AccessTokenClaimsRepository {
         claimName: claim.claimName,
         sourceType: claim.sourceType,
         fixedValue: claim.fixedValue,
+        valueType: claim.valueType ?? "string",
         userField: claim.userField,
         hookField: claim.hookField,
         createdAt: claim.createdAt,
@@ -604,6 +615,7 @@ class D1AccessTokenClaimsRepository implements AccessTokenClaimsRepository {
         claimName: claim.claimName,
         sourceType: claim.sourceType,
         fixedValue: claim.fixedValue,
+        valueType: claim.valueType ?? "string",
         userField: claim.userField,
         hookField: claim.hookField,
         createdAt: claim.createdAt,
@@ -627,6 +639,7 @@ class D1AccessTokenClaimsRepository implements AccessTokenClaimsRepository {
       claimName: row.claimName,
       sourceType: row.sourceType as AccessTokenCustomClaim["sourceType"],
       fixedValue: row.fixedValue,
+      valueType: row.valueType as AccessTokenCustomClaim["valueType"],
       userField: row.userField as AccessTokenCustomClaim["userField"],
       hookField: row.hookField,
       createdAt: row.createdAt,
@@ -655,6 +668,7 @@ class D1AccessTokenClaimsRepository implements AccessTokenClaimsRepository {
       claimName: row.claimName,
       sourceType: row.sourceType as AccessTokenCustomClaim["sourceType"],
       fixedValue: row.fixedValue,
+      valueType: row.valueType as AccessTokenCustomClaim["valueType"],
       userField: row.userField as AccessTokenCustomClaim["userField"],
       hookField: row.hookField,
       createdAt: row.createdAt,
@@ -1111,6 +1125,7 @@ const toUser = (row: typeof users.$inferSelect): User => ({
   status: row.status as User["status"],
   expiresAt: row.expiresAt,
   testOrigin: row.testOrigin,
+  kind: row.kind as User["kind"],
   createdAt: row.createdAt,
   updatedAt: row.updatedAt
 });
@@ -1322,6 +1337,21 @@ export class D1UserRepository implements UserRepository {
     }
   }
 
+  async createAgentUser({ user }: CreateAgentUserInput): Promise<void> {
+    await this.db.insert(users).values({
+      id: user.id,
+      tenantId: user.tenantId,
+      email: user.email,
+      emailVerified: user.emailVerified,
+      username: user.username,
+      displayName: user.displayName,
+      status: user.status,
+      kind: "agent",
+      createdAt: user.createdAt,
+      updatedAt: user.updatedAt
+    });
+  }
+
   async createProvisionedUserWithInvitation({
     invitation,
     user
@@ -1335,6 +1365,7 @@ export class D1UserRepository implements UserRepository {
         username: user.username,
         displayName: user.displayName,
         status: user.status,
+        kind: user.kind ?? "human",
         createdAt: user.createdAt,
         updatedAt: user.updatedAt
       }),
@@ -1423,19 +1454,7 @@ export class D1UserRepository implements UserRepository {
       .from(users)
       .where(eq(users.tenantId, tenantId));
 
-    return rows.map((row) => ({
-      id: row.id,
-      tenantId: row.tenantId,
-      email: row.email,
-      emailVerified: row.emailVerified,
-      username: row.username,
-      displayName: row.displayName,
-      status: row.status as User["status"],
-  expiresAt: row.expiresAt,
-  testOrigin: row.testOrigin,
-      createdAt: row.createdAt,
-      updatedAt: row.updatedAt
-    }));
+    return rows.map((row) => toUser(row));
   }
 
   async reissueActivationInvitation({
@@ -1498,6 +1517,7 @@ export class D1UserRepository implements UserRepository {
         username: user.username,
         displayName: user.displayName,
         status: user.status,
+        kind: user.kind,
         updatedAt: user.updatedAt
       })
       .where(and(eq(users.tenantId, user.tenantId), eq(users.id, user.id)));

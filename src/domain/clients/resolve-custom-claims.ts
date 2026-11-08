@@ -5,6 +5,7 @@ import {
   type ClaimHookConfig,
   type ClaimHookFetcher
 } from "./claim-hook-client";
+import { resolveFixedClaimValue } from "./fixed-claim-value";
 
 const customClaimNameAliases = new Map([
   ["https://surrealdb.com/db", "db"],
@@ -34,6 +35,24 @@ const resolveUserField = (
 
 const normalizeCustomClaimName = (claimName: string): string =>
   customClaimNameAliases.get(claimName) ?? claimName;
+
+/**
+ * Fixed claims only, for tokens issued without an end user (client_credentials).
+ * Other sources need a user or a hook call and are not applied here.
+ */
+export const resolveFixedCustomClaims = (
+  claims: AccessTokenCustomClaim[]
+): Record<string, unknown> => {
+  const result: Record<string, unknown> = {};
+
+  for (const claim of claims) {
+    if (claim.sourceType === "fixed" && claim.fixedValue !== null) {
+      result[normalizeCustomClaimName(claim.claimName)] = resolveFixedClaimValue(claim);
+    }
+  }
+
+  return result;
+};
 
 export interface ResolveCustomClaimsHookDeps {
   config: ClaimHookConfig;
@@ -73,7 +92,7 @@ export const resolveCustomClaims = async (
 
     if (claim.sourceType === "fixed") {
       if (claim.fixedValue !== null) {
-        result[claimName] = claim.fixedValue;
+        result[claimName] = resolveFixedClaimValue(claim);
       }
       continue;
     }

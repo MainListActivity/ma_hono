@@ -18,6 +18,31 @@ export class DuplicateDbClientError extends Error {
   }
 }
 
+export class AgentClaimSourceError extends Error {
+  constructor() {
+    super("agent_claim_source_client_id must reference a client in this tenant");
+    this.name = "AgentClaimSourceError";
+  }
+}
+
+/** A claim source must be another client of the same tenant. Null means no source. */
+export const isValidAgentClaimSource = async ({
+  clientId,
+  clientRepository,
+  tenantId
+}: {
+  clientId: string | null;
+  clientRepository: ClientRepository;
+  tenantId: string;
+}): Promise<boolean> => {
+  if (clientId === null) {
+    return true;
+  }
+
+  const source = await clientRepository.findByClientId(clientId);
+  return source !== null && source.tenantId === tenantId;
+};
+
 export const clientAuthMethodRequiresSecret = (
   authMethod: ClientTokenEndpointAuthMethod
 ) => authMethod !== "none";
@@ -154,6 +179,16 @@ export const registerClientFromAdmin = async ({
     }
   }
 
+  if (
+    !(await isValidAgentClaimSource({
+      clientId: payload.agent_claim_source_client_id ?? null,
+      clientRepository,
+      tenantId: issuerContext.tenant.id
+    }))
+  ) {
+    throw new AgentClaimSourceError();
+  }
+
   const clientId = crypto.randomUUID();
   const clientSecret = clientAuthMethodRequiresSecret(payload.token_endpoint_auth_method)
     ? createOpaqueToken()
@@ -180,7 +215,10 @@ export const registerClientFromAdmin = async ({
     initiateLoginUri: payload.initiate_login_uri ?? null,
     claimHookUrl: payload.claim_hook_url ?? null,
     claimHookAuthHeaderName: payload.claim_hook_auth_header_name ?? null,
-    claimHookAuthHeaderValue: payload.claim_hook_auth_header_value ?? null
+    claimHookAuthHeaderValue: payload.claim_hook_auth_header_value ?? null,
+    machineTokenTtlSeconds: payload.machine_token_ttl_seconds ?? null,
+    agentTokenExchangeEnabled: payload.agent_token_exchange_enabled ?? false,
+    agentClaimSourceClientId: payload.agent_claim_source_client_id ?? null
   };
 
   await clientRepository.create(client);
@@ -196,6 +234,7 @@ export const registerClientFromAdmin = async ({
       sourceType: claim.source_type,
       fixedValue:
         claim.source_type === "fixed" ? (claim.fixed_value ?? null) : null,
+      valueType: claim.value_type ?? "string",
       userField:
         claim.source_type === "user_field"
           ? ((claim.user_field ?? null) as AccessTokenCustomClaim["userField"])

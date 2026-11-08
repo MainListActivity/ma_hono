@@ -14,6 +14,10 @@ export type AuditEventType =
   | "oidc.authorization.succeeded"
   | "oidc.token.exchange.failed"
   | "oidc.token.exchange.succeeded"
+  | "oidc.client_credentials.failed"
+  | "oidc.client_credentials.succeeded"
+  | "oidc.agent_token.exchange.failed"
+  | "oidc.agent_token.exchange.succeeded"
   | "oidc.client.registered"
   | "oidc.client.token_profile.updated"
   | "tenant.created"
@@ -21,6 +25,8 @@ export type AuditEventType =
   | "user.activation.succeeded"
   | "user.provision.failed"
   | "user.provisioned"
+  | "user.status_change.failed"
+  | "user.status_changed"
   | "signing_key.rotated"
   | (string & {});
 

@@ -59,6 +59,49 @@ describe("resolveCustomClaims", () => {
     expect(result).toEqual({ ns: "my_ns" });
   });
 
+  it("resolves json fixed claims to their parsed value", async () => {
+    const claims = [
+      makeClaim({
+        claimName: "rl",
+        sourceType: "fixed",
+        fixedValue: '["Editor"]',
+        valueType: "json"
+      })
+    ];
+
+    const result = await resolveCustomClaims(claims, baseUser);
+
+    expect(result).toEqual({ rl: ["Editor"] });
+  });
+
+  it("keeps string fixed claims verbatim even when their text is JSON", async () => {
+    const claims = [
+      makeClaim({
+        claimName: "ns",
+        sourceType: "fixed",
+        fixedValue: '["not_parsed"]',
+        valueType: "string"
+      })
+    ];
+
+    const result = await resolveCustomClaims(claims, baseUser);
+
+    expect(result).toEqual({ ns: '["not_parsed"]' });
+  });
+
+  it("fails closed when a stored json fixed claim is malformed", async () => {
+    const claims = [
+      makeClaim({
+        claimName: "rl",
+        sourceType: "fixed",
+        fixedValue: "[Editor",
+        valueType: "json"
+      })
+    ];
+
+    await expect(resolveCustomClaims(claims, baseUser)).rejects.toThrow();
+  });
+
   it("resolves user_field id", async () => {
     const claims = [
       makeClaim({ claimName: "uid", sourceType: "user_field", userField: "id" })
@@ -548,6 +591,56 @@ describe("Token endpoint with custom claims", () => {
     const accessToken = decodeJwt(body.access_token);
 
     expect(accessToken.ns).toBe("my_namespace");
+  });
+
+  it("includes json fixed claims as arrays and keeps string claims as strings", async () => {
+    const client = await createClient({
+      clientId: "spa_client_json_claim",
+      accessTokenAudience: "https://api.example.com"
+    });
+    const { app, authorizationCodeRepository } = await createTokenTestApp({
+      client,
+      claims: [
+        makeClaim({
+          clientId: client.id,
+          tenantId: client.tenantId,
+          claimName: "rl",
+          sourceType: "fixed",
+          fixedValue: '["Editor"]',
+          valueType: "json"
+        }),
+        makeClaim({
+          id: "claim_2",
+          clientId: client.id,
+          tenantId: client.tenantId,
+          claimName: "ns",
+          sourceType: "fixed",
+          fixedValue: "company"
+        })
+      ]
+    });
+
+    await seedAuthorizationCode({
+      clientId: client.clientId,
+      code: "code-json-claim",
+      codeRepository: authorizationCodeRepository,
+      userId: baseUser.id
+    });
+
+    const response = await exchangeCode({
+      app,
+      clientId: client.clientId,
+      code: "code-json-claim"
+    });
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      access_token: string;
+    };
+    const accessToken = decodeJwt(body.access_token);
+
+    expect(accessToken.rl).toEqual(["Editor"]);
+    expect(accessToken.ns).toBe("company");
   });
 
   it("includes user-field mapped claims in access token", async () => {

@@ -9,5 +9,11 @@ export interface OidcTokenSuccessResponse {
 }
 
 export interface OidcTokenErrorResponse {
-  error: "invalid_client" | "invalid_grant" | "invalid_request" | "server_error" | "unsupported_grant_type";
+  error:
+    | "invalid_client"
+    | "invalid_grant"
+    | "invalid_request"
+    | "server_error"
+    | "unauthorized_client"
+    | "unsupported_grant_type";
 }

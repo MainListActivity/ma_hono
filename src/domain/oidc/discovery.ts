@@ -39,7 +39,7 @@ export const buildDiscoveryMetadata = (
     token_endpoint: `${issuerContext.issuer}/token`,
     revocation_endpoint: `${issuerContext.issuer}/revoke`,
     introspection_endpoint: `${issuerContext.issuer}/introspect`,
-    grant_types_supported: ["authorization_code", "refresh_token"],
+    grant_types_supported: ["authorization_code", "refresh_token", "client_credentials"],
     response_types_supported: ["code"],
     code_challenge_methods_supported: ["S256"],
     scopes_supported:

@@ -89,7 +89,13 @@ export const authenticateWithPassword = async ({
       ? await userRepository.findUserByEmail(tenantId, normalizedUsername.toLowerCase())
       : null);
 
-  if (user === null || user.status !== "active" || isUserExpired(user, now)) {
+  // agent 账号是机器身份，永不作为人登录。
+  if (
+    user === null ||
+    user.status !== "active" ||
+    user.kind === "agent" ||
+    isUserExpired(user, now)
+  ) {
     return {
       kind: "rejected",
       reason: "invalid_credentials"
