@@ -71,6 +71,11 @@ export const oidcClients = sqliteTable(
     redirectUris: text("redirect_uris", { mode: "json" }).$type<string[]>().notNull(),
     grantTypes: text("grant_types", { mode: "json" }).$type<string[]>().notNull(),
     responseTypes: text("response_types", { mode: "json" }).$type<string[]>().notNull(),
+    machineTokenTtlSeconds: integer("machine_token_ttl_seconds"),
+    agentTokenExchangeEnabled: integer("agent_token_exchange_enabled", { mode: "boolean" })
+      .notNull()
+      .default(false),
+    agentClaimSourceClientId: text("agent_claim_source_client_id"),
     createdBy: text("created_by"),
     createdAt: text("created_at").notNull(),
     updatedAt: text("updated_at").notNull()
@@ -101,6 +106,7 @@ export const clientAccessTokenClaims = sqliteTable(
     claimName: text("claim_name").notNull(),
     sourceType: text("source_type").notNull(),
     fixedValue: text("fixed_value"),
+    valueType: text("value_type").notNull().default("string"),
     userField: text("user_field"),
     hookField: text("hook_field"),
     createdAt: text("created_at").notNull(),
@@ -200,6 +206,7 @@ export const users = sqliteTable(
     status: text("status").notNull(),
     expiresAt: text("expires_at"),
     testOrigin: text("test_origin"),
+    kind: text("kind").notNull().default("human"),
     createdAt: text("created_at").notNull(),
     updatedAt: text("updated_at").notNull()
   },

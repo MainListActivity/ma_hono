@@ -1,5 +1,8 @@
 export type UserStatus = "provisioned" | "active" | "disabled";
 
+/** "agent" accounts are machine identities; they never sign in as a person. */
+export type UserKind = "human" | "agent";
+
 export interface User {
   id: string;
   tenantId: string;
@@ -11,6 +14,8 @@ export interface User {
   /** ISO datetime; 非 NULL 即测试账号，到期后不可用并被清理。 */
   expiresAt?: string | null;
   testOrigin?: string | null;
+  /** Absent means "human" (legacy rows). */
+  kind?: UserKind;
   createdAt: string;
   updatedAt: string;
 }

@@ -69,6 +69,12 @@ export interface Client {
   claimHookAuthHeaderName?: string | null;
   claimHookAuthHeaderValue?: string | null;
   authMethodPolicy?: ClientAuthMethodPolicy;
+  /** Upper bound for client_credentials access tokens; absent means the default TTL applies. */
+  machineTokenTtlSeconds?: number | null;
+  /** Explicit opt-in: lets this client exchange an agent user id for an agent token. Absent means off. */
+  agentTokenExchangeEnabled?: boolean;
+  /** oidc_clients.client_id (same tenant) whose fixed claims are copied into agent tokens. */
+  agentClaimSourceClientId?: string | null;
 }
 
 export interface RegisterClientResult {
