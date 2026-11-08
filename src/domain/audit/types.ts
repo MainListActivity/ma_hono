@@ -16,6 +16,8 @@ export type AuditEventType =
   | "oidc.token.exchange.succeeded"
   | "oidc.client_credentials.failed"
   | "oidc.client_credentials.succeeded"
+  | "oidc.agent_token.exchange.failed"
+  | "oidc.agent_token.exchange.succeeded"
   | "oidc.client.registered"
   | "oidc.client.token_profile.updated"
   | "tenant.created"

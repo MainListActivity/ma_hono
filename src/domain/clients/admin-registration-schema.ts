@@ -19,6 +19,9 @@ const machineTokenTtlSecondsSchema = z
   .min(MACHINE_TOKEN_MIN_TTL_SECONDS)
   .max(MACHINE_TOKEN_MAX_TTL_SECONDS);
 
+/** oidc_clients.client_id of the client whose fixed claims agent tokens copy; null clears it. */
+const agentClaimSourceClientIdSchema = z.string().min(1).nullable();
+
 const redirectUriSchema = z.string().superRefine((value, ctx) => {
   if (value.startsWith(REGEX_PREFIX)) {
     const pattern = value.slice(REGEX_PREFIX.length);
@@ -206,7 +209,9 @@ export const adminClientRegistrationSchema = z
     claim_hook_auth_header_name: claimHookHeaderNameSchema.optional(),
     claim_hook_auth_header_value: claimHookHeaderValueSchema.optional(),
     access_token_custom_claims: z.array(customClaimSchema).max(20).optional(),
-    machine_token_ttl_seconds: machineTokenTtlSecondsSchema.optional()
+    machine_token_ttl_seconds: machineTokenTtlSecondsSchema.optional(),
+    agent_token_exchange_enabled: z.boolean().optional(),
+    agent_claim_source_client_id: agentClaimSourceClientIdSchema.optional()
   })
   .superRefine((value, ctx) => {
     validateClaimHookHeaderPair(value, ctx);
@@ -227,6 +232,14 @@ export const adminClientRegistrationSchema = z
           path: ["access_token_custom_claims"]
         });
       }
+    }
+
+    if (value.agent_token_exchange_enabled === true && value.token_endpoint_auth_method === "none") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "agent token exchange requires a confidential token_endpoint_auth_method",
+        path: ["token_endpoint_auth_method"]
+      });
     }
 
     if (value.client_profile === "spa") {
@@ -393,7 +406,9 @@ export const adminClientUpdateSchema = z
     claim_hook_auth_header_name: claimHookHeaderNameSchema.nullable().optional(),
     claim_hook_auth_header_value: claimHookHeaderValueSchema.nullable().optional(),
     access_token_custom_claims: z.array(customClaimSchema).max(20).optional(),
-    machine_token_ttl_seconds: machineTokenTtlSecondsSchema.nullable().optional()
+    machine_token_ttl_seconds: machineTokenTtlSecondsSchema.nullable().optional(),
+    agent_token_exchange_enabled: z.boolean().optional(),
+    agent_claim_source_client_id: agentClaimSourceClientIdSchema.optional()
   })
   .superRefine((value, ctx) => {
     const profile = value.client_profile;
@@ -414,6 +429,14 @@ export const adminClientUpdateSchema = z
           path: ["access_token_custom_claims"]
         });
       }
+    }
+
+    if (value.agent_token_exchange_enabled === true && value.token_endpoint_auth_method === "none") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "agent token exchange requires a confidential token_endpoint_auth_method",
+        path: ["token_endpoint_auth_method"]
+      });
     }
 
     if (profile === "spa") {

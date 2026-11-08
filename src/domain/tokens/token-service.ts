@@ -151,6 +151,10 @@ export interface TokenExchangeRequest {
   subjectToken?: string | null;
   subjectTokenType?: string | null;
   resource?: string | null;
+  /** Agent exchange only: the task the agent token is bound to. */
+  taskId?: string | null;
+  /** Agent exchange only: requested lifetime in seconds, as sent by the caller. */
+  ttl?: string | null;
   requestedClientId: string | null;
   requestedClientSecret: string | null;
 }
@@ -163,6 +167,8 @@ type TokenExchangeErrorResult = {
   /** Remote-grant attempt metadata for app-level audit (never the code itself). */
   remoteGrantId?: string | null;
   remoteGrantRevoked?: boolean;
+  /** Agent-exchange attempt metadata; present only when the task id was well-formed. */
+  taskId?: string;
 };
 
 type TokenExchangeSuccessResult = {
@@ -173,12 +179,28 @@ type TokenExchangeSuccessResult = {
   tenantId: string;
   /** Absent for client_credentials, which has no end user. */
   userId?: string;
+  /** Set for agent exchange: the task the agent token is bound to. */
+  taskId?: string;
 };
 
-export const REMOTE_GRANT_TOKEN_EXCHANGE_GRANT_TYPE =
-  "urn:ietf:params:oauth:grant-type:token-exchange";
+export const TOKEN_EXCHANGE_GRANT_TYPE = "urn:ietf:params:oauth:grant-type:token-exchange";
 export const REMOTE_GRANT_CODE_TOKEN_TYPE =
   "urn:ma-hono:params:oauth:token-type:remote-grant-code";
+export const AGENT_ID_TOKEN_TYPE = "urn:ma-hono:params:oauth:token-type:agent-id";
+const AGENT_TASK_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/u;
+
+/**
+ * Token exchange with subject_token_type=agent-id is the agent path. Anything
+ * else under the token-exchange URN stays on the remote-grant path.
+ */
+export const isAgentTokenExchangeRequest = ({
+  grantType,
+  subjectTokenType
+}: {
+  grantType: string;
+  subjectTokenType?: string | null;
+}): boolean =>
+  grantType === TOKEN_EXCHANGE_GRANT_TYPE && subjectTokenType === AGENT_ID_TOKEN_TYPE;
 
 export type TokenExchangeResult = TokenExchangeErrorResult | TokenExchangeSuccessResult;
 
@@ -1421,7 +1443,9 @@ export const exchangeAuthorizationCode = async ({
     authorizationHeader: request.authorizationHeader,
     clientRepository,
     issuerContext,
-    requireClientSecret: request.grantType === CLIENT_CREDENTIALS_GRANT_TYPE,
+    requireClientSecret:
+      request.grantType === CLIENT_CREDENTIALS_GRANT_TYPE ||
+      isAgentTokenExchangeRequest(request),
     requestedClientId: request.requestedClientId,
     requestedClientSecret: request.requestedClientSecret
   });
@@ -1658,7 +1682,20 @@ export const exchangeAuthorizationCode = async ({
     }
   }
 
-  if (request.grantType === REMOTE_GRANT_TOKEN_EXCHANGE_GRANT_TYPE) {
+  if (isAgentTokenExchangeRequest(request)) {
+    return await redeemAgentToken({
+      accessTokenClaimsRepository,
+      client: authenticatedClient.client,
+      clientRepository,
+      issuerContext,
+      now: new Date(),
+      request,
+      signer,
+      userRepository
+    });
+  }
+
+  if (request.grantType === TOKEN_EXCHANGE_GRANT_TYPE) {
     return await redeemRemoteGrant({
       accessTokenClaimsRepository,
       client: authenticatedClient.client,
@@ -1925,6 +1962,138 @@ export const introspectAccessToken = async ({
   };
 };
 
+/**
+ * Absent ttl means the ceiling. A present ttl must be a positive integer and is
+ * capped at the ceiling, never rejected for being too long.
+ */
+const parseAgentTokenTtl = (raw: string | null): number | null => {
+  if (raw === null) {
+    return MACHINE_TOKEN_MAX_TTL_SECONDS;
+  }
+
+  if (!/^[1-9][0-9]*$/u.test(raw)) {
+    return null;
+  }
+
+  return Math.min(Number(raw), MACHINE_TOKEN_MAX_TTL_SECONDS);
+};
+
+/**
+ * Agent token exchange: a confidential client that the admin opted in trades an
+ * agent user id for a short-lived token bound to one task. Human users are always
+ * refused. No refresh or id token is issued.
+ */
+const redeemAgentToken = async ({
+  accessTokenClaimsRepository,
+  client,
+  clientRepository,
+  issuerContext,
+  now,
+  request,
+  signer,
+  userRepository
+}: {
+  accessTokenClaimsRepository: AccessTokenClaimsRepository;
+  client: Client;
+  clientRepository: ClientRepository;
+  issuerContext: ResolvedIssuerContext;
+  now: Date;
+  request: TokenExchangeRequest;
+  signer: SigningKeySigner | undefined;
+  userRepository: UserRepository;
+}): Promise<TokenExchangeResult> => {
+  const fail = (error: TokenErrorCode, taskId?: string): TokenExchangeErrorResult => ({
+    kind: "error",
+    clientId: client.clientId,
+    error,
+    status: 400,
+    ...(taskId === undefined ? {} : { taskId })
+  });
+
+  if (client.agentTokenExchangeEnabled !== true) {
+    return fail("unauthorized_client");
+  }
+
+  const taskId = request.taskId ?? null;
+  if (taskId === null || !AGENT_TASK_ID_PATTERN.test(taskId)) {
+    return fail("invalid_request");
+  }
+
+  const ttlSeconds = parseAgentTokenTtl(request.ttl ?? null);
+  if (ttlSeconds === null) {
+    return fail("invalid_request", taskId);
+  }
+
+  const agentUserId = (request.subjectToken ?? "").trim();
+  if (agentUserId.length === 0) {
+    return fail("invalid_request", taskId);
+  }
+
+  if (signer === undefined) {
+    return fail("server_error", taskId);
+  }
+
+  // Missing, cross-tenant, human, disabled, and expired subjects all look the same to the caller.
+  const agent = await userRepository.findUserById(issuerContext.tenant.id, agentUserId);
+  if (
+    agent === null ||
+    agent.tenantId !== issuerContext.tenant.id ||
+    agent.kind !== "agent" ||
+    agent.status !== "active" ||
+    isUserExpired(agent, now)
+  ) {
+    return fail("invalid_grant", taskId);
+  }
+
+  let fixedClaims: Record<string, unknown> = {};
+  const claimSourceClientId = client.agentClaimSourceClientId ?? null;
+  if (claimSourceClientId !== null) {
+    const claimSource = await clientRepository.findByClientId(claimSourceClientId);
+    // Fail closed: a configured claim source that is gone must not yield a token without its claims.
+    if (claimSource === null || claimSource.tenantId !== issuerContext.tenant.id) {
+      return fail("server_error", taskId);
+    }
+
+    fixedClaims = resolveFixedCustomClaims(
+      await accessTokenClaimsRepository.listByClientIdAndTenantId(
+        claimSource.id,
+        issuerContext.tenant.id
+      )
+    );
+  }
+
+  const accessToken = await issueClientAccessToken({
+    client,
+    // task and act are written last so no configured claim can shadow them.
+    extraClaims: {
+      ...fixedClaims,
+      task: taskId,
+      act: { sub: client.clientId }
+    },
+    issuer: issuerContext.issuer,
+    now,
+    scope: "",
+    signer,
+    subject: agent.id,
+    tenantId: issuerContext.tenant.id,
+    ttlSeconds
+  });
+
+  return {
+    kind: "success",
+    clientId: client.clientId,
+    response: {
+      token_type: "Bearer",
+      expires_in: ttlSeconds,
+      access_token: accessToken,
+      scope: ""
+    },
+    taskId,
+    tenantId: issuerContext.tenant.id,
+    userId: agent.id
+  };
+};
+
 const redeemRemoteGrant = async ({
   accessTokenClaimsRepository,
   client,
@@ -1962,7 +2131,7 @@ const redeemRemoteGrant = async ({
     remoteGrantRepository === undefined ||
     signer === undefined ||
     request.subjectTokenType !== REMOTE_GRANT_CODE_TOKEN_TYPE ||
-    !client.grantTypes.includes(REMOTE_GRANT_TOKEN_EXCHANGE_GRANT_TYPE)
+    !client.grantTypes.includes(TOKEN_EXCHANGE_GRANT_TYPE)
   ) {
     return invalid();
   }

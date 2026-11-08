@@ -60,9 +60,11 @@ import type { AccessTokenClaimsRepository } from "../domain/clients/access-token
 import type { RegistrationAccessTokenRepository } from "../domain/clients/registration-access-token-repository";
 import { sha256Base64Url } from "../lib/hash";
 import {
+  AgentClaimSourceError,
   clientAuthMethodRequiresSecret,
   createOpaqueToken,
   DuplicateDbClientError,
+  isValidAgentClaimSource,
   registerClient,
   registerMcpClient,
   registerClientFromAdmin
@@ -95,6 +97,7 @@ import {
 import {
   exchangeAuthorizationCode,
   introspectAccessToken,
+  isAgentTokenExchangeRequest,
   issueClientAccessToken,
   issueScopeToken,
   revokeToken
@@ -708,6 +711,10 @@ export const createApp = (options: AppOptions) => {
       client.tokenEndpointAuthMethod === "none"
     ) {
       return "client_credentials requires a confidential auth method";
+    }
+
+    if (client.agentTokenExchangeEnabled === true && client.tokenEndpointAuthMethod === "none") {
+      return "agent token exchange requires a confidential auth method";
     }
 
     if (client.clientProfile === "db") {
@@ -2851,6 +2858,8 @@ export const createApp = (options: AppOptions) => {
     }
 
     const grantType = String(formData.get("grant_type") ?? "");
+    const subjectTokenType = formData.get("subject_token_type")?.toString() ?? null;
+    const isAgentExchange = isAgentTokenExchangeRequest({ grantType, subjectTokenType });
     const result = await exchangeAuthorizationCode({
       authorizationCodeRepository,
       accessTokenClaimsRepository,
@@ -2863,12 +2872,14 @@ export const createApp = (options: AppOptions) => {
         authorizationHeader: context.req.header("authorization"),
         grantType,
         subjectToken: formData.get("subject_token")?.toString() ?? null,
-        subjectTokenType: formData.get("subject_token_type")?.toString() ?? null,
+        subjectTokenType,
         code: String(formData.get("code") ?? ""),
         refreshToken: formData.get("refresh_token")?.toString() ?? null,
         redirectUri: String(formData.get("redirect_uri") ?? ""),
         codeVerifier: String(formData.get("code_verifier") ?? ""),
         resource: formData.get("resource")?.toString() || null,
+        taskId: formData.get("task_id")?.toString() || null,
+        ttl: formData.get("ttl")?.toString() || null,
         requestedClientId: formData.get("client_id")?.toString() ?? null,
         requestedClientSecret: formData.get("client_secret")?.toString() ?? null
       },
@@ -2884,16 +2895,19 @@ export const createApp = (options: AppOptions) => {
         tenantId: issuerContext.tenant.id,
         eventType: grantType === CLIENT_CREDENTIALS_GRANT_TYPE
           ? "oidc.client_credentials.failed"
-          : result.remoteGrantRevoked === true
-            ? "oidc.remote_grant.revoked_on_reuse"
-            : result.remoteGrantId !== undefined
-              ? "oidc.remote_grant.redeem_failed"
-              : "oidc.token.exchange.failed",
+          : isAgentExchange
+            ? "oidc.agent_token.exchange.failed"
+            : result.remoteGrantRevoked === true
+              ? "oidc.remote_grant.revoked_on_reuse"
+              : result.remoteGrantId !== undefined
+                ? "oidc.remote_grant.redeem_failed"
+                : "oidc.token.exchange.failed",
         targetType: "oidc_client",
         targetId: result.clientId,
         payload: {
           reason: result.error,
-          ...(result.remoteGrantId === undefined ? {} : { grant_id: result.remoteGrantId })
+          ...(result.remoteGrantId === undefined ? {} : { grant_id: result.remoteGrantId }),
+          ...(result.taskId === undefined ? {} : { task_id: result.taskId })
         }
       });
 
@@ -2922,6 +2936,20 @@ export const createApp = (options: AppOptions) => {
         targetType: "oidc_client",
         targetId: result.clientId,
         payload: {
+          expires_in: result.response.expires_in
+        }
+      });
+    } else if (isAgentExchange) {
+      await recordAuditEventBestEffort({
+        actorType: "oidc_client",
+        actorId: result.clientId,
+        tenantId: result.tenantId,
+        eventType: "oidc.agent_token.exchange.succeeded",
+        targetType: "oidc_client",
+        targetId: result.clientId,
+        payload: {
+          agent_user_id: result.userId,
+          task_id: result.taskId,
           expires_in: result.response.expires_in
         }
       });
@@ -4566,6 +4594,8 @@ export const createApp = (options: AppOptions) => {
         token_endpoint_auth_method: c.tokenEndpointAuthMethod,
         trust_level: c.trustLevel,
         consent_policy: c.consentPolicy,
+        agent_token_exchange_enabled: c.agentTokenExchangeEnabled ?? false,
+        agent_claim_source_client_id: c.agentClaimSourceClientId ?? null,
         auth_method_policy: policyToWire(policies[i])
       }))
     });
@@ -4614,6 +4644,8 @@ export const createApp = (options: AppOptions) => {
         hook_field: c.hookField
       })),
       machine_token_ttl_seconds: client.machineTokenTtlSeconds ?? null,
+      agent_token_exchange_enabled: client.agentTokenExchangeEnabled ?? false,
+      agent_claim_source_client_id: client.agentClaimSourceClientId ?? null,
       redirect_uris: client.redirectUris,
       grant_types: client.grantTypes,
       response_types: client.responseTypes,
@@ -4836,13 +4868,19 @@ export const createApp = (options: AppOptions) => {
           claim_hook_url: result.client.claimHookUrl ?? null,
           claim_hook_auth_header_name: result.client.claimHookAuthHeaderName ?? null,
           claim_hook_auth_header_value: null,
-          machine_token_ttl_seconds: result.client.machineTokenTtlSeconds ?? null
+          machine_token_ttl_seconds: result.client.machineTokenTtlSeconds ?? null,
+          agent_token_exchange_enabled: result.client.agentTokenExchangeEnabled ?? false,
+          agent_claim_source_client_id: result.client.agentClaimSourceClientId ?? null
         },
         201
       );
     } catch (error) {
       if (error instanceof DuplicateDbClientError) {
         return context.json({ error: "db_client_already_exists" }, 409);
+      }
+
+      if (error instanceof AgentClaimSourceError) {
+        return context.json({ error: "invalid_client_metadata", message: error.message }, 400);
       }
 
       if (error instanceof ZodError) {
@@ -4981,11 +5019,33 @@ export const createApp = (options: AppOptions) => {
       if (parsed.machine_token_ttl_seconds !== undefined) {
         updated.machineTokenTtlSeconds = parsed.machine_token_ttl_seconds;
       }
+      if (parsed.agent_token_exchange_enabled !== undefined) {
+        updated.agentTokenExchangeEnabled = parsed.agent_token_exchange_enabled;
+      }
+      if (parsed.agent_claim_source_client_id !== undefined) {
+        updated.agentClaimSourceClientId = parsed.agent_claim_source_client_id;
+      }
 
       const validationError = validateClientConfiguration(updated);
       if (validationError !== null) {
         return context.json(
           { error: "invalid_client_metadata", message: validationError },
+          400
+        );
+      }
+
+      if (
+        !(await isValidAgentClaimSource({
+          clientId: updated.agentClaimSourceClientId ?? null,
+          clientRepository,
+          tenantId
+        }))
+      ) {
+        return context.json(
+          {
+            error: "invalid_client_metadata",
+            message: "agent_claim_source_client_id must reference a client in this tenant"
+          },
           400
         );
       }
@@ -5099,6 +5159,8 @@ export const createApp = (options: AppOptions) => {
         claim_hook_auth_header_value: null,
         access_token_custom_claims_count: claims.length,
         machine_token_ttl_seconds: updated.machineTokenTtlSeconds ?? null,
+        agent_token_exchange_enabled: updated.agentTokenExchangeEnabled ?? false,
+        agent_claim_source_client_id: updated.agentClaimSourceClientId ?? null,
         redirect_uris: updated.redirectUris,
         grant_types: updated.grantTypes,
         response_types: updated.responseTypes,
