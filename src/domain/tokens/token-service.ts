@@ -5,6 +5,7 @@ import { verifyPkce } from "../authorization/pkce";
 import type { AccessTokenClaimsRepository } from "../clients/access-token-claims-repository";
 import {
   resolveCustomClaims,
+  resolveFixedCustomClaims,
   type ResolveCustomClaimsHookDeps
 } from "../clients/resolve-custom-claims";
 import type { ClaimHookFetcher } from "../clients/claim-hook-client";
@@ -14,7 +15,9 @@ import type {
 } from "../clients/repository";
 import type { Client, ClientAuthMethodName } from "../clients/types";
 import {
+  CLIENT_CREDENTIALS_GRANT_TYPE,
   DEFAULT_TOKEN_TTL_SECONDS,
+  MACHINE_TOKEN_MAX_TTL_SECONDS,
   REFRESH_TOKEN_ABSOLUTE_TTL_SECONDS
 } from "../clients/types";
 import type { SigningKeySigner } from "../keys/signer";
@@ -168,7 +171,8 @@ type TokenExchangeSuccessResult = {
   remoteGrantId?: string;
   response: OidcTokenSuccessResponse;
   tenantId: string;
-  userId: string;
+  /** Absent for client_credentials, which has no end user. */
+  userId?: string;
 };
 
 export const REMOTE_GRANT_TOKEN_EXCHANGE_GRANT_TYPE =
@@ -1316,6 +1320,72 @@ export const issueScopeToken = async ({
   }
 };
 
+/**
+ * RFC 6749 section 4.4: a machine token for the authenticated client itself.
+ * No refresh or id token. `sub` is the client_id, and the lifetime is capped
+ * at MACHINE_TOKEN_MAX_TTL_SECONDS (a client policy may shorten it).
+ */
+const issueClientCredentialsToken = async ({
+  accessTokenClaimsRepository,
+  client,
+  issuerContext,
+  signer
+}: {
+  accessTokenClaimsRepository: AccessTokenClaimsRepository;
+  client: Client;
+  issuerContext: ResolvedIssuerContext;
+  signer: SigningKeySigner | undefined;
+}): Promise<TokenExchangeResult> => {
+  if (!client.grantTypes.includes(CLIENT_CREDENTIALS_GRANT_TYPE)) {
+    return {
+      kind: "error",
+      clientId: client.clientId,
+      error: "unauthorized_client",
+      status: 400
+    };
+  }
+
+  if (signer === undefined) {
+    return {
+      kind: "error",
+      clientId: client.clientId,
+      error: "server_error",
+      status: 400
+    };
+  }
+
+  const ttlSeconds = Math.min(
+    MACHINE_TOKEN_MAX_TTL_SECONDS,
+    client.machineTokenTtlSeconds ?? MACHINE_TOKEN_MAX_TTL_SECONDS
+  );
+  const claimConfigs = await accessTokenClaimsRepository.listByClientIdAndTenantId(
+    client.id,
+    issuerContext.tenant.id
+  );
+  const accessToken = await issueClientAccessToken({
+    client,
+    extraClaims: resolveFixedCustomClaims(claimConfigs),
+    issuer: issuerContext.issuer,
+    scope: "",
+    signer,
+    subject: client.clientId,
+    tenantId: issuerContext.tenant.id,
+    ttlSeconds
+  });
+
+  return {
+    kind: "success",
+    clientId: client.clientId,
+    tenantId: issuerContext.tenant.id,
+    response: {
+      token_type: "Bearer",
+      expires_in: ttlSeconds,
+      access_token: accessToken,
+      scope: ""
+    }
+  };
+};
+
 export const exchangeAuthorizationCode = async ({
   authorizationCodeRepository,
   accessTokenClaimsRepository,
@@ -1345,6 +1415,7 @@ export const exchangeAuthorizationCode = async ({
     authorizationHeader: request.authorizationHeader,
     clientRepository,
     issuerContext,
+    requireClientSecret: request.grantType === CLIENT_CREDENTIALS_GRANT_TYPE,
     requestedClientId: request.requestedClientId,
     requestedClientSecret: request.requestedClientSecret
   });
@@ -1356,6 +1427,15 @@ export const exchangeAuthorizationCode = async ({
       error: authenticatedClient.error,
       status: authenticatedClient.status
     };
+  }
+
+  if (request.grantType === CLIENT_CREDENTIALS_GRANT_TYPE) {
+    return await issueClientCredentialsToken({
+      accessTokenClaimsRepository,
+      client: authenticatedClient.client,
+      issuerContext,
+      signer
+    });
   }
 
   if (request.grantType === "refresh_token") {

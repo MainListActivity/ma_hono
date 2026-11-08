@@ -207,6 +207,80 @@ describe("Admin Client Registration Schema", () => {
     expect(result.success).toBe(false);
   });
 
+  describe("machine clients (client_credentials)", () => {
+    const baseMachine = {
+      client_name: "Company runner",
+      client_profile: "web",
+      application_type: "web",
+      token_endpoint_auth_method: "client_secret_basic",
+      grant_types: ["client_credentials"],
+      redirect_uris: [],
+      response_types: []
+    };
+
+    it("accepts a confidential machine client without redirect uris", () => {
+      const result = adminClientRegistrationSchema.safeParse(baseMachine);
+      expect(result.success).toBe(true);
+    });
+
+    it("accepts a machine client with a shortened token lifetime", () => {
+      const result = adminClientRegistrationSchema.safeParse({
+        ...baseMachine,
+        machine_token_ttl_seconds: 300
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it("rejects a token lifetime above 900 seconds or below 60 seconds", () => {
+      for (const ttl of [901, 59, 300.5]) {
+        const result = adminClientRegistrationSchema.safeParse({
+          ...baseMachine,
+          machine_token_ttl_seconds: ttl
+        });
+        expect(result.success).toBe(false);
+      }
+    });
+
+    it("rejects client_credentials with a public auth method", () => {
+      const result = adminClientRegistrationSchema.safeParse({
+        ...baseMachine,
+        token_endpoint_auth_method: "none"
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it("rejects client_credentials with user-bound custom claims", () => {
+      const result = adminClientRegistrationSchema.safeParse({
+        ...baseMachine,
+        access_token_custom_claims: [
+          { claim_name: "user_email", source_type: "user_field", user_field: "email" }
+        ]
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it("accepts client_credentials with fixed custom claims", () => {
+      const result = adminClientRegistrationSchema.safeParse({
+        ...baseMachine,
+        access_token_custom_claims: [
+          { claim_name: "ac", source_type: "fixed", fixed_value: "agent" },
+          { claim_name: "rl", source_type: "fixed", fixed_value: '["Editor"]', value_type: "json" }
+        ]
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it("rejects client_credentials on the db profile", () => {
+      const result = adminClientRegistrationSchema.safeParse({
+        ...baseMachine,
+        client_profile: "db",
+        application_type: "web",
+        token_endpoint_auth_method: "none"
+      });
+      expect(result.success).toBe(false);
+    });
+  });
+
   it("rejects unknown value_type", () => {
     const result = adminClientRegistrationSchema.safeParse({
       ...baseSpa,

@@ -5,8 +5,19 @@ import {
   RESERVED_CLAIM_NAMES
 } from "./access-token-claims-types";
 import { isValidJsonClaimValue } from "./fixed-claim-value";
+import {
+  isMachineGrantSet,
+  MACHINE_TOKEN_MAX_TTL_SECONDS,
+  MACHINE_TOKEN_MIN_TTL_SECONDS
+} from "./types";
 
 const REGEX_PREFIX = "regex:";
+
+const machineTokenTtlSecondsSchema = z
+  .number()
+  .int()
+  .min(MACHINE_TOKEN_MIN_TTL_SECONDS)
+  .max(MACHINE_TOKEN_MAX_TTL_SECONDS);
 
 const redirectUriSchema = z.string().superRefine((value, ctx) => {
   if (value.startsWith(REGEX_PREFIX)) {
@@ -179,7 +190,7 @@ export const adminClientRegistrationSchema = z
     client_name: z.string().min(1),
     client_profile: z.enum(["spa", "web", "native", "db"]),
     application_type: z.enum(["web", "native"]),
-    grant_types: z.array(z.enum(["authorization_code"])),
+    grant_types: z.array(z.enum(["authorization_code", "client_credentials"])),
     redirect_uris: z.array(redirectUriSchema),
     response_types: z.array(z.enum(["code"])),
     trust_level: z.literal("first_party_trusted").default("first_party_trusted"),
@@ -194,10 +205,29 @@ export const adminClientRegistrationSchema = z
     claim_hook_url: claimHookUrlSchema.optional(),
     claim_hook_auth_header_name: claimHookHeaderNameSchema.optional(),
     claim_hook_auth_header_value: claimHookHeaderValueSchema.optional(),
-    access_token_custom_claims: z.array(customClaimSchema).max(20).optional()
+    access_token_custom_claims: z.array(customClaimSchema).max(20).optional(),
+    machine_token_ttl_seconds: machineTokenTtlSecondsSchema.optional()
   })
   .superRefine((value, ctx) => {
     validateClaimHookHeaderPair(value, ctx);
+
+    if (value.grant_types.includes("client_credentials")) {
+      if (value.token_endpoint_auth_method === "none") {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "client_credentials requires a confidential token_endpoint_auth_method",
+          path: ["token_endpoint_auth_method"]
+        });
+      }
+
+      if (value.access_token_custom_claims?.some((claim) => claim.source_type !== "fixed") === true) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "client_credentials clients may only use fixed custom claims",
+          path: ["access_token_custom_claims"]
+        });
+      }
+    }
 
     if (value.client_profile === "spa") {
       if (value.application_type !== "web") {
@@ -225,7 +255,7 @@ export const adminClientRegistrationSchema = z
       }
     }
 
-    if (value.client_profile !== "db") {
+    if (value.client_profile !== "db" && !isMachineGrantSet(value.grant_types)) {
       if (value.grant_types.length === 0) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
@@ -355,17 +385,36 @@ export const adminClientUpdateSchema = z
       .enum(["client_secret_basic", "client_secret_post", "none"])
       .optional(),
     redirect_uris: z.array(redirectUriSchema).optional(),
-    grant_types: z.array(z.enum(["authorization_code"])).optional(),
+    grant_types: z.array(z.enum(["authorization_code", "client_credentials"])).optional(),
     response_types: z.array(z.enum(["code"])).optional(),
     access_token_audience: z.string().min(1).nullable().optional(),
     initiate_login_uri: initiateLoginUriSchema.nullable().optional(),
     claim_hook_url: claimHookUrlSchema.nullable().optional(),
     claim_hook_auth_header_name: claimHookHeaderNameSchema.nullable().optional(),
     claim_hook_auth_header_value: claimHookHeaderValueSchema.nullable().optional(),
-    access_token_custom_claims: z.array(customClaimSchema).max(20).optional()
+    access_token_custom_claims: z.array(customClaimSchema).max(20).optional(),
+    machine_token_ttl_seconds: machineTokenTtlSecondsSchema.nullable().optional()
   })
   .superRefine((value, ctx) => {
     const profile = value.client_profile;
+
+    if (value.grant_types?.includes("client_credentials") === true) {
+      if (value.token_endpoint_auth_method === "none") {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "client_credentials requires a confidential token_endpoint_auth_method",
+          path: ["token_endpoint_auth_method"]
+        });
+      }
+
+      if (value.access_token_custom_claims?.some((claim) => claim.source_type !== "fixed") === true) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "client_credentials clients may only use fixed custom claims",
+          path: ["access_token_custom_claims"]
+        });
+      }
+    }
 
     if (profile === "spa") {
       if (value.application_type !== undefined && value.application_type !== "web") {

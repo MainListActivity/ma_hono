@@ -9,6 +9,7 @@ import { MemoryTenantRepository } from "../../src/adapters/db/memory/memory-tena
 import { MemoryTotpRepository } from "../../src/adapters/db/memory/memory-totp-repository";
 import { createApp } from "../../src/app/app";
 import { sha256Base64Url } from "../../src/lib/hash";
+import { MemoryAccessTokenClaimsRepository } from "../../src/adapters/db/memory/memory-access-token-claims-repository";
 import type { Tenant } from "../../src/domain/tenants/types";
 
 const acmeTenant: Tenant = {
@@ -30,7 +31,9 @@ const acmeTenant: Tenant = {
 
 const makeApp = () => {
   const clientRepository = new MemoryClientRepository();
+  const accessTokenClaimsRepository = new MemoryAccessTokenClaimsRepository();
   const app = createApp({
+    accessTokenClaimsRepository,
     adminBootstrapPasswordHash: "1:AQEBAQEBAQEBAQEBAQEBAQ:-niO1HggQYX5120bMdQ1NLtflreXdKdYKUoUQe1oPdI",
     adminWhitelist: ["admin@example.test"],
     adminRepository: new MemoryAdminRepository({
@@ -48,7 +51,7 @@ const makeApp = () => {
     totpEncryptionKey: new Uint8Array(32).fill(0)
   });
 
-  return { app, clientRepository };
+  return { app, clientRepository, accessTokenClaimsRepository };
 };
 
 const loginAsAdmin = async (app: ReturnType<typeof makeApp>["app"]) => {
@@ -159,6 +162,109 @@ describe("PATCH /admin/tenants/:tenantId/clients/:clientId", () => {
       await sha256Base64Url(body.client_secret as string)
     );
     expect(stored?.clientSecretHash).not.toBe(body.client_secret);
+  });
+});
+
+describe("PATCH machine client policy", () => {
+  const seedWebClient = async (clientRepository: MemoryClientRepository) => {
+    await clientRepository.create({
+      id: "client_web_machine",
+      tenantId: "tenant_acme",
+      clientId: "web-client-machine",
+      clientName: "Web Client",
+      applicationType: "web",
+      grantTypes: ["authorization_code"],
+      redirectUris: ["https://app.example.test/callback"],
+      responseTypes: ["code"],
+      tokenEndpointAuthMethod: "client_secret_basic",
+      clientSecretHash: await sha256Base64Url("secret"),
+      trustLevel: "first_party_trusted",
+      consentPolicy: "skip",
+      clientProfile: "web",
+      accessTokenAudience: null,
+      initiateLoginUri: null
+    });
+  };
+
+  const patchClient = async (
+    app: ReturnType<typeof makeApp>["app"],
+    token: string,
+    body: Record<string, unknown>
+  ) =>
+    app.request("https://idp.example.test/admin/tenants/tenant_acme/clients/web-client-machine", {
+      method: "PATCH",
+      headers: {
+        authorization: `Bearer ${token}`,
+        "content-type": "application/json"
+      },
+      body: JSON.stringify(body)
+    });
+
+  it("turns an interactive client into a machine client and stores the token lifetime", async () => {
+    const { app, clientRepository } = makeApp();
+    const token = await loginAsAdmin(app);
+    await seedWebClient(clientRepository);
+
+    const response = await patchClient(app, token, {
+      grant_types: ["client_credentials"],
+      redirect_uris: [],
+      response_types: [],
+      machine_token_ttl_seconds: 300
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      grant_types: ["client_credentials"],
+      machine_token_ttl_seconds: 300
+    });
+    await expect(clientRepository.findByClientId("web-client-machine")).resolves.toMatchObject({
+      grantTypes: ["client_credentials"],
+      machineTokenTtlSeconds: 300
+    });
+  });
+
+  it("rejects client_credentials on a public client", async () => {
+    const { app, clientRepository } = makeApp();
+    const token = await loginAsAdmin(app);
+    await seedWebClient(clientRepository);
+
+    const response = await patchClient(app, token, {
+      token_endpoint_auth_method: "none",
+      grant_types: ["client_credentials"],
+      redirect_uris: [],
+      response_types: []
+    });
+
+    expect(response.status).toBe(400);
+  });
+
+  it("rejects adding client_credentials to a client that already has user-bound claims", async () => {
+    const { app, clientRepository, accessTokenClaimsRepository } = makeApp();
+    const token = await loginAsAdmin(app);
+    await seedWebClient(clientRepository);
+    await accessTokenClaimsRepository.createMany([
+      {
+        id: "claim_user_email",
+        clientId: "client_web_machine",
+        tenantId: "tenant_acme",
+        claimName: "user_email",
+        sourceType: "user_field",
+        fixedValue: null,
+        userField: "email",
+        hookField: null,
+        createdAt: "2026-01-01T00:00:00Z",
+        updatedAt: "2026-01-01T00:00:00Z"
+      }
+    ]);
+
+    const response = await patchClient(app, token, {
+      grant_types: ["authorization_code", "client_credentials"]
+    });
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      error: "invalid_client_metadata"
+    });
   });
 });
 

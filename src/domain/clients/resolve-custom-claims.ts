@@ -36,6 +36,24 @@ const resolveUserField = (
 const normalizeCustomClaimName = (claimName: string): string =>
   customClaimNameAliases.get(claimName) ?? claimName;
 
+/**
+ * Fixed claims only, for tokens issued without an end user (client_credentials).
+ * Other sources need a user or a hook call and are not applied here.
+ */
+export const resolveFixedCustomClaims = (
+  claims: AccessTokenCustomClaim[]
+): Record<string, unknown> => {
+  const result: Record<string, unknown> = {};
+
+  for (const claim of claims) {
+    if (claim.sourceType === "fixed" && claim.fixedValue !== null) {
+      result[normalizeCustomClaimName(claim.claimName)] = resolveFixedClaimValue(claim);
+    }
+  }
+
+  return result;
+};
+
 export interface ResolveCustomClaimsHookDeps {
   config: ClaimHookConfig;
   /** Override for tests; defaults to the network fetcher. */

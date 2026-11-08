@@ -72,7 +72,9 @@ import type { ClaimHookFetcher } from "../domain/clients/claim-hook-client";
 import { adminClientUpdateSchema } from "../domain/clients/admin-registration-schema";
 import { resolveFixedClaimValue } from "../domain/clients/fixed-claim-value";
 import {
+  CLIENT_CREDENTIALS_GRANT_TYPE,
   DEFAULT_TOKEN_TTL_SECONDS,
+  isMachineGrantSet,
   type Client,
   type ClientAuthMethodName,
   type ClientAuthMethodPolicy
@@ -660,7 +662,7 @@ export const createApp = (options: AppOptions) => {
     typeof value === "number" && Number.isInteger(value) && value > 0 ? value : fallback;
 
   const validateClientConfiguration = (client: Client): string | null => {
-    if (client.clientProfile !== "db") {
+    if (client.clientProfile !== "db" && !isMachineGrantSet(client.grantTypes)) {
       if (client.redirectUris.length === 0) {
         return "interactive clients require at least one redirect uri";
       }
@@ -690,6 +692,13 @@ export const createApp = (options: AppOptions) => {
 
     if (client.clientProfile === "web" && client.tokenEndpointAuthMethod === "none") {
       return "web clients must use a confidential auth method";
+    }
+
+    if (
+      client.grantTypes.includes(CLIENT_CREDENTIALS_GRANT_TYPE) &&
+      client.tokenEndpointAuthMethod === "none"
+    ) {
+      return "client_credentials requires a confidential auth method";
     }
 
     if (client.clientProfile === "db") {
@@ -2832,6 +2841,7 @@ export const createApp = (options: AppOptions) => {
       return context.json(error, 400);
     }
 
+    const grantType = String(formData.get("grant_type") ?? "");
     const result = await exchangeAuthorizationCode({
       authorizationCodeRepository,
       accessTokenClaimsRepository,
@@ -2842,7 +2852,7 @@ export const createApp = (options: AppOptions) => {
       remoteGrantRepository,
       request: {
         authorizationHeader: context.req.header("authorization"),
-        grantType: String(formData.get("grant_type") ?? ""),
+        grantType,
         subjectToken: formData.get("subject_token")?.toString() ?? null,
         subjectTokenType: formData.get("subject_token_type")?.toString() ?? null,
         code: String(formData.get("code") ?? ""),
@@ -2863,11 +2873,13 @@ export const createApp = (options: AppOptions) => {
         actorType: "oidc_client",
         actorId: result.clientId,
         tenantId: issuerContext.tenant.id,
-        eventType: result.remoteGrantRevoked === true
-          ? "oidc.remote_grant.revoked_on_reuse"
-          : result.remoteGrantId !== undefined
-            ? "oidc.remote_grant.redeem_failed"
-            : "oidc.token.exchange.failed",
+        eventType: grantType === CLIENT_CREDENTIALS_GRANT_TYPE
+          ? "oidc.client_credentials.failed"
+          : result.remoteGrantRevoked === true
+            ? "oidc.remote_grant.revoked_on_reuse"
+            : result.remoteGrantId !== undefined
+              ? "oidc.remote_grant.redeem_failed"
+              : "oidc.token.exchange.failed",
         targetType: "oidc_client",
         targetId: result.clientId,
         payload: {
@@ -2892,17 +2904,31 @@ export const createApp = (options: AppOptions) => {
       );
     }
 
-    await recordAuditEventBestEffort({
-      actorType: "oidc_client",
-      actorId: result.clientId,
-      tenantId: result.tenantId,
-      eventType: "oidc.token.exchange.succeeded",
-      targetType: "oidc_client",
-      targetId: result.clientId,
-      payload: {
-        user_id: result.userId
-      }
-    });
+    if (grantType === CLIENT_CREDENTIALS_GRANT_TYPE) {
+      await recordAuditEventBestEffort({
+        actorType: "oidc_client",
+        actorId: result.clientId,
+        tenantId: result.tenantId,
+        eventType: "oidc.client_credentials.succeeded",
+        targetType: "oidc_client",
+        targetId: result.clientId,
+        payload: {
+          expires_in: result.response.expires_in
+        }
+      });
+    } else {
+      await recordAuditEventBestEffort({
+        actorType: "oidc_client",
+        actorId: result.clientId,
+        tenantId: result.tenantId,
+        eventType: "oidc.token.exchange.succeeded",
+        targetType: "oidc_client",
+        targetId: result.clientId,
+        payload: {
+          user_id: result.userId
+        }
+      });
+    }
 
     setTokenResponseHeaders();
     return context.json(result.response, 200);
@@ -4472,6 +4498,7 @@ export const createApp = (options: AppOptions) => {
         user_field: c.userField,
         hook_field: c.hookField
       })),
+      machine_token_ttl_seconds: client.machineTokenTtlSeconds ?? null,
       redirect_uris: client.redirectUris,
       grant_types: client.grantTypes,
       response_types: client.responseTypes,
@@ -4693,7 +4720,8 @@ export const createApp = (options: AppOptions) => {
           initiate_login_uri: result.client.initiateLoginUri ?? null,
           claim_hook_url: result.client.claimHookUrl ?? null,
           claim_hook_auth_header_name: result.client.claimHookAuthHeaderName ?? null,
-          claim_hook_auth_header_value: null
+          claim_hook_auth_header_value: null,
+          machine_token_ttl_seconds: result.client.machineTokenTtlSeconds ?? null
         },
         201
       );
@@ -4835,6 +4863,9 @@ export const createApp = (options: AppOptions) => {
       if (parsed.claim_hook_auth_header_value !== undefined) {
         updated.claimHookAuthHeaderValue = parsed.claim_hook_auth_header_value;
       }
+      if (parsed.machine_token_ttl_seconds !== undefined) {
+        updated.machineTokenTtlSeconds = parsed.machine_token_ttl_seconds;
+      }
 
       const validationError = validateClientConfiguration(updated);
       if (validationError !== null) {
@@ -4885,6 +4916,20 @@ export const createApp = (options: AppOptions) => {
               createdAt: claimUpdatedAt,
               updatedAt: claimUpdatedAt
             }));
+
+      // Checked against the merged state: grant types may change without claims in the body.
+      if (
+        updated.grantTypes.includes(CLIENT_CREDENTIALS_GRANT_TYPE) &&
+        nextClaims.some((claim) => claim.sourceType !== "fixed")
+      ) {
+        return context.json(
+          {
+            error: "invalid_client_metadata",
+            message: "client_credentials clients may only use fixed custom claims"
+          },
+          400
+        );
+      }
 
       const claimHookValidationError = validateClaimHookConfiguration(updated, nextClaims);
       if (claimHookValidationError !== null) {
@@ -4938,6 +4983,7 @@ export const createApp = (options: AppOptions) => {
         claim_hook_auth_header_name: updated.claimHookAuthHeaderName ?? null,
         claim_hook_auth_header_value: null,
         access_token_custom_claims_count: claims.length,
+        machine_token_ttl_seconds: updated.machineTokenTtlSeconds ?? null,
         redirect_uris: updated.redirectUris,
         grant_types: updated.grantTypes,
         response_types: updated.responseTypes,

@@ -23,6 +23,18 @@ export type ClientAuthMethodName =
 export const DEFAULT_TOKEN_TTL_SECONDS = 60 * 60;
 export const REFRESH_TOKEN_ABSOLUTE_TTL_SECONDS = 60 * 24 * 60 * 60;
 
+/** Hard ceiling for machine (client_credentials) and agent access tokens. */
+export const MACHINE_TOKEN_MAX_TTL_SECONDS = 15 * 60;
+export const MACHINE_TOKEN_MIN_TTL_SECONDS = 60;
+export const CLIENT_CREDENTIALS_GRANT_TYPE = "client_credentials";
+
+/**
+ * A machine client has client_credentials and no interactive flow, so it needs
+ * no redirect URIs or response types.
+ */
+export const isMachineGrantSet = (grantTypes: readonly string[]): boolean =>
+  grantTypes.includes(CLIENT_CREDENTIALS_GRANT_TYPE) && !grantTypes.includes("authorization_code");
+
 export interface ClientPrimaryAuthMethodPolicy {
   enabled: boolean;
   allowRegistration: boolean;

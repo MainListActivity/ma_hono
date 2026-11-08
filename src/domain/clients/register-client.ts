@@ -180,7 +180,8 @@ export const registerClientFromAdmin = async ({
     initiateLoginUri: payload.initiate_login_uri ?? null,
     claimHookUrl: payload.claim_hook_url ?? null,
     claimHookAuthHeaderName: payload.claim_hook_auth_header_name ?? null,
-    claimHookAuthHeaderValue: payload.claim_hook_auth_header_value ?? null
+    claimHookAuthHeaderValue: payload.claim_hook_auth_header_value ?? null,
+    machineTokenTtlSeconds: payload.machine_token_ttl_seconds ?? null
   };
 
   await clientRepository.create(client);
