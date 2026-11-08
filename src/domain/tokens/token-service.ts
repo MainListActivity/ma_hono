@@ -1455,11 +1455,13 @@ export const exchangeAuthorizationCode = async ({
       }
       remoteGrantForRefresh = { id: grant.id, expiresAt: grant.expiresAt };
     }
+    // remote 族的 audience 已由 grant.resources 白名单校验；旧检查只约束普通 refresh。
     if (
-      (request.resource !== undefined &&
+      remoteGrantForRefresh === undefined &&
+      ((request.resource !== undefined &&
         request.resource !== null &&
         request.resource !== refreshResource) ||
-      (refreshResource !== null && refreshResource !== authenticatedClient.client.accessTokenAudience)
+      (refreshResource !== null && refreshResource !== authenticatedClient.client.accessTokenAudience))
     ) {
       return {
         kind: "error",
@@ -1476,13 +1478,29 @@ export const exchangeAuthorizationCode = async ({
         clientAuthMethodPolicyRepository,
         issuer: issuerContext.issuer,
         refreshTokenRepository,
-        resource: request.resource ?? refreshResource,
+        resource: remoteGrantForRefresh === undefined
+          ? refreshResource
+          : request.resource ?? refreshResource,
         scope: refreshTokenRecord.scope,
         signer,
         tenantId: refreshTokenRecord.tenantId,
         userId: refreshTokenRecord.userId,
         authMethod: refreshTokenRecord.authMethod,
-        ...(remoteGrantForRefresh === undefined ? {} : { remoteGrant: remoteGrantForRefresh }),
+        ...(remoteGrantForRefresh === undefined
+          ? {}
+          : {
+              remoteGrant: remoteGrantForRefresh,
+              ttlSecondsOverride: Math.min(
+                await resolveTokenTtlSeconds({
+                  authMethod: refreshTokenRecord.authMethod ?? null,
+                  client: authenticatedClient.client,
+                  clientAuthMethodPolicyRepository
+                }),
+                Math.floor(
+                  (Date.parse(remoteGrantForRefresh.expiresAt) - now.getTime()) / 1000
+                )
+              )
+            }),
         nonce: null,
         now,
         userRepository,
@@ -1875,7 +1893,21 @@ const redeemRemoteGrant = async ({
   if (grantRemainingSeconds <= 0) {
     return invalid(grant.id);
   }
-  const ttlSeconds = Math.min(DEFAULT_TOKEN_TTL_SECONDS, grantRemainingSeconds);
+  const policyTtlSeconds = await resolveTokenTtlSeconds({
+    authMethod: null,
+    client,
+    clientAuthMethodPolicyRepository
+  });
+  const ttlSeconds = Math.min(policyTtlSeconds, grantRemainingSeconds);
+
+  // 与产品 web client 登录一致的 scope（受 client.allowedScopes 交集约束），
+  // 保证 claim hook / email 等 claim 与浏览器登录 token 相同。
+  const REMOTE_SCOPES = "openid profile email offline_access".split(" ");
+  const scope = (
+    client.allowedScopes === undefined || client.allowedScopes.length === 0
+      ? REMOTE_SCOPES
+      : REMOTE_SCOPES.filter((candidate) => client.allowedScopes!.includes(candidate))
+  ).join(" ");
 
   const tokenSet = await issueTokenSet({
     accessTokenClaimsRepository,
@@ -1884,7 +1916,7 @@ const redeemRemoteGrant = async ({
     issuer: issuerContext.issuer,
     refreshTokenRepository,
     resource,
-    scope: "remote",
+    scope,
     signer,
     tenantId: grant.tenantId,
     userId: user.id,
