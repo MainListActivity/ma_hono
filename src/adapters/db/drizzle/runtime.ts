@@ -71,6 +71,8 @@ import type {
   UserInvitation
 } from "../../../domain/users/types";
 import { R2KeyMaterialStore } from "../../r2/r2-key-material-store";
+import type { RemoteGrantRecord, RemoteGrantRepository } from "../../../domain/tokens/remote-grant-repository";
+import type { ExpiredUserPurger } from "../../../domain/users/expired-user-purge";
 import {
   accessTokenRevocations,
   adminServicePrincipals,
@@ -89,6 +91,7 @@ import {
   tenantIssuers,
   tenants,
   userInvitations,
+  remoteGrants,
   userPasswordCredentials,
   users,
   webauthnCredentials,
@@ -1106,6 +1109,8 @@ const toUser = (row: typeof users.$inferSelect): User => ({
   username: row.username,
   displayName: row.displayName,
   status: row.status as User["status"],
+  expiresAt: row.expiresAt,
+  testOrigin: row.testOrigin,
   createdAt: row.createdAt,
   updatedAt: row.updatedAt
 });
@@ -1426,6 +1431,8 @@ export class D1UserRepository implements UserRepository {
       username: row.username,
       displayName: row.displayName,
       status: row.status as User["status"],
+  expiresAt: row.expiresAt,
+  testOrigin: row.testOrigin,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt
     }));
@@ -1685,9 +1692,28 @@ class D1RefreshTokenRepository implements RefreshTokenRepository {
       authMethod: row.authMethod as RefreshTokenRecord["authMethod"],
       tokenHash: row.tokenHash,
       absoluteExpiresAt: row.absoluteExpiresAt,
+      remoteGrantId: row.remoteGrantId,
       consumedAt: row.consumedAt,
       parentTokenId: row.parentTokenId,
       replacedByTokenId: row.replacedByTokenId,
+      createdAt: row.createdAt
+    };
+  }
+
+  async findAnyByTokenHash(tokenHash: string): Promise<RefreshTokenRecord | null> {
+    const [row] = await this.db
+      .select()
+      .from(refreshTokens)
+      .where(eq(refreshTokens.tokenHash, tokenHash))
+      .limit(1);
+    if (row === undefined) return null;
+    return {
+      id: row.id, tenantId: row.tenantId, issuer: row.issuer, clientId: row.clientId,
+      userId: row.userId, scope: row.scope, resource: row.resource,
+      authMethod: row.authMethod as RefreshTokenRecord["authMethod"],
+      tokenHash: row.tokenHash, absoluteExpiresAt: row.absoluteExpiresAt,
+      remoteGrantId: row.remoteGrantId, consumedAt: row.consumedAt,
+      parentTokenId: row.parentTokenId, replacedByTokenId: row.replacedByTokenId,
       createdAt: row.createdAt
     };
   }
@@ -1938,6 +1964,96 @@ export class D1PasskeyRepository implements PasskeyRepository {
   }
 }
 
+class D1RemoteGrantRepository implements RemoteGrantRepository {
+  constructor(private readonly db: ReturnType<typeof drizzle>) {}
+
+  private toRecord(row: typeof remoteGrants.$inferSelect): RemoteGrantRecord {
+    return {
+      id: row.id, tenantId: row.tenantId, userId: row.userId, clientId: row.clientId,
+      codeHash: row.codeHash, codeExpiresAt: row.codeExpiresAt,
+      codeConsumedAt: row.codeConsumedAt,
+      resources: JSON.parse(row.resourcesJson) as string[],
+      taskRef: row.taskRef, expiresAt: row.expiresAt,
+      status: row.status as RemoteGrantRecord["status"],
+      createdAt: row.createdAt, revokedAt: row.revokedAt
+    };
+  }
+
+  async redeemByCodeHash(codeHash: string, nowIso: string): Promise<RemoteGrantRecord | null> {
+    const [row] = await this.db
+      .update(remoteGrants)
+      .set({ codeConsumedAt: nowIso })
+      .where(and(
+        eq(remoteGrants.codeHash, codeHash),
+        isNull(remoteGrants.codeConsumedAt),
+        eq(remoteGrants.status, "active"),
+        sql`${remoteGrants.codeExpiresAt} > ${nowIso}`,
+        sql`${remoteGrants.expiresAt} > ${nowIso}`
+      ))
+      .returning();
+    return row === undefined ? null : this.toRecord(row);
+  }
+
+  async findById(tenantId: string, id: string): Promise<RemoteGrantRecord | null> {
+    const [row] = await this.db
+      .select()
+      .from(remoteGrants)
+      .where(and(eq(remoteGrants.tenantId, tenantId), eq(remoteGrants.id, id)))
+      .limit(1);
+    return row === undefined ? null : this.toRecord(row);
+  }
+
+  async revoke(tenantId: string, id: string, revokedAt: string): Promise<boolean> {
+    const [row] = await this.db
+      .update(remoteGrants)
+      .set({ status: "revoked", revokedAt })
+      .where(and(
+        eq(remoteGrants.tenantId, tenantId),
+        eq(remoteGrants.id, id),
+        sql`${remoteGrants.status} != 'revoked'`
+      ))
+      .returning({ id: remoteGrants.id });
+    return row !== undefined;
+  }
+}
+
+const EXPIRED_USER_TABLES = [
+  { table: userPasswordCredentials, column: userPasswordCredentials.userId },
+  { table: webauthnCredentials, column: webauthnCredentials.userId },
+  { table: userInvitations, column: userInvitations.userId },
+  { table: authorizationCodes, column: authorizationCodes.userId },
+  { table: consentChallenges, column: consentChallenges.userId },
+  { table: refreshTokens, column: refreshTokens.userId },
+  { table: remoteGrants, column: remoteGrants.userId },
+  { table: emailLoginTokens, column: emailLoginTokens.userId },
+  { table: loginChallenges, column: loginChallenges.authenticatedUserId },
+  { table: totpCredentials, column: totpCredentials.userId }
+];
+
+class D1ExpiredUserPurger implements ExpiredUserPurger {
+  constructor(private readonly db: ReturnType<typeof drizzle>) {}
+
+  async listExpiredUserIds(nowIso: string, limit: number) {
+    const rows = await this.db
+      .select({ id: users.id, tenantId: users.tenantId, testOrigin: users.testOrigin })
+      .from(users)
+      .where(and(sql`${users.expiresAt} IS NOT NULL`, sql`${users.expiresAt} <= ${nowIso}`))
+      .limit(limit);
+    return rows;
+  }
+
+  async deleteUserCascade(tenantId: string, userId: string): Promise<void> {
+    for (const { table, column } of EXPIRED_USER_TABLES) {
+      await this.db
+        .delete(table)
+        .where(and(eq(column, userId), eq(table.tenantId, tenantId)));
+    }
+    await this.db
+      .delete(users)
+      .where(and(eq(users.tenantId, tenantId), eq(users.id, userId)));
+  }
+}
+
 export const createRuntimeRepositories = async (config: RuntimeConfig) => {
   const db = drizzle(config.db, {
     schema: {
@@ -1953,6 +2069,7 @@ export const createRuntimeRepositories = async (config: RuntimeConfig) => {
       loginChallenges,
       oidcClients,
       refreshTokens,
+      remoteGrants,
       signingKeys,
       tenantAuthMethodPolicies,
       tenantIssuers,
@@ -1999,6 +2116,8 @@ export const createRuntimeRepositories = async (config: RuntimeConfig) => {
       config.registrationTokensKv
     ),
     refreshTokenRepository: new D1RefreshTokenRepository(db),
+    remoteGrantRepository: new D1RemoteGrantRepository(db),
+    expiredUserPurger: new D1ExpiredUserPurger(db),
     tenantRepository,
     totpRepository: new D1TotpRepository(db),
     mfaPasskeyChallengeRepository: new D1MfaPasskeyChallengeRepository(db),

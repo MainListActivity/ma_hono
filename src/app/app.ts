@@ -98,6 +98,7 @@ import {
 } from "../domain/tokens/token-service";
 import type { ContentReaderIssuancePolicy } from "../domain/tokens/content-reader-policy";
 import type { RefreshTokenRepository } from "../domain/tokens/refresh-token-repository";
+import type { RemoteGrantRepository } from "../domain/tokens/remote-grant-repository";
 import type { AccessTokenRevocationRepository } from "../domain/tokens/access-token-revocation-repository";
 import { activateUser } from "../domain/users/activate-user";
 import { hashPassword } from "../domain/users/passwords";
@@ -271,6 +272,10 @@ class EmptyConsentChallengeRepository implements ConsentChallengeRepository {
     return null;
   }
 
+  async findAnyByTokenHash(): Promise<null> {
+    return null;
+  }
+
   async consumeById(): Promise<false> {
     return false;
   }
@@ -282,6 +287,10 @@ class EmptyRefreshTokenRepository implements RefreshTokenRepository {
   }
 
   async findActiveByTokenHash(): Promise<null> {
+    return null;
+  }
+
+  async findAnyByTokenHash(): Promise<null> {
     return null;
   }
 
@@ -468,6 +477,7 @@ export interface AppOptions {
   registrationAccessTokenRepository?: RegistrationAccessTokenRepository;
   accessTokenRevocationRepository?: AccessTokenRevocationRepository;
   refreshTokenRepository?: RefreshTokenRepository;
+  remoteGrantRepository?: RemoteGrantRepository;
   signer?: SigningKeySigner;
   tenantRepository?: TenantRepository;
   userRepository?: UserRepository;
@@ -521,6 +531,7 @@ export const createApp = (options: AppOptions) => {
     options.registrationAccessTokenRepository ?? new EmptyRegistrationAccessTokenRepository();
   const refreshTokenRepository =
     options.refreshTokenRepository ?? new EmptyRefreshTokenRepository();
+  const remoteGrantRepository = options.remoteGrantRepository;
   const accessTokenRevocationRepository =
     options.accessTokenRevocationRepository ?? new EmptyAccessTokenRevocationRepository();
   const oidcHost = options.oidcHost;
@@ -2827,9 +2838,12 @@ export const createApp = (options: AppOptions) => {
       clientRepository,
       issuerContext,
       refreshTokenRepository,
+      remoteGrantRepository,
       request: {
         authorizationHeader: context.req.header("authorization"),
         grantType: String(formData.get("grant_type") ?? ""),
+        subjectToken: formData.get("subject_token")?.toString() ?? null,
+        subjectTokenType: formData.get("subject_token_type")?.toString() ?? null,
         code: String(formData.get("code") ?? ""),
         refreshToken: formData.get("refresh_token")?.toString() ?? null,
         redirectUri: String(formData.get("redirect_uri") ?? ""),
@@ -2848,11 +2862,16 @@ export const createApp = (options: AppOptions) => {
         actorType: "oidc_client",
         actorId: result.clientId,
         tenantId: issuerContext.tenant.id,
-        eventType: "oidc.token.exchange.failed",
+        eventType: result.remoteGrantRevoked === true
+          ? "oidc.remote_grant.revoked_on_reuse"
+          : result.remoteGrantId !== undefined
+            ? "oidc.remote_grant.redeem_failed"
+            : "oidc.token.exchange.failed",
         targetType: "oidc_client",
         targetId: result.clientId,
         payload: {
-          reason: result.error
+          reason: result.error,
+          ...(result.remoteGrantId === undefined ? {} : { grant_id: result.remoteGrantId })
         }
       });
 
@@ -3194,6 +3213,43 @@ export const createApp = (options: AppOptions) => {
   app.get("/consent/:tenant", handleConsentGet);
   app.post("/consent", handleConsentPost);
   app.post("/consent/:tenant", handleConsentPost);
+  const REMOTE_USAGE_TEXT = `卯豆远程兑换授权（remote grant）使用说明
+
+兑换码以 URL fragment 形式发放：https://<issuer>/remote#code=<CODE>&client_id=<CLIENT_ID>
+（fragment 不进请求日志；下面 curl 中自行取出 code 与 client_id 参数。）
+
+1) 用兑换码换 token（token-exchange，公开 client，无需 secret）：
+
+   curl -X POST https://<issuer>/token \
+     -H 'content-type: application/x-www-form-urlencoded' \
+     -d 'grant_type=urn:ietf:params:oauth:grant-type:token-exchange' \
+     -d 'subject_token_type=urn:ma-hono:params:oauth:token-type:remote-grant-code' \
+     -d 'subject_token=<CODE>' \
+     -d 'client_id=<CLIENT_ID>' \
+     -d 'resource=<RESOURCE>'
+
+   返回 access_token（Bearer，≤1h）与 refresh_token；resource 缺省取授权的第一个。
+
+2) 续期（在 grant 有效期内、绝对期不超过授权到期）：
+
+   curl -X POST https://<issuer>/token \
+     -H 'content-type: application/x-www-form-urlencoded' \
+     -d 'grant_type=refresh_token' \
+     -d 'refresh_token=<REFRESH_TOKEN>' \
+     -d 'client_id=<CLIENT_ID>' \
+     -d 'resource=<RESOURCE>'
+
+   refresh token 单次轮换：旧票再次使用会撤销整个授权。
+`;
+
+  const handleRemoteInfo = (context: Context) => {
+    context.header("Cache-Control", "no-store");
+    context.header("Pragma", "no-cache");
+    return context.text(REMOTE_USAGE_TEXT, 200, { "content-type": "text/plain; charset=utf-8" });
+  };
+
+  app.get("/remote", handleRemoteInfo);
+  app.get("/t/:tenant/remote", handleRemoteInfo);
   app.post("/token", handleToken);
   app.post("/t/:tenant/token", handleToken);
   app.post("/revoke", handleRevoke);

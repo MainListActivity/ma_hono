@@ -22,12 +22,14 @@ import type { ResolvedIssuerContext } from "../tenants/types";
 import type { UserRepository } from "../users/repository";
 import type { User } from "../users/types";
 import { sha256Base64Url } from "../../lib/hash";
+import { isUserExpired } from "../users/expired-user-purge";
 import { buildAccessTokenClaims, buildIdTokenClaims } from "./claims";
 import type { OidcTokenErrorResponse, OidcTokenSuccessResponse } from "../oidc/token-response";
 import type {
   RefreshTokenRecord,
   RefreshTokenRepository
 } from "./refresh-token-repository";
+import type { RemoteGrantRepository } from "./remote-grant-repository";
 import type { AccessTokenRevocationRepository } from "./access-token-revocation-repository";
 import {
   computeContentReaderTtlSeconds,
@@ -141,6 +143,8 @@ export interface TokenExchangeRequest {
   grantType: string;
   refreshToken: string | null;
   redirectUri: string;
+  subjectToken?: string | null;
+  subjectTokenType?: string | null;
   resource?: string | null;
   requestedClientId: string | null;
   requestedClientSecret: string | null;
@@ -151,15 +155,24 @@ type TokenExchangeErrorResult = {
   clientId: string | null;
   error: TokenErrorCode;
   status: 400 | 401;
+  /** Remote-grant attempt metadata for app-level audit (never the code itself). */
+  remoteGrantId?: string | null;
+  remoteGrantRevoked?: boolean;
 };
 
 type TokenExchangeSuccessResult = {
   kind: "success";
   clientId: string;
+  remoteGrantId?: string;
   response: OidcTokenSuccessResponse;
   tenantId: string;
   userId: string;
 };
+
+export const REMOTE_GRANT_TOKEN_EXCHANGE_GRANT_TYPE =
+  "urn:ietf:params:oauth:grant-type:token-exchange";
+export const REMOTE_GRANT_CODE_TOKEN_TYPE =
+  "urn:ma-hono:params:oauth:token-type:remote-grant-code";
 
 export type TokenExchangeResult = TokenExchangeErrorResult | TokenExchangeSuccessResult;
 
@@ -718,12 +731,16 @@ const issueRefreshToken = async ({
   client,
   issuer,
   now,
+  refreshAbsoluteExpiresAt,
   refreshTokenRepository,
+  remoteGrantId,
   resource,
   scope,
   tenantId,
   userId
 }: {
+  refreshAbsoluteExpiresAt?: string;
+  remoteGrantId?: string | null;
   authMethod: ClientAuthMethodName | null;
   client: Client;
   issuer: string;
@@ -745,9 +762,10 @@ const issueRefreshToken = async ({
     resource,
     authMethod,
     tokenHash: await sha256Base64Url(refreshToken),
-    absoluteExpiresAt: new Date(
-      now.getTime() + REFRESH_TOKEN_ABSOLUTE_TTL_SECONDS * 1000
-    ).toISOString(),
+    absoluteExpiresAt:
+    refreshAbsoluteExpiresAt
+    ?? new Date(now.getTime() + REFRESH_TOKEN_ABSOLUTE_TTL_SECONDS * 1000).toISOString(),
+  remoteGrantId: remoteGrantId ?? null,
     consumedAt: null,
     parentTokenId: null,
     replacedByTokenId: null,
@@ -776,9 +794,13 @@ const issueTokenSet = async ({
   authMethod,
   nonce,
   now,
+  remoteGrant,
+  ttlSecondsOverride,
   userRepository,
   claimHookFetcher
 }: {
+  remoteGrant?: { id: string; expiresAt: string };
+  ttlSecondsOverride?: number;
   accessTokenClaimsRepository: AccessTokenClaimsRepository;
   client: Client;
   clientAuthMethodPolicyRepository: ClientAuthMethodPolicyRepository;
@@ -808,7 +830,7 @@ const issueTokenSet = async ({
     return null;
   }
 
-  const ttlSeconds = await resolveTokenTtlSeconds({
+  const ttlSeconds = ttlSecondsOverride ?? await resolveTokenTtlSeconds({
     authMethod,
     client,
     clientAuthMethodPolicyRepository
@@ -852,6 +874,9 @@ const issueTokenSet = async ({
       client,
       issuer,
       now,
+      ...(remoteGrant === undefined
+        ? {}
+        : { refreshAbsoluteExpiresAt: remoteGrant.expiresAt, remoteGrantId: remoteGrant.id }),
       refreshTokenRepository,
       resource,
       scope,
@@ -1019,7 +1044,7 @@ export const issueScopeToken = async ({
 
   const user = await userRepository.findUserById(issuerContext.tenant.id, userId);
 
-  if (user === null || user.status !== "active") {
+  if (user === null || user.status !== "active" || isUserExpired(user, new Date())) {
     return {
       kind: "error",
       clientId,
@@ -1279,6 +1304,7 @@ export const exchangeAuthorizationCode = async ({
   clientRepository,
   issuerContext,
   refreshTokenRepository,
+  remoteGrantRepository,
   request,
   signer,
   userRepository,
@@ -1290,6 +1316,7 @@ export const exchangeAuthorizationCode = async ({
   clientRepository: ClientRepository;
   issuerContext: ResolvedIssuerContext;
   refreshTokenRepository: RefreshTokenRepository;
+  remoteGrantRepository?: RemoteGrantRepository;
   request: TokenExchangeRequest;
   signer: SigningKeySigner | undefined;
   userRepository: UserRepository;
@@ -1332,9 +1359,36 @@ export const exchangeAuthorizationCode = async ({
     }
 
     const now = new Date();
+    const refreshTokenHash = await sha256Base64Url(request.refreshToken);
     const refreshTokenRecord = await refreshTokenRepository.findActiveByTokenHash(
-      await sha256Base64Url(request.refreshToken)
+      refreshTokenHash
     );
+
+    // Remote-grant 族重放检测：已消费的 refresh token 再次出现即撤销整个 grant。
+    if (refreshTokenRecord === null && remoteGrantRepository !== undefined) {
+      const consumedRecord = await refreshTokenRepository.findAnyByTokenHash(refreshTokenHash);
+      if (
+        consumedRecord !== null &&
+        consumedRecord.remoteGrantId !== undefined &&
+        consumedRecord.remoteGrantId !== null &&
+        consumedRecord.consumedAt !== null
+      ) {
+        const revokedNow = new Date().toISOString();
+        await remoteGrantRepository.revoke(
+          consumedRecord.tenantId,
+          consumedRecord.remoteGrantId,
+          revokedNow
+        );
+        return {
+          kind: "error",
+          clientId: authenticatedClient.client.clientId,
+          error: "invalid_grant",
+          status: 400,
+          remoteGrantId: consumedRecord.remoteGrantId,
+          remoteGrantRevoked: true
+        };
+      }
+    }
 
     if (
       refreshTokenRecord === null ||
@@ -1352,6 +1406,55 @@ export const exchangeAuthorizationCode = async ({
     }
 
     const refreshResource = refreshTokenRecord?.resource ?? null;
+
+    // 所有 refresh：用户必须存在、active 且未到期。
+    const refreshUser = refreshTokenRecord === null
+      ? null
+      : await userRepository.findUserById(
+          refreshTokenRecord.tenantId,
+          refreshTokenRecord.userId
+        );
+    if (
+      refreshUser !== null &&
+      (refreshUser.status !== "active" || isUserExpired(refreshUser, now))
+    ) {
+      return {
+        kind: "error",
+        clientId: authenticatedClient.client.clientId,
+        error: "invalid_grant",
+        status: 400
+      };
+    }
+
+    // remote grant 族：grant 必须 active 且未过期；resource 必须在允许列表内。
+    let remoteGrantForRefresh: { id: string; expiresAt: string } | undefined;
+    if (
+      refreshTokenRecord !== null &&
+      refreshTokenRecord.remoteGrantId !== undefined &&
+      refreshTokenRecord.remoteGrantId !== null &&
+      remoteGrantRepository !== undefined
+    ) {
+      const grant = await remoteGrantRepository.findById(
+        refreshTokenRecord.tenantId,
+        refreshTokenRecord.remoteGrantId
+      );
+      const requestedResource = request.resource ?? refreshResource;
+      if (
+        grant === null ||
+        grant.status !== "active" ||
+        Date.parse(grant.expiresAt) <= now.getTime() ||
+        (requestedResource !== null && !grant.resources.includes(requestedResource))
+      ) {
+        return {
+          kind: "error",
+          clientId: authenticatedClient.client.clientId,
+          error: "invalid_grant",
+          status: 400,
+          remoteGrantId: refreshTokenRecord.remoteGrantId
+        };
+      }
+      remoteGrantForRefresh = { id: grant.id, expiresAt: grant.expiresAt };
+    }
     if (
       (request.resource !== undefined &&
         request.resource !== null &&
@@ -1373,12 +1476,13 @@ export const exchangeAuthorizationCode = async ({
         clientAuthMethodPolicyRepository,
         issuer: issuerContext.issuer,
         refreshTokenRepository,
-        resource: refreshResource,
+        resource: request.resource ?? refreshResource,
         scope: refreshTokenRecord.scope,
         signer,
         tenantId: refreshTokenRecord.tenantId,
         userId: refreshTokenRecord.userId,
         authMethod: refreshTokenRecord.authMethod,
+        ...(remoteGrantForRefresh === undefined ? {} : { remoteGrant: remoteGrantForRefresh }),
         nonce: null,
         now,
         userRepository,
@@ -1429,6 +1533,22 @@ export const exchangeAuthorizationCode = async ({
         status: 400
       };
     }
+  }
+
+  if (request.grantType === REMOTE_GRANT_TOKEN_EXCHANGE_GRANT_TYPE) {
+    return await redeemRemoteGrant({
+      accessTokenClaimsRepository,
+      client: authenticatedClient.client,
+      clientAuthMethodPolicyRepository,
+      issuerContext,
+      now: new Date(),
+      remoteGrantRepository,
+      refreshTokenRepository,
+      request,
+      signer,
+      userRepository,
+      claimHookFetcher
+    });
   }
 
   if (request.grantType !== "authorization_code") {
@@ -1679,5 +1799,125 @@ export const introspectAccessToken = async ({
   return {
     kind: "success",
     active: !(await accessTokenRevocationRepository.isRevoked(await sha256Base64Url(token)))
+  };
+};
+
+const redeemRemoteGrant = async ({
+  accessTokenClaimsRepository,
+  client,
+  clientAuthMethodPolicyRepository,
+  issuerContext,
+  now,
+  remoteGrantRepository,
+  refreshTokenRepository,
+  request,
+  signer,
+  userRepository,
+  claimHookFetcher
+}: {
+  accessTokenClaimsRepository: AccessTokenClaimsRepository;
+  client: Client;
+  refreshTokenRepository: RefreshTokenRepository;
+  clientAuthMethodPolicyRepository: ClientAuthMethodPolicyRepository;
+  issuerContext: ResolvedIssuerContext;
+  now: Date;
+  remoteGrantRepository: RemoteGrantRepository | undefined;
+  request: TokenExchangeRequest;
+  signer: SigningKeySigner | undefined;
+  userRepository: UserRepository;
+  claimHookFetcher?: ClaimHookFetcher;
+}): Promise<TokenExchangeResult> => {
+  const invalid = (grantId?: string | null): TokenExchangeResult => ({
+    kind: "error",
+    clientId: client.clientId,
+    error: "invalid_grant",
+    status: 400,
+    ...(grantId === undefined ? {} : { remoteGrantId: grantId })
+  });
+
+  if (
+    remoteGrantRepository === undefined ||
+    signer === undefined ||
+    request.subjectTokenType !== REMOTE_GRANT_CODE_TOKEN_TYPE ||
+    !client.grantTypes.includes(REMOTE_GRANT_TOKEN_EXCHANGE_GRANT_TYPE)
+  ) {
+    return invalid();
+  }
+
+  const nowIso = now.toISOString();
+  const grant = await remoteGrantRepository.redeemByCodeHash(
+    await sha256Base64Url((request.subjectToken ?? "").trim()),
+    nowIso
+  );
+
+  if (
+    grant === null ||
+    grant.tenantId !== issuerContext.tenant.id ||
+    grant.clientId !== client.clientId ||
+    (request.requestedClientId !== null && request.requestedClientId !== grant.clientId)
+  ) {
+    return invalid(grant?.id ?? null);
+  }
+
+  const user = await userRepository.findUserById(grant.tenantId, grant.userId);
+  if (user === null || user.status !== "active" || isUserExpired(user, now)) {
+    return invalid(grant.id);
+  }
+
+  const resource = request.resource ?? grant.resources[0] ?? null;
+  if (resource === null || !grant.resources.includes(resource)) {
+    return invalid(grant.id);
+  }
+
+  const grantRemainingSeconds = Math.floor(
+    (Date.parse(grant.expiresAt) - now.getTime()) / 1000
+  );
+  if (grantRemainingSeconds <= 0) {
+    return invalid(grant.id);
+  }
+  const ttlSeconds = Math.min(DEFAULT_TOKEN_TTL_SECONDS, grantRemainingSeconds);
+
+  const tokenSet = await issueTokenSet({
+    accessTokenClaimsRepository,
+    client,
+    clientAuthMethodPolicyRepository,
+    issuer: issuerContext.issuer,
+    refreshTokenRepository,
+    resource,
+    scope: "remote",
+    signer,
+    tenantId: grant.tenantId,
+    userId: user.id,
+    authMethod: null,
+    nonce: null,
+    now,
+    remoteGrant: { id: grant.id, expiresAt: grant.expiresAt },
+    ttlSecondsOverride: ttlSeconds,
+    userRepository,
+    claimHookFetcher
+  });
+
+  if (tokenSet === null) {
+    return {
+      kind: "error",
+      clientId: client.clientId,
+      error: "server_error",
+      status: 400,
+      remoteGrantId: grant.id
+    };
+  }
+
+  const { id_token: _idToken, ...response } = tokenSet;
+
+  return {
+    kind: "success",
+    clientId: client.clientId,
+    remoteGrantId: grant.id,
+    tenantId: grant.tenantId,
+    userId: user.id,
+    response: {
+      ...response,
+      issued_token_type: "urn:ietf:params:oauth:token-type:access_token"
+    }
   };
 };

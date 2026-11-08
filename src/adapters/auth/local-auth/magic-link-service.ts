@@ -2,6 +2,7 @@ import type { AuthenticationLoginChallengeRepository } from "../../../domain/aut
 import type { MagicLinkRepository } from "../../../domain/authentication/magic-link-repository";
 import type { LoginChallenge } from "../../../domain/authorization/types";
 import type { User } from "../../../domain/users/types";
+import { isUserExpired } from "../../../domain/users/expired-user-purge";
 import type { UserRepository } from "../../../domain/users/repository";
 import { sha256Base64Url } from "../../../lib/hash";
 import { isLoginChallengeActive } from "../../../domain/authentication/login-challenge";
@@ -69,7 +70,7 @@ export const requestMagicLink = async ({
 
   const user = await userRepository.findUserByEmail(tenantId, email.trim());
 
-  if (user === null || user.status !== "active") {
+  if (user === null || user.status !== "active" || isUserExpired(user, now)) {
     return { kind: "rejected", reason: "user_not_found" };
   }
 
@@ -137,7 +138,7 @@ export const consumeMagicLink = async ({
 
   const user = await userRepository.findUserById(magicLinkRecord.tenantId, magicLinkRecord.userId);
 
-  if (user === null || user.status !== "active") {
+  if (user === null || user.status !== "active" || isUserExpired(user, now)) {
     return { kind: "rejected", reason: "invalid_or_expired_token" };
   }
 
