@@ -103,6 +103,8 @@ type ScopeTokenErrorResult = {
 type ScopeTokenSuccessResult = {
   kind: "success";
   clientId: string;
+  /** subject token 里的 client_id（可能与签发 client 不同，例如 remote client）。 */
+  subjectClientId?: string;
   mode: "workspace" | "content_reader";
   response: ScopeTokenSuccessResponse;
   tenantId: string;
@@ -1007,9 +1009,24 @@ export const issueScopeToken = async ({
   const expectedAudience =
     authenticatedClient.client.accessTokenAudience ?? authenticatedClient.client.clientId;
 
+  // subject token 的 client_id 必须等于已认证 client，或者是同一租户下
+  // 以同一 audience 签发 token 的另一个可用 client（例如 remote client 签的
+  // 产品 audience token 由产品 client 来换 scope）。aud 已先校验，签名仍用
+  // 已认证 client 的身份。
+  let subjectClientMatches = clientId === authenticatedClient.client.clientId;
+  if (!subjectClientMatches && clientId !== null) {
+    const subjectClient = await clientRepository.findByClientId(clientId);
+    if (
+      subjectClient !== null &&
+      subjectClient.tenantId === issuerContext.tenant.id &&
+      (subjectClient.accessTokenAudience ?? subjectClient.clientId) === expectedAudience
+    ) {
+      subjectClientMatches = true;
+    }
+  }
   if (
     clientId === null ||
-    clientId !== authenticatedClient.client.clientId ||
+    !subjectClientMatches ||
     userId === null ||
     scope === null ||
     expiresAt === null ||
@@ -1132,6 +1149,7 @@ export const issueScopeToken = async ({
       return {
         kind: "success",
         clientId,
+        subjectClientId: clientId,
         mode: "workspace",
         tenantId: issuerContext.tenant.id,
         userId,
@@ -1268,6 +1286,7 @@ export const issueScopeToken = async ({
     return {
       kind: "success",
       clientId,
+      subjectClientId: clientId,
       mode: "content_reader",
       tenantId: issuerContext.tenant.id,
       userId,

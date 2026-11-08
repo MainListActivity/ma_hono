@@ -1,4 +1,4 @@
-import { exportJWK, generateKeyPair, importJWK, jwtVerify, type JWK } from "jose";
+import { exportJWK, generateKeyPair, importJWK, jwtVerify, SignJWT, type JWK } from "jose";
 import { describe, expect, it } from "vitest";
 
 import { MemoryAccessTokenClaimsRepository } from "../../src/adapters/db/memory/memory-access-token-claims-repository";
@@ -552,7 +552,7 @@ describe("Scope endpoint", () => {
     expect(await response.json()).toEqual({ error: "invalid_request" });
   });
 
-  it("rejects subject tokens issued to a different client", async () => {
+  it("accepts subject tokens issued to a different same-audience client", async () => {
     const tokenClient = createClient({ clientId: "scope_token_client" });
     const callerClient = createClient({ clientId: "scope_caller_client" });
     const { app, authorizationCodeRepository } = await createScopeTestApp({
@@ -580,8 +580,7 @@ describe("Scope endpoint", () => {
       }
     });
 
-    expect(response.status).toBe(400);
-    expect(await response.json()).toEqual({ error: "invalid_grant" });
+    expect(response.status).toBe(200);
   });
 
   it("rejects subject tokens from another issuer context", async () => {
@@ -631,6 +630,94 @@ describe("Scope endpoint", () => {
       }
     });
 
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: "invalid_grant" });
+  });
+});
+
+
+describe("scope switch with a different subject client", () => {
+  const mintSubjectToken = async (
+    material: Awaited<ReturnType<typeof createSigner>>["material"],
+    overrides: Record<string, unknown> = {},
+  ) => {
+    const key = await importJWK(material.privateJwk as JWK, "RS256");
+    return await new SignJWT({
+      ac: "madocs",
+      client_id: "remote_client",
+      db: "_system",
+      email: baseUser.email,
+      ns: "main",
+      scope: "openid profile",
+      ...overrides,
+    })
+      .setProtectedHeader({ alg: "RS256", kid: material.privateJwk.kid as string })
+      .setIssuer("https://idp.example.test/t/acme")
+      .setAudience("https://auth.example.test")
+      .setSubject(baseUser.id)
+      .setIssuedAt()
+      .setExpirationTime("1h")
+      .sign(key);
+  };
+
+  it("same tenant + same audience different client succeeds, minted token keeps the authenticated client id", async () => {
+    const scopeClient = createClient();
+    const remoteClient = createClient({ clientId: "remote_client" });
+    const { app, material } = await createScopeTestApp({ clients: [scopeClient, remoteClient] });
+    const subjectToken = await mintSubjectToken(material);
+    const response = await callScopeEndpoint({
+      app,
+      subjectToken,
+      claims: { db: "ws_alpha", ac: "admin", email: baseUser.email },
+    });
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { access_token: string };
+    const verificationKey = await importJWK(material.key.publicJwk as JWK, "RS256");
+    const { payload } = await jwtVerify(body.access_token, verificationKey, {
+      issuer: "https://idp.example.test/t/acme",
+    });
+    // 签出的 token 仍属已认证 client，不归 remote client
+    expect(payload.client_id).toBe(scopeClient.clientId);
+    expect(payload.client_id).not.toBe(remoteClient.clientId);
+  });
+
+  it("subject client with a different accessTokenAudience is rejected", async () => {
+    const scopeClient = createClient();
+    const foreignAudienceClient = { ...createClient({ clientId: "foreign_client" }), accessTokenAudience: "https://other.example.test" };
+    const { app, material } = await createScopeTestApp({ clients: [scopeClient, foreignAudienceClient] });
+    const subjectToken = await mintSubjectToken(material, { client_id: "foreign_client" });
+    const response = await callScopeEndpoint({
+      app,
+      subjectToken,
+      claims: { db: "ws_alpha", ac: "admin", email: baseUser.email },
+    });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: "invalid_grant" });
+  });
+
+  it("subject client not registered is rejected", async () => {
+    const scopeClient = createClient();
+    const { app, material } = await createScopeTestApp({ clients: [scopeClient] });
+    const subjectToken = await mintSubjectToken(material, { client_id: "ghost_client" });
+    const response = await callScopeEndpoint({
+      app,
+      subjectToken,
+      claims: { db: "ws_alpha", ac: "admin", email: baseUser.email },
+    });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: "invalid_grant" });
+  });
+
+  it("subject client from another tenant is rejected", async () => {
+    const scopeClient = createClient();
+    const otherTenantClient = createClient({ clientId: "beta_client", tenantId: "tenant_beta" });
+    const { app, material } = await createScopeTestApp({ clients: [scopeClient, otherTenantClient] });
+    const subjectToken = await mintSubjectToken(material, { client_id: "beta_client" });
+    const response = await callScopeEndpoint({
+      app,
+      subjectToken,
+      claims: { db: "ws_alpha", ac: "admin", email: baseUser.email },
+    });
     expect(response.status).toBe(400);
     expect(await response.json()).toEqual({ error: "invalid_grant" });
   });

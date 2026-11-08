@@ -538,7 +538,7 @@ describe("content_reader scope issuance", () => {
     expect(await response.json()).toEqual({ error: "invalid_scope" });
   });
 
-  it("rejects subject tokens bound to a different client", async () => {
+  it("accepts subject tokens bound to a different same-audience client", async () => {
     const tokenClient = createClient({ clientId: "token_client" });
     const callerClient = createClient({ clientId: "scope_client" });
     const { app, authorizationCodeRepository } = await createContentReaderTestApp({
@@ -564,8 +564,7 @@ describe("content_reader scope issuance", () => {
       claims: contentReaderClaims()
     });
 
-    expect(response.status).toBe(400);
-    expect(await response.json()).toEqual({ error: "invalid_grant" });
+    expect(response.status).toBe(200);
   });
 
   it("rejects subject tokens with the wrong audience", async () => {
