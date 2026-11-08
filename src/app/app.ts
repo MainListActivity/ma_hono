@@ -3074,6 +3074,7 @@ export const createApp = (options: AppOptions) => {
           reason: result.error,
           mode: result.mode,
           user_id: result.userId,
+          subject_client_id: null,
           ...(result.mode === "content_reader"
             ? {
                 workspace_id: result.workspaceId ?? null,
@@ -3107,6 +3108,7 @@ export const createApp = (options: AppOptions) => {
       targetId: result.clientId,
       payload: {
         mode: result.mode,
+        subject_client_id: result.subjectClientId ?? null,
         claim_names:
           bodyRecord.claims !== null &&
           typeof bodyRecord.claims === "object" &&
