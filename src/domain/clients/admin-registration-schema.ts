@@ -4,6 +4,7 @@ import {
   ALLOWED_USER_FIELDS,
   RESERVED_CLAIM_NAMES
 } from "./access-token-claims-types";
+import { isValidJsonClaimValue } from "./fixed-claim-value";
 
 const REGEX_PREFIX = "regex:";
 
@@ -119,6 +120,7 @@ const customClaimSchema = z
     claim_name: z.string().min(1),
     source_type: z.enum(["fixed", "user_field", "hook"]),
     fixed_value: z.string().min(1).optional(),
+    value_type: z.enum(["string", "json"]).optional(),
     user_field: z.enum(ALLOWED_USER_FIELDS as [string, ...string[]]).optional(),
     hook_field: z.string().min(1).optional()
   })
@@ -137,6 +139,22 @@ const customClaimSchema = z
         message: "fixed claims require a non-empty fixed_value",
         path: ["fixed_value"]
       });
+    }
+
+    if (value.value_type === "json") {
+      if (value.source_type !== "fixed") {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "value_type json is only supported for fixed claims",
+          path: ["value_type"]
+        });
+      } else if (value.fixed_value !== undefined && !isValidJsonClaimValue(value.fixed_value)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "fixed_value must be a JSON value other than null when value_type is json",
+          path: ["fixed_value"]
+        });
+      }
     }
 
     if (value.source_type === "user_field" && value.user_field === undefined) {

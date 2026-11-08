@@ -70,6 +70,7 @@ import {
 import type { AccessTokenCustomClaim, AccessTokenClaimUserField } from "../domain/clients/access-token-claims-types";
 import type { ClaimHookFetcher } from "../domain/clients/claim-hook-client";
 import { adminClientUpdateSchema } from "../domain/clients/admin-registration-schema";
+import { resolveFixedClaimValue } from "../domain/clients/fixed-claim-value";
 import {
   DEFAULT_TOKEN_TTL_SECONDS,
   type Client,
@@ -4467,6 +4468,7 @@ export const createApp = (options: AppOptions) => {
         claim_name: c.claimName,
         source_type: c.sourceType,
         fixed_value: c.fixedValue,
+        value_type: c.valueType ?? "string",
         user_field: c.userField,
         hook_field: c.hookField
       })),
@@ -4874,6 +4876,7 @@ export const createApp = (options: AppOptions) => {
               claimName: c.claim_name,
               sourceType: c.source_type,
               fixedValue: c.source_type === "fixed" ? (c.fixed_value ?? null) : null,
+              valueType: c.value_type ?? "string",
               userField:
                 c.source_type === "user_field"
                   ? ((c.user_field ?? null) as AccessTokenClaimUserField | null)
@@ -5123,7 +5126,7 @@ export const createApp = (options: AppOptions) => {
         )
       )
         .filter((claim) => claim.sourceType === "fixed" && claim.fixedValue !== null)
-        .map((claim) => [claim.claimName, claim.fixedValue])
+        .map((claim) => [claim.claimName, resolveFixedClaimValue(claim)])
     );
     const surrealAccessToken = await issueClientAccessToken({
       client: dbClient,

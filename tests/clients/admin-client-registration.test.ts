@@ -167,6 +167,56 @@ describe("Admin Client Registration Schema", () => {
     expect(result.success).toBe(false);
   });
 
+  it("accepts json fixed claims whose value is valid JSON", () => {
+    const result = adminClientRegistrationSchema.safeParse({
+      ...baseSpa,
+      access_token_custom_claims: [
+        { claim_name: "rl", source_type: "fixed", fixed_value: '["Editor"]', value_type: "json" }
+      ]
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects json fixed claims whose value is not valid JSON", () => {
+    const result = adminClientRegistrationSchema.safeParse({
+      ...baseSpa,
+      access_token_custom_claims: [
+        { claim_name: "rl", source_type: "fixed", fixed_value: "[Editor", value_type: "json" }
+      ]
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects json fixed claims whose value is null", () => {
+    const result = adminClientRegistrationSchema.safeParse({
+      ...baseSpa,
+      access_token_custom_claims: [
+        { claim_name: "rl", source_type: "fixed", fixed_value: "null", value_type: "json" }
+      ]
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects value_type json on non-fixed claims", () => {
+    const result = adminClientRegistrationSchema.safeParse({
+      ...baseSpa,
+      access_token_custom_claims: [
+        { claim_name: "uid", source_type: "user_field", user_field: "id", value_type: "json" }
+      ]
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects unknown value_type", () => {
+    const result = adminClientRegistrationSchema.safeParse({
+      ...baseSpa,
+      access_token_custom_claims: [
+        { claim_name: "ns", source_type: "fixed", fixed_value: "1", value_type: "number" }
+      ]
+    });
+    expect(result.success).toBe(false);
+  });
+
   it("accepts hook claims with a hook_field", () => {
     const result = adminClientRegistrationSchema.safeParse({
       ...baseSpa,

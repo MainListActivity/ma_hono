@@ -5,6 +5,7 @@ import {
   type ClaimHookConfig,
   type ClaimHookFetcher
 } from "./claim-hook-client";
+import { resolveFixedClaimValue } from "./fixed-claim-value";
 
 const customClaimNameAliases = new Map([
   ["https://surrealdb.com/db", "db"],
@@ -73,7 +74,7 @@ export const resolveCustomClaims = async (
 
     if (claim.sourceType === "fixed") {
       if (claim.fixedValue !== null) {
-        result[claimName] = claim.fixedValue;
+        result[claimName] = resolveFixedClaimValue(claim);
       }
       continue;
     }

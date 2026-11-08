@@ -196,6 +196,7 @@ export const registerClientFromAdmin = async ({
       sourceType: claim.source_type,
       fixedValue:
         claim.source_type === "fixed" ? (claim.fixed_value ?? null) : null,
+      valueType: claim.value_type ?? "string",
       userField:
         claim.source_type === "user_field"
           ? ((claim.user_field ?? null) as AccessTokenCustomClaim["userField"])
