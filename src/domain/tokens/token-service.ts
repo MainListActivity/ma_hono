@@ -1065,7 +1065,13 @@ export const issueScopeToken = async ({
 
   const user = await userRepository.findUserById(issuerContext.tenant.id, userId);
 
-  if (user === null || user.status !== "active" || isUserExpired(user, new Date())) {
+  // agent 账号只经令牌换发获得令牌，不接受人类授权码。
+  if (
+    user === null ||
+    user.status !== "active" ||
+    user.kind === "agent" ||
+    isUserExpired(user, new Date())
+  ) {
     return {
       kind: "error",
       clientId,
@@ -1977,7 +1983,12 @@ const redeemRemoteGrant = async ({
   }
 
   const user = await userRepository.findUserById(grant.tenantId, grant.userId);
-  if (user === null || user.status !== "active" || isUserExpired(user, now)) {
+  if (
+    user === null ||
+    user.status !== "active" ||
+    user.kind === "agent" ||
+    isUserExpired(user, now)
+  ) {
     return invalid(grant.id);
   }
 

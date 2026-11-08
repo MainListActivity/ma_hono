@@ -1,6 +1,7 @@
 import type {
   ActivateUserByInvitationTokenInput,
   ActivateUserByInvitationTokenResult,
+  CreateAgentUserInput,
   CreateProvisionedUserWithInvitationInput,
   ReissueActivationInvitationInput,
   ReissueActivationInvitationResult,
@@ -143,10 +144,27 @@ export class MemoryUserRepository implements UserRepository {
     };
   }
 
+  async createAgentUser({ user }: CreateAgentUserInput): Promise<void> {
+    this.assertUserUnique(user);
+
+    this.users.push(user);
+  }
+
   async createProvisionedUserWithInvitation({
     invitation,
     user
   }: CreateProvisionedUserWithInvitationInput): Promise<void> {
+    this.assertUserUnique(user);
+
+    if (this.failProvisionCommit) {
+      throw new Error("simulated provision commit failure");
+    }
+
+    this.users.push(user);
+    this.invitations.push(invitation);
+  }
+
+  private assertUserUnique(user: User): void {
     if (this.users.some((storedUser) => storedUser.tenantId === user.tenantId && storedUser.email === user.email)) {
       throw new Error(`user email already exists for tenant: ${user.tenantId}`);
     }
@@ -159,13 +177,6 @@ export class MemoryUserRepository implements UserRepository {
     ) {
       throw new Error(`username already exists for tenant: ${user.tenantId}`);
     }
-
-    if (this.failProvisionCommit) {
-      throw new Error("simulated provision commit failure");
-    }
-
-    this.users.push(user);
-    this.invitations.push(invitation);
   }
 
   async findAuthMethodPolicyByTenantId(tenantId: string): Promise<TenantAuthMethodPolicy | null> {

@@ -72,7 +72,13 @@ export const startPasskeyEnrollment = async ({
 
   const user = await userRepository.findUserById(tenantId, userId);
 
-  if (user === null || user.status !== "active" || isUserExpired(user, now)) {
+  // agent 账号是机器身份，不登记 passkey。
+  if (
+    user === null ||
+    user.status !== "active" ||
+    user.kind === "agent" ||
+    isUserExpired(user, now)
+  ) {
     return { kind: "rejected", reason: "user_not_found" };
   }
 
@@ -265,7 +271,13 @@ export const finishPasskeyLogin = async ({
 
   const user = await userRepository.findUserById(credential.tenantId, credential.userId);
 
-  if (user === null || user.status !== "active" || isUserExpired(user, now)) {
+  // agent 账号是机器身份，永不作为人登录。
+  if (
+    user === null ||
+    user.status !== "active" ||
+    user.kind === "agent" ||
+    isUserExpired(user, now)
+  ) {
     return { kind: "rejected", reason: "invalid_credentials" };
   }
 

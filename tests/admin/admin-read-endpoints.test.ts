@@ -193,7 +193,8 @@ describe("GET /admin/tenants/:tenantId/users", () => {
           id: "user_1",
           email: "alice@acme.example",
           display_name: "Alice",
-          status: "provisioned"
+          status: "provisioned",
+          kind: "human"
         }
       ]
     });

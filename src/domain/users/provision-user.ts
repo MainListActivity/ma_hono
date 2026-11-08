@@ -48,6 +48,7 @@ export const provisionUser = async ({
     username: normalizeUsername(username),
     displayName: displayName.trim(),
     status: "provisioned",
+    kind: "human",
     createdAt,
     updatedAt: createdAt
   };
@@ -73,6 +74,44 @@ export const provisionUser = async ({
     invitationToken,
     user
   };
+};
+
+/**
+ * 开设 agent 账号：机器身份，没有密码与激活邀请，开户即 active。
+ * agent 不能作为人登录（密码、magic link、passkey 均拒绝），令牌只能经换发获得。
+ */
+export const provisionAgentUser = async ({
+  displayName,
+  email,
+  now = new Date(),
+  tenantId,
+  userRepository,
+  username
+}: {
+  displayName: string;
+  email: string;
+  now?: Date;
+  tenantId: string;
+  userRepository: UserRepository;
+  username?: string | null;
+}): Promise<{ user: User }> => {
+  const createdAt = now.toISOString();
+  const user: User = {
+    id: crypto.randomUUID(),
+    tenantId,
+    email: normalizeEmail(email),
+    emailVerified: false,
+    username: normalizeUsername(username),
+    displayName: displayName.trim(),
+    status: "active",
+    kind: "agent",
+    createdAt,
+    updatedAt: createdAt
+  };
+
+  await userRepository.createAgentUser({ user });
+
+  return { user };
 };
 
 export type ReissueUserActivationResult =

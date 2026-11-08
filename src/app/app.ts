@@ -104,9 +104,11 @@ import type { RefreshTokenRepository } from "../domain/tokens/refresh-token-repo
 import type { RemoteGrantRepository } from "../domain/tokens/remote-grant-repository";
 import type { AccessTokenRevocationRepository } from "../domain/tokens/access-token-revocation-repository";
 import { activateUser } from "../domain/users/activate-user";
+import { changeUserStatus } from "../domain/users/change-user-status";
 import { hashPassword } from "../domain/users/passwords";
-import { provisionUser, reissueUserActivation } from "../domain/users/provision-user";
+import { provisionAgentUser, provisionUser, reissueUserActivation } from "../domain/users/provision-user";
 import type { UserRepository } from "../domain/users/repository";
+import type { User, UserKind } from "../domain/users/types";
 
 class EmptyTenantRepository implements TenantRepository {
   async create(): Promise<void> {
@@ -397,6 +399,10 @@ class EmptyUserRepository implements UserRepository {
     };
   }
 
+  async createAgentUser(): Promise<void> {
+    return;
+  }
+
   async createProvisionedUserWithInvitation(): Promise<void> {
     return;
   }
@@ -561,9 +567,10 @@ export const createApp = (options: AppOptions) => {
     return { ok: true, session: resolved.auth.session };
   };
 
+  /** 服务主体须持有 scope 之一（列表表示任一即可）；人类管理员会话不受 scope 限制。 */
   const requireAdminScope = async (
     authorizationHeader: string | undefined,
-    scope: ServicePrincipalScope
+    scope: ServicePrincipalScope | readonly ServicePrincipalScope[]
   ): Promise<ScopedAdminOk | AdminAuthFailure> => {
     const resolved = await resolveAdminAuthorization({
       adminRepository,
@@ -572,13 +579,15 @@ export const createApp = (options: AppOptions) => {
     if (!resolved.ok) {
       return resolved;
     }
-    if (
-      resolved.auth.kind === "service_principal" &&
-      !resolved.auth.principal.scopes.includes(scope)
-    ) {
-      return { ok: false, status: 403, error: "forbidden" };
+    const requiredScopes = typeof scope === "string" ? [scope] : scope;
+    const { auth } = resolved;
+    if (auth.kind === "service_principal") {
+      const grantedScopes = auth.principal.scopes;
+      if (!requiredScopes.some((required) => grantedScopes.includes(required))) {
+        return { ok: false, status: 403, error: "forbidden" };
+      }
     }
-    return { ok: true, auth: resolved.auth };
+    return { ok: true, auth };
   };
 
 
@@ -4110,8 +4119,24 @@ export const createApp = (options: AppOptions) => {
     );
   });
 
+  /** 管理 API 返回的用户形状；kind 缺省视为 human（存量行）。 */
+  const userAdminWire = (user: User) => ({
+    id: user.id,
+    tenant_id: user.tenantId,
+    email: user.email,
+    username: user.username,
+    display_name: user.displayName,
+    status: user.status,
+    email_verified: user.emailVerified,
+    kind: user.kind ?? "human"
+  });
+
+  // user.provision 与 user.write 均可开户、重发激活（前者为旧有 scope，保持兼容）。
   app.post("/admin/tenants/:tenantId/users", async (context) => {
-    const scopeGate = await requireAdminScope(context.req.header("authorization"), "user.provision");
+    const scopeGate = await requireAdminScope(context.req.header("authorization"), [
+      "user.provision",
+      "user.write"
+    ]);
     if (!scopeGate.ok) {
       return context.json({ error: scopeGate.error }, scopeGate.status);
     }
@@ -4121,30 +4146,49 @@ export const createApp = (options: AppOptions) => {
     const payload = await context.req.json<{
       display_name?: string;
       email?: string;
+      kind?: unknown;
       username?: string | null;
     }>();
     const email = payload.email?.trim() ?? "";
     const displayName = payload.display_name?.trim() ?? "";
     const username = payload.username?.trim();
+    const requestedKind = payload.kind ?? "human";
 
-    if (email.length === 0 || displayName.length === 0) {
+    if (
+      email.length === 0 ||
+      displayName.length === 0 ||
+      (requestedKind !== "human" && requestedKind !== "agent")
+    ) {
       return context.json({ error: "invalid_request" }, 400);
     }
+    const kind: UserKind = requestedKind;
 
     if ((await tenantRepository.findById(tenantId)) === null) {
       return context.json({ error: "tenant_not_found" }, 404);
     }
 
-    let result: Awaited<ReturnType<typeof provisionUser>>;
+    let provisioned: { user: User; invitationToken: string | null };
 
     try {
-      result = await provisionUser({
-        userRepository,
-        tenantId,
-        email,
-        username,
-        displayName
-      });
+      if (kind === "agent") {
+        const { user } = await provisionAgentUser({
+          userRepository,
+          tenantId,
+          email,
+          username,
+          displayName
+        });
+        provisioned = { user, invitationToken: null };
+      } else {
+        const result = await provisionUser({
+          userRepository,
+          tenantId,
+          email,
+          username,
+          displayName
+        });
+        provisioned = { user: result.user, invitationToken: result.invitationToken };
+      }
     } catch (error) {
       await recordAuditEventBestEffort({
         actorType: actor.actorType,
@@ -4155,16 +4199,22 @@ export const createApp = (options: AppOptions) => {
         targetId: null,
         payload: {
           error: error instanceof Error ? error.message : "unknown_error",
-          email
+          email,
+          kind
         }
       });
 
       return context.json({ error: isProvisionConflictError(error) ? "conflict" : "internal_error" }, isProvisionConflictError(error) ? 409 : 500);
     }
 
-    const activationUrl = new URL("/activate-account", context.req.url);
+    let activationUrl: string | null = null;
 
-    activationUrl.searchParams.set("token", result.invitationToken);
+    if (provisioned.invitationToken !== null) {
+      const activationLink = new URL("/activate-account", context.req.url);
+
+      activationLink.searchParams.set("token", provisioned.invitationToken);
+      activationUrl = activationLink.toString();
+    }
 
     await recordAuditEventBestEffort({
       actorType: actor.actorType,
@@ -4172,32 +4222,28 @@ export const createApp = (options: AppOptions) => {
       tenantId,
       eventType: "user.provisioned",
       targetType: "user",
-      targetId: result.user.id,
+      targetId: provisioned.user.id,
       payload: {
-        email: result.user.email
+        email: provisioned.user.email,
+        kind
       }
     });
 
     return context.json(
       {
-        user: {
-          id: result.user.id,
-          tenant_id: result.user.tenantId,
-          email: result.user.email,
-          username: result.user.username,
-          display_name: result.user.displayName,
-          status: result.user.status,
-          email_verified: result.user.emailVerified
-        },
-        invitation_token: result.invitationToken,
-        activation_url: activationUrl.toString()
+        user: userAdminWire(provisioned.user),
+        invitation_token: provisioned.invitationToken,
+        activation_url: activationUrl
       },
       201
     );
   });
 
   app.post("/admin/tenants/:tenantId/users/:userId/reissue-activation", async (context) => {
-    const scopeGate = await requireAdminScope(context.req.header("authorization"), "user.provision");
+    const scopeGate = await requireAdminScope(context.req.header("authorization"), [
+      "user.provision",
+      "user.write"
+    ]);
     if (!scopeGate.ok) {
       return context.json({ error: scopeGate.error }, scopeGate.status);
     }
@@ -4252,20 +4298,82 @@ export const createApp = (options: AppOptions) => {
 
     return context.json(
       {
-        user: {
-          id: result.user.id,
-          tenant_id: result.user.tenantId,
-          email: result.user.email,
-          username: result.user.username,
-          display_name: result.user.displayName,
-          status: result.user.status,
-          email_verified: result.user.emailVerified
-        },
+        user: userAdminWire(result.user),
         invitation_token: result.invitationToken,
         activation_url: activationUrl.toString()
       },
       200
     );
+  });
+
+  app.patch("/admin/tenants/:tenantId/users/:userId", async (context) => {
+    const scopeGate = await requireAdminScope(context.req.header("authorization"), "user.write");
+    if (!scopeGate.ok) {
+      return context.json({ error: scopeGate.error }, scopeGate.status);
+    }
+    const actor = auditActorFromAuthorization(scopeGate.auth);
+
+    const tenantId = context.req.param("tenantId");
+    const userId = context.req.param("userId");
+    const payload = await context.req.json<{ kind?: unknown; status?: unknown }>();
+
+    // kind 只在开户时指定，之后不可改，防止人与 agent 之间互相转换。
+    if (payload.kind !== undefined) {
+      return context.json({ error: "kind_immutable" }, 400);
+    }
+
+    const requestedStatus = payload.status;
+
+    if (requestedStatus !== "active" && requestedStatus !== "disabled") {
+      return context.json({ error: "invalid_request" }, 400);
+    }
+
+    if ((await tenantRepository.findById(tenantId)) === null) {
+      return context.json({ error: "tenant_not_found" }, 404);
+    }
+
+    const result = await changeUserStatus({
+      status: requestedStatus,
+      tenantId,
+      userId,
+      userRepository
+    });
+
+    if (!result.ok) {
+      await recordAuditEventBestEffort({
+        actorType: actor.actorType,
+        actorId: actor.actorId,
+        tenantId,
+        eventType: "user.status_change.failed",
+        targetType: "user",
+        targetId: userId,
+        payload: {
+          reason: result.reason,
+          requested_status: requestedStatus
+        }
+      });
+
+      return result.reason === "user_not_found"
+        ? context.json({ error: "user_not_found" }, 404)
+        : context.json({ error: "invalid_state" }, 409);
+    }
+
+    if (result.previousStatus !== result.user.status) {
+      await recordAuditEventBestEffort({
+        actorType: actor.actorType,
+        actorId: actor.actorId,
+        tenantId,
+        eventType: "user.status_changed",
+        targetType: "user",
+        targetId: result.user.id,
+        payload: {
+          from: result.previousStatus,
+          to: result.user.status
+        }
+      });
+    }
+
+    return context.json({ user: userAdminWire(result.user) }, 200);
   });
 
   app.get("/admin/tenants", async (context) => {
@@ -4393,18 +4501,25 @@ export const createApp = (options: AppOptions) => {
     if (!scopeGate.ok) {
       return context.json({ error: scopeGate.error }, scopeGate.status);
     }
+    const kindFilter = context.req.query("kind");
+    if (kindFilter !== undefined && kindFilter !== "human" && kindFilter !== "agent") {
+      return context.json({ error: "invalid_request" }, 400);
+    }
     const tenantId = context.req.param("tenantId");
     const tenant = await tenantRepository.findById(tenantId);
     if (tenant === null) {
       return context.notFound();
     }
-    const userList = await userRepository.listByTenantId(tenantId);
+    const userList = (await userRepository.listByTenantId(tenantId)).filter(
+      (u) => kindFilter === undefined || (u.kind ?? "human") === kindFilter
+    );
     return context.json({
       users: userList.map((u) => ({
         id: u.id,
         email: u.email,
         display_name: u.displayName,
-        status: u.status
+        status: u.status,
+        kind: u.kind ?? "human"
       }))
     });
   });

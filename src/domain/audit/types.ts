@@ -23,6 +23,8 @@ export type AuditEventType =
   | "user.activation.succeeded"
   | "user.provision.failed"
   | "user.provisioned"
+  | "user.status_change.failed"
+  | "user.status_changed"
   | "signing_key.rotated"
   | (string & {});
 

@@ -59,6 +59,7 @@ import type { Tenant, TenantIssuer } from "../../../domain/tenants/types";
 import type {
   ActivateUserByInvitationTokenInput,
   ActivateUserByInvitationTokenResult,
+  CreateAgentUserInput,
   CreateProvisionedUserWithInvitationInput,
   ReissueActivationInvitationInput,
   ReissueActivationInvitationResult,
@@ -1334,6 +1335,21 @@ export class D1UserRepository implements UserRepository {
 
       throw error;
     }
+  }
+
+  async createAgentUser({ user }: CreateAgentUserInput): Promise<void> {
+    await this.db.insert(users).values({
+      id: user.id,
+      tenantId: user.tenantId,
+      email: user.email,
+      emailVerified: user.emailVerified,
+      username: user.username,
+      displayName: user.displayName,
+      status: user.status,
+      kind: "agent",
+      createdAt: user.createdAt,
+      updatedAt: user.updatedAt
+    });
   }
 
   async createProvisionedUserWithInvitation({

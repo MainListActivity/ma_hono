@@ -10,6 +10,11 @@ export interface CreateProvisionedUserWithInvitationInput {
   user: User;
 }
 
+/** agent 账号没有激活邀请，开户即 active；调用方负责保证 user.kind 为 "agent"。 */
+export interface CreateAgentUserInput {
+  user: User;
+}
+
 export interface ReissueActivationInvitationInput {
   invitation: UserInvitation;
   now: Date;
@@ -62,6 +67,7 @@ export interface UserRepository {
   activateUserByInvitationToken(
     input: ActivateUserByInvitationTokenInput
   ): Promise<ActivateUserByInvitationTokenResult>;
+  createAgentUser(input: CreateAgentUserInput): Promise<void>;
   createProvisionedUserWithInvitation(input: CreateProvisionedUserWithInvitationInput): Promise<void>;
   findAuthMethodPolicyByTenantId(tenantId: string): Promise<TenantAuthMethodPolicy | null>;
   findPasswordCredentialByUserId(

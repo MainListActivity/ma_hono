@@ -70,7 +70,13 @@ export const requestMagicLink = async ({
 
   const user = await userRepository.findUserByEmail(tenantId, email.trim());
 
-  if (user === null || user.status !== "active" || isUserExpired(user, now)) {
+  // agent 账号是机器身份，永不作为人登录。
+  if (
+    user === null ||
+    user.status !== "active" ||
+    user.kind === "agent" ||
+    isUserExpired(user, now)
+  ) {
     return { kind: "rejected", reason: "user_not_found" };
   }
 
@@ -138,7 +144,12 @@ export const consumeMagicLink = async ({
 
   const user = await userRepository.findUserById(magicLinkRecord.tenantId, magicLinkRecord.userId);
 
-  if (user === null || user.status !== "active" || isUserExpired(user, now)) {
+  if (
+    user === null ||
+    user.status !== "active" ||
+    user.kind === "agent" ||
+    isUserExpired(user, now)
+  ) {
     return { kind: "rejected", reason: "invalid_or_expired_token" };
   }
 
