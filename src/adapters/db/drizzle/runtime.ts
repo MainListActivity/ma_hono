@@ -1646,7 +1646,7 @@ class D1ClientAuthMethodPolicyRepository implements ClientAuthMethodPolicyReposi
   }
 }
 
-class D1RefreshTokenRepository implements RefreshTokenRepository {
+export class D1RefreshTokenRepository implements RefreshTokenRepository {
   constructor(private readonly db: ReturnType<typeof drizzle>) {}
 
   async create(record: RefreshTokenRecord): Promise<void> {
@@ -1663,6 +1663,7 @@ class D1RefreshTokenRepository implements RefreshTokenRepository {
       absoluteExpiresAt: record.absoluteExpiresAt,
       consumedAt: record.consumedAt,
       parentTokenId: record.parentTokenId,
+      remoteGrantId: record.remoteGrantId ?? null,
       replacedByTokenId: record.replacedByTokenId,
       createdAt: record.createdAt
     });
