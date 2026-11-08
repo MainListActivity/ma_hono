@@ -29,6 +29,7 @@
       "id": "97c43217be494c6b8b0a90a42e2d637c"
     }
   ],
+  "triggers": { "crons": ["17 19 * * *"] },
   "r2_buckets": [
     {
       "binding": "KEY_MATERIAL_R2",

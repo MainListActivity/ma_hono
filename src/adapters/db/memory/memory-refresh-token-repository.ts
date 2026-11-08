@@ -22,6 +22,11 @@ export class MemoryRefreshTokenRepository implements RefreshTokenRepository {
     return match === undefined ? null : { ...match };
   }
 
+  async findAnyByTokenHash(tokenHash: string): Promise<RefreshTokenRecord | null> {
+    const match = this.records.find((record) => record.tokenHash === tokenHash);
+    return match === undefined ? null : { ...match };
+  }
+
   async consume(
     id: string,
     consumedAt: string,

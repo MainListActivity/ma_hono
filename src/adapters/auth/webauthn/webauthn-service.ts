@@ -4,6 +4,7 @@ import type {
 } from "../../../domain/authentication/passkey-repository";
 import type { LoginChallenge } from "../../../domain/authorization/types";
 import type { User } from "../../../domain/users/types";
+import { isUserExpired } from "../../../domain/users/expired-user-purge";
 import type { UserRepository } from "../../../domain/users/repository";
 import { sha256Base64Url } from "../../../lib/hash";
 import { isLoginChallengeActive } from "../../../domain/authentication/login-challenge";
@@ -71,7 +72,7 @@ export const startPasskeyEnrollment = async ({
 
   const user = await userRepository.findUserById(tenantId, userId);
 
-  if (user === null || user.status !== "active") {
+  if (user === null || user.status !== "active" || isUserExpired(user, now)) {
     return { kind: "rejected", reason: "user_not_found" };
   }
 
@@ -264,7 +265,7 @@ export const finishPasskeyLogin = async ({
 
   const user = await userRepository.findUserById(credential.tenantId, credential.userId);
 
-  if (user === null || user.status !== "active") {
+  if (user === null || user.status !== "active" || isUserExpired(user, now)) {
     return { kind: "rejected", reason: "invalid_credentials" };
   }
 

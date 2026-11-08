@@ -112,12 +112,30 @@ export default {
           return null;
         }
 
+        let sessionUser: { status: string; expiresAt?: string | null } | null = null;
+        try {
+          sessionUser = await repositories.userRepository.findUserById(
+            session.tenantId,
+            session.userId
+          );
+        } catch {
+          sessionUser = null;
+        }
+        if (
+          sessionUser !== null &&
+          (sessionUser.status !== "active" ||
+            (sessionUser.expiresAt != null && Date.parse(sessionUser.expiresAt) <= Date.now()))
+        ) {
+          return null;
+        }
+
         return {
           tenantId: session.tenantId,
           userId: session.userId
         };
       },
       clientAuthMethodPolicyRepository: repositories.clientAuthMethodPolicyRepository,
+      remoteGrantRepository: repositories.remoteGrantRepository,
       clientRepository: repositories.clientRepository,
       keyMaterialBucket: runtimeConfig.keyMaterialBucket,
       keyRepository: repositories.keyRepository,
@@ -162,5 +180,15 @@ export default {
     } finally {
       await repositories.close();
     }
+  }
+,
+  async scheduled(_event: unknown, env: RuntimeEnv, _ctx: unknown) {
+    const runtimeConfig = readRuntimeConfig(env);
+    const repositories = await createRuntimeRepositories(runtimeConfig);
+    const { purgeExpiredTestUsers } = await import("./domain/users/expired-user-purge");
+    await purgeExpiredTestUsers({
+      auditRepository: repositories.auditRepository,
+      purger: repositories.expiredUserPurger
+    });
   }
 };

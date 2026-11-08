@@ -198,6 +198,8 @@ export const users = sqliteTable(
     username: text("username"),
     displayName: text("display_name").notNull(),
     status: text("status").notNull(),
+    expiresAt: text("expires_at"),
+    testOrigin: text("test_origin"),
     createdAt: text("created_at").notNull(),
     updatedAt: text("updated_at").notNull()
   },
@@ -483,6 +485,7 @@ export const refreshTokens = sqliteTable(
     authMethod: text("auth_method"),
     tokenHash: text("token_hash").notNull(),
     absoluteExpiresAt: text("absolute_expires_at").notNull(),
+    remoteGrantId: text("remote_grant_id"),
     consumedAt: text("consumed_at"),
     parentTokenId: text("parent_token_id"),
     replacedByTokenId: text("replaced_by_token_id"),
@@ -617,5 +620,34 @@ export const mfaPasskeyChallenges = sqliteTable(
     challengeHashActiveUnique: uniqueIndex("mfa_passkey_challenges_challenge_hash_active_unique")
       .on(table.challengeHash)
       .where(sql`${table.consumedAt} IS NULL`)
+  })
+);
+
+export const remoteGrants = sqliteTable(
+  "remote_grants",
+  {
+    id: text("id").primaryKey(),
+    tenantId: text("tenant_id")
+      .notNull()
+      .references(() => tenants.id, { onDelete: "cascade" }),
+    userId: text("user_id").notNull(),
+    clientId: text("client_id").notNull(),
+    codeHash: text("code_hash").notNull(),
+    codeExpiresAt: text("code_expires_at").notNull(),
+    codeConsumedAt: text("code_consumed_at"),
+    resourcesJson: text("resources_json").notNull(),
+    taskRef: text("task_ref"),
+    expiresAt: text("expires_at").notNull(),
+    status: text("status").notNull(),
+    createdAt: text("created_at").notNull(),
+    revokedAt: text("revoked_at")
+  },
+  (table) => ({
+    tenantUserFk: foreignKey({
+      columns: [table.tenantId, table.userId],
+      foreignColumns: [users.tenantId, users.id]
+    }).onDelete("cascade"),
+    codeHashUnique: uniqueIndex("remote_grants_code_hash_unique").on(table.codeHash),
+    tenantUserIdx: index("remote_grants_tenant_user_idx").on(table.tenantId, table.userId)
   })
 );

@@ -1,4 +1,5 @@
 import type { AuthenticationLoginChallengeRepository } from "../../../domain/authentication/login-challenge-repository";
+import { isUserExpired } from "../../../domain/users/expired-user-purge";
 import type { UserRepository } from "../../../domain/users/repository";
 import type { LoginChallenge } from "../../../domain/authorization/types";
 import type { User } from "../../../domain/users/types";
@@ -88,7 +89,7 @@ export const authenticateWithPassword = async ({
       ? await userRepository.findUserByEmail(tenantId, normalizedUsername.toLowerCase())
       : null);
 
-  if (user === null || user.status !== "active") {
+  if (user === null || user.status !== "active" || isUserExpired(user, now)) {
     return {
       kind: "rejected",
       reason: "invalid_credentials"

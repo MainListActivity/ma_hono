@@ -8,6 +8,9 @@ export interface User {
   username: string | null;
   displayName: string;
   status: UserStatus;
+  /** ISO datetime; 非 NULL 即测试账号，到期后不可用并被清理。 */
+  expiresAt?: string | null;
+  testOrigin?: string | null;
   createdAt: string;
   updatedAt: string;
 }
