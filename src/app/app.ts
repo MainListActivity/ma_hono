@@ -4086,11 +4086,11 @@ export const createApp = (options: AppOptions) => {
   });
 
   app.post("/admin/tenants", async (context) => {
-    const humanGate = await requireHumanAdmin(context.req.header("authorization"));
-    if (!humanGate.ok) {
-      return context.json({ error: humanGate.error }, humanGate.status);
+    const scopeGate = await requireAdminScope(context.req.header("authorization"), "tenant.write");
+    if (!scopeGate.ok) {
+      return context.json({ error: scopeGate.error }, scopeGate.status);
     }
-    const session = humanGate.session;
+    const actor = auditActorFromAuthorization(scopeGate.auth);
 
     const payload = await context.req.json<{ display_name?: string; slug?: string }>();
     const slug = payload.slug?.trim() ?? "";
@@ -4124,8 +4124,8 @@ export const createApp = (options: AppOptions) => {
 
     await auditRepository.record({
       id: crypto.randomUUID(),
-      actorType: "admin_user",
-      actorId: session.adminUserId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
       tenantId,
       eventType: "tenant.created",
       targetType: "tenant",
@@ -4428,11 +4428,11 @@ export const createApp = (options: AppOptions) => {
   });
 
   app.patch("/admin/tenants/:tenantId", async (context) => {
-    const humanGate = await requireHumanAdmin(context.req.header("authorization"));
-    if (!humanGate.ok) {
-      return context.json({ error: humanGate.error }, humanGate.status);
+    const scopeGate = await requireAdminScope(context.req.header("authorization"), "tenant.write");
+    if (!scopeGate.ok) {
+      return context.json({ error: scopeGate.error }, scopeGate.status);
     }
-    const session = humanGate.session;
+    const actor = auditActorFromAuthorization(scopeGate.auth);
     const tenantId = context.req.param("tenantId");
     const tenant = await tenantRepository.findById(tenantId);
     if (tenant === null) {
@@ -4461,16 +4461,33 @@ export const createApp = (options: AppOptions) => {
       input.primaryIssuerUrl = v;
     }
     await tenantRepository.update(tenantId, input);
+
+    const changed: Record<string, unknown> = {};
+    if (input.displayName !== undefined) changed.display_name = input.displayName;
+    if (input.status !== undefined) changed.status = input.status;
+    if (input.primaryIssuerUrl !== undefined) changed.primary_issuer_url = input.primaryIssuerUrl;
+    await auditRepository.record({
+      id: crypto.randomUUID(),
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      tenantId,
+      eventType: "tenant.updated",
+      targetType: "tenant",
+      targetId: tenantId,
+      payload: changed,
+      occurredAt: new Date().toISOString()
+    });
+
     const updated = await tenantRepository.findById(tenantId);
     return context.json(tenantToWire(updated!));
   });
 
   app.post("/admin/tenants/:tenantId/keys/rotate", async (context) => {
-    const humanGate = await requireHumanAdmin(context.req.header("authorization"));
-    if (!humanGate.ok) {
-      return context.json({ error: humanGate.error }, humanGate.status);
+    const scopeGate = await requireAdminScope(context.req.header("authorization"), "key.rotate");
+    if (!scopeGate.ok) {
+      return context.json({ error: scopeGate.error }, scopeGate.status);
     }
-    const session = humanGate.session;
+    const actor = auditActorFromAuthorization(scopeGate.auth);
     if (signer === undefined) {
       return context.json({ error: "key_rotation_unavailable" }, 503);
     }
@@ -4485,8 +4502,8 @@ export const createApp = (options: AppOptions) => {
       const material = await signer.ensureActiveSigningKeyMaterial(tenantId);
       await auditRepository.record({
         id: crypto.randomUUID(),
-        actorType: "admin_user",
-        actorId: session.adminUserId,
+        actorType: actor.actorType,
+        actorId: actor.actorId,
         tenantId,
         eventType: "signing_key.rotated",
         targetType: "signing_key",
@@ -4553,11 +4570,10 @@ export const createApp = (options: AppOptions) => {
   });
 
   app.get("/admin/tenants/:tenantId/clients", async (context) => {
-    const humanGate = await requireHumanAdmin(context.req.header("authorization"));
-    if (!humanGate.ok) {
-      return context.json({ error: humanGate.error }, humanGate.status);
+    const scopeGate = await requireAdminScope(context.req.header("authorization"), "client.read");
+    if (!scopeGate.ok) {
+      return context.json({ error: scopeGate.error }, scopeGate.status);
     }
-    const session = humanGate.session;
     const tenantId = context.req.param("tenantId");
     const tenant = await tenantRepository.findById(tenantId);
     if (tenant === null) {
@@ -4602,11 +4618,10 @@ export const createApp = (options: AppOptions) => {
   });
 
   app.get("/admin/tenants/:tenantId/clients/:clientId", async (context) => {
-    const humanGate = await requireHumanAdmin(context.req.header("authorization"));
-    if (!humanGate.ok) {
-      return context.json({ error: humanGate.error }, humanGate.status);
+    const scopeGate = await requireAdminScope(context.req.header("authorization"), "client.read");
+    if (!scopeGate.ok) {
+      return context.json({ error: scopeGate.error }, scopeGate.status);
     }
-    const session = humanGate.session;
     const tenantId = context.req.param("tenantId");
     const clientId = context.req.param("clientId");
     const tenant = await tenantRepository.findById(tenantId);
@@ -4657,11 +4672,11 @@ export const createApp = (options: AppOptions) => {
   });
 
   app.patch("/admin/tenants/:tenantId/clients/:clientId/auth-method-policy", async (context) => {
-    const humanGate = await requireHumanAdmin(context.req.header("authorization"));
-    if (!humanGate.ok) {
-      return context.json({ error: humanGate.error }, humanGate.status);
+    const scopeGate = await requireAdminScope(context.req.header("authorization"), "client.write");
+    if (!scopeGate.ok) {
+      return context.json({ error: scopeGate.error }, scopeGate.status);
     }
-    const session = humanGate.session;
+    const actor = auditActorFromAuthorization(scopeGate.auth);
     const tenantId = context.req.param("tenantId");
     const clientId = context.req.param("clientId");
     const tenant = await tenantRepository.findById(tenantId);
@@ -4766,8 +4781,8 @@ export const createApp = (options: AppOptions) => {
 
     await auditRepository.record({
       id: crypto.randomUUID(),
-      actorType: "admin_user",
-      actorId: session.adminUserId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
       tenantId,
       eventType: "oidc.client.auth_method_policy.updated",
       targetType: "oidc_client",
@@ -4780,11 +4795,11 @@ export const createApp = (options: AppOptions) => {
   });
 
   app.post("/admin/tenants/:tenantId/clients", async (context) => {
-    const humanGate = await requireHumanAdmin(context.req.header("authorization"));
-    if (!humanGate.ok) {
-      return context.json({ error: humanGate.error }, humanGate.status);
+    const scopeGate = await requireAdminScope(context.req.header("authorization"), "client.write");
+    if (!scopeGate.ok) {
+      return context.json({ error: scopeGate.error }, scopeGate.status);
     }
-    const session = humanGate.session;
+    const actor = auditActorFromAuthorization(scopeGate.auth);
     const tenantId = context.req.param("tenantId");
     const tenant = await tenantRepository.findById(tenantId);
     if (tenant === null) {
@@ -4826,8 +4841,8 @@ export const createApp = (options: AppOptions) => {
         );
         await auditRepository.record({
           id: crypto.randomUUID(),
-          actorType: "admin_user",
-          actorId: session.adminUserId,
+          actorType: actor.actorType,
+          actorId: actor.actorId,
           tenantId,
           eventType: "oidc.client.registered",
           targetType: "oidc_client",
@@ -4891,11 +4906,11 @@ export const createApp = (options: AppOptions) => {
   });
 
   app.delete("/admin/tenants/:tenantId/clients/:clientId", async (context) => {
-    const humanGate = await requireHumanAdmin(context.req.header("authorization"));
-    if (!humanGate.ok) {
-      return context.json({ error: humanGate.error }, humanGate.status);
+    const scopeGate = await requireAdminScope(context.req.header("authorization"), "client.write");
+    if (!scopeGate.ok) {
+      return context.json({ error: scopeGate.error }, scopeGate.status);
     }
-    const session = humanGate.session;
+    const actor = auditActorFromAuthorization(scopeGate.auth);
     const tenantId = context.req.param("tenantId");
     const clientId = context.req.param("clientId");
     const tenant = await tenantRepository.findById(tenantId);
@@ -4909,8 +4924,8 @@ export const createApp = (options: AppOptions) => {
 
     await auditRepository.record({
       id: crypto.randomUUID(),
-      actorType: "admin_user",
-      actorId: session.adminUserId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
       tenantId,
       eventType: "oidc.client.deleted",
       targetType: "oidc_client",
@@ -4923,11 +4938,11 @@ export const createApp = (options: AppOptions) => {
   });
 
   app.post("/admin/tenants/:tenantId/clients/:clientId/secret/reset", async (context) => {
-    const humanGate = await requireHumanAdmin(context.req.header("authorization"));
-    if (!humanGate.ok) {
-      return context.json({ error: humanGate.error }, humanGate.status);
+    const scopeGate = await requireAdminScope(context.req.header("authorization"), "client.write");
+    if (!scopeGate.ok) {
+      return context.json({ error: scopeGate.error }, scopeGate.status);
     }
-    const session = humanGate.session;
+    const actor = auditActorFromAuthorization(scopeGate.auth);
     const tenantId = context.req.param("tenantId");
     const clientId = context.req.param("clientId");
     const tenant = await tenantRepository.findById(tenantId);
@@ -4950,8 +4965,8 @@ export const createApp = (options: AppOptions) => {
 
     await auditRepository.record({
       id: crypto.randomUUID(),
-      actorType: "admin_user",
-      actorId: session.adminUserId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
       tenantId,
       eventType: "oidc.client.secret.reset",
       targetType: "oidc_client",
@@ -4969,11 +4984,11 @@ export const createApp = (options: AppOptions) => {
   });
 
   app.patch("/admin/tenants/:tenantId/clients/:clientId", async (context) => {
-    const humanGate = await requireHumanAdmin(context.req.header("authorization"));
-    if (!humanGate.ok) {
-      return context.json({ error: humanGate.error }, humanGate.status);
+    const scopeGate = await requireAdminScope(context.req.header("authorization"), "client.write");
+    if (!scopeGate.ok) {
+      return context.json({ error: scopeGate.error }, scopeGate.status);
     }
-    const session = humanGate.session;
+    const actor = auditActorFromAuthorization(scopeGate.auth);
     const tenantId = context.req.param("tenantId");
     const clientId = context.req.param("clientId");
     const tenant = await tenantRepository.findById(tenantId);
@@ -5136,8 +5151,8 @@ export const createApp = (options: AppOptions) => {
 
       await auditRepository.record({
         id: crypto.randomUUID(),
-        actorType: "admin_user",
-        actorId: session.adminUserId,
+        actorType: actor.actorType,
+        actorId: actor.actorId,
         tenantId,
         eventType: "oidc.client.updated",
         targetType: "oidc_client",

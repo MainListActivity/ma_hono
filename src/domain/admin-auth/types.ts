@@ -15,13 +15,25 @@ export interface AdminSession {
 
 export type ServicePrincipalStatus = "active" | "revoked";
 
-export type ServicePrincipalScope = "tenant.read" | "user.read" | "user.provision" | "user.write";
+export type ServicePrincipalScope =
+  | "tenant.read"
+  | "tenant.write"
+  | "user.read"
+  | "user.provision"
+  | "user.write"
+  | "client.read"
+  | "client.write"
+  | "key.rotate";
 
 export const SERVICE_PRINCIPAL_SCOPES: readonly ServicePrincipalScope[] = [
   "tenant.read",
+  "tenant.write",
   "user.read",
   "user.provision",
-  "user.write"
+  "user.write",
+  "client.read",
+  "client.write",
+  "key.rotate"
 ] as const;
 
 export interface AdminServicePrincipal {
