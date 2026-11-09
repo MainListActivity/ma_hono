@@ -272,6 +272,34 @@ export const webauthnCredentials = sqliteTable(
   })
 );
 
+// Server-side WebAuthn challenges. Each row is single-use (consumed_at) and expires.
+export const passkeyCeremonies = sqliteTable(
+  "passkey_ceremonies",
+  {
+    id: text("id").primaryKey(),
+    tenantId: text("tenant_id")
+      .notNull()
+      .references(() => tenants.id, { onDelete: "cascade" }),
+    kind: text("kind").notNull(),
+    challenge: text("challenge").notNull(),
+    userId: text("user_id"),
+    loginChallengeId: text("login_challenge_id").references(() => loginChallenges.id, {
+      onDelete: "cascade"
+    }),
+    expiresAt: text("expires_at").notNull(),
+    consumedAt: text("consumed_at"),
+    createdAt: text("created_at").notNull()
+  },
+  (table) => ({
+    tenantUserFk: foreignKey({
+      columns: [table.tenantId, table.userId],
+      foreignColumns: [users.tenantId, users.id]
+    }).onDelete("cascade"),
+    tenantIdIdx: index("passkey_ceremonies_tenant_id_idx").on(table.tenantId),
+    expiresAtIdx: index("passkey_ceremonies_expires_at_idx").on(table.expiresAt)
+  })
+);
+
 export const tenantAuthMethodPolicies = sqliteTable(
   "tenant_auth_method_policies",
   {

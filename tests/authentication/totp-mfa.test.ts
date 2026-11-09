@@ -18,6 +18,7 @@ import { hashPassword } from "../../src/domain/users/passwords";
 import { sha256Base64Url } from "../../src/lib/hash";
 import { encryptTotpSecret } from "../../src/adapters/auth/totp/totp-crypto";
 import { generateTotpSecret, generateTotpCode } from "../../src/domain/mfa/totp-service";
+import { createVirtualAuthenticator } from "../support/webauthn-authenticator";
 
 // Shared test key for encrypting TOTP secrets in tests
 const TEST_TOTP_KEY = new Uint8Array(32).fill(7);
@@ -324,6 +325,7 @@ const makeMfaApp = async ({
   });
 
   const mfaPasskeyChallengeRepo = new MemoryMfaPasskeyChallengeRepository();
+  const passkeyRepository = new MemoryPasskeyRepository();
 
   const appInstance = createApp({
     adminBootstrapPasswordHash: "x", adminWhitelist: [],
@@ -339,11 +341,13 @@ const makeMfaApp = async ({
     browserSessionRepository: new MemoryUserSessionRepository(),
     totpRepository,
     mfaPasskeyChallengeRepository: mfaPasskeyChallengeRepo,
-    passkeyRepository: new MemoryPasskeyRepository(),
+    passkeyRepository,
     totpEncryptionKey: TEST_TOTP_KEY
   });
 
-  return { app: appInstance, loginChallengeRepo, totpRepository, mfaPasskeyChallengeRepo, token, challenge };
+  return {
+    app: appInstance, loginChallengeRepo, totpRepository, mfaPasskeyChallengeRepo, passkeyRepository, token, challenge
+  };
 };
 
 describe("MFA — TOTP verify endpoint", () => {
@@ -358,7 +362,7 @@ describe("MFA — TOTP verify endpoint", () => {
     const code = await generateTotpCode(rawSecret, windowIndex);
 
     const res = await app.request(
-      "https://idp.example.test/api/login/acme/mfa/totp/verify",
+      "https://idp.example.test/login/acme/mfa/totp/verify",
       { method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ login_challenge: token, code }) }
     );
@@ -376,7 +380,7 @@ describe("MFA — TOTP verify endpoint", () => {
     });
 
     const res = await app.request(
-      "https://idp.example.test/api/login/acme/mfa/totp/verify",
+      "https://idp.example.test/login/acme/mfa/totp/verify",
       { method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ login_challenge: token, code: "000000" }) }
     );
@@ -403,7 +407,7 @@ describe("MFA — TOTP verify endpoint", () => {
     let lastRes!: Response;
     for (let i = 0; i < 5; i++) {
       lastRes = await app.request(
-        "https://idp.example.test/api/login/acme/mfa/totp/verify",
+        "https://idp.example.test/login/acme/mfa/totp/verify",
         { method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ login_challenge: token, code: pastCode }) }
       );
@@ -427,7 +431,7 @@ describe("MFA — TOTP verify endpoint", () => {
     const code = await generateTotpCode(rawSecret, windowIndex);
 
     const res = await app.request(
-      "https://idp.example.test/api/login/acme/mfa/totp/verify",
+      "https://idp.example.test/login/acme/mfa/totp/verify",
       { method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ login_challenge: token, code }) }
     );
@@ -449,7 +453,7 @@ describe("MFA — TOTP verify endpoint", () => {
     const code = await generateTotpCode(rawSecret, windowIndex);
 
     const res = await app.request(
-      "https://idp.example.test/api/login/acme/mfa/totp/verify",
+      "https://idp.example.test/login/acme/mfa/totp/verify",
       { method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ login_challenge: token, code }) }
     );
@@ -470,7 +474,7 @@ describe("MFA — TOTP verify endpoint", () => {
     loginChallengeRepo.rejectConsume = true;
 
     const res = await app.request(
-      "https://idp.example.test/api/login/acme/mfa/totp/verify",
+      "https://idp.example.test/login/acme/mfa/totp/verify",
       { method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ login_challenge: token, code }) }
     );
@@ -490,7 +494,7 @@ describe("MFA — TOTP enrollment endpoint", () => {
     });
 
     const startResponse = await app.request(
-      "https://idp.example.test/api/login/acme/mfa/totp/enroll/start",
+      "https://idp.example.test/login/acme/mfa/totp/enroll/start",
       { method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ login_challenge: token }) }
     );
@@ -500,7 +504,7 @@ describe("MFA — TOTP enrollment endpoint", () => {
     loginChallengeRepo.rejectConsume = true;
 
     const finishResponse = await app.request(
-      "https://idp.example.test/api/login/acme/mfa/totp/enroll/finish",
+      "https://idp.example.test/login/acme/mfa/totp/enroll/finish",
       { method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ login_challenge: token, code }) }
     );
@@ -520,7 +524,7 @@ describe("MFA — switch-to-totp endpoint", () => {
     });
 
     const res = await app.request(
-      "https://idp.example.test/api/login/acme/mfa/switch-to-totp",
+      "https://idp.example.test/login/acme/mfa/switch-to-totp",
       { method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ login_challenge: token }) }
     );
@@ -540,7 +544,7 @@ describe("MFA — switch-to-totp endpoint", () => {
     });
 
     const res = await app.request(
-      "https://idp.example.test/api/login/acme/mfa/switch-to-totp",
+      "https://idp.example.test/login/acme/mfa/switch-to-totp",
       { method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ login_challenge: token }) }
     );
@@ -557,7 +561,7 @@ describe("MFA — switch-to-totp endpoint", () => {
     });
 
     const res = await app.request(
-      "https://idp.example.test/api/login/acme/mfa/switch-to-totp",
+      "https://idp.example.test/login/acme/mfa/switch-to-totp",
       { method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ login_challenge: token }) }
     );
@@ -568,51 +572,127 @@ describe("MFA — switch-to-totp endpoint", () => {
   });
 });
 
-describe("MFA — passkey step-up brute-force lockout", () => {
-  it("invalidates challenge after 5 structurally-valid-but-wrong-signature assertions", async () => {
-    const { app, loginChallengeRepo, mfaPasskeyChallengeRepo, token } = await makeMfaApp({
+const storeTestPasskey = (
+  passkeyRepository: MemoryPasskeyRepository,
+  authenticator: { credentialId: string; publicKey: string },
+  userId: string
+) => passkeyRepository.createCredential({
+  id: crypto.randomUUID(),
+  tenantId: "tenant_acme",
+  userId,
+  credentialId: authenticator.credentialId,
+  publicKey: authenticator.publicKey,
+  signCount: 0,
+  transports: ["internal"],
+  deviceType: "singleDevice",
+  backedUp: false,
+  createdAt: new Date().toISOString(),
+  updatedAt: new Date().toISOString()
+});
+
+const requestStepUpOptions = async (app: ReturnType<typeof createApp>, token: string) => {
+  const res = await app.request(
+    "https://idp.example.test/login/acme/mfa/passkey/start",
+    { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ login_challenge: token }) }
+  );
+  expect(res.status).toBe(200);
+  const body = await res.json() as { options: { challenge: string } };
+  return body.options;
+};
+
+const finishStepUp = (
+  app: ReturnType<typeof createApp>,
+  token: string,
+  challenge: string,
+  credential: unknown
+) => app.request(
+  "https://idp.example.test/login/acme/mfa/passkey/finish",
+  { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ login_challenge: token, challenge, credential }) }
+);
+
+describe("MFA — passkey step-up verification", () => {
+  it("completes step-up with a real assertion and advances the signature counter", async () => {
+    const authenticator = createVirtualAuthenticator();
+    const { app, loginChallengeRepo, passkeyRepository, token } = await makeMfaApp({
       mfaState: "pending_passkey_step_up"
     });
+    await storeTestPasskey(passkeyRepository, authenticator, "user1");
 
-    const fakeAuthData = new Uint8Array(37).fill(0x42);
-    const clientDataObj = { type: "webauthn.get", challenge: "fakechallenge", origin: "https://idp.example.test" };
-    const clientDataJson = new TextEncoder().encode(JSON.stringify(clientDataObj));
-    const fakeSignature = new Uint8Array(64).fill(0xab);
+    const options = await requestStepUpOptions(app, token);
+    const res = await finishStepUp(app, token, options.challenge, authenticator.createAssertionResponse({
+      challenge: options.challenge, origin: "https://idp.example.test", rpId: "idp.example.test"
+    }));
 
-    const toB64 = (u: Uint8Array) =>
-      btoa(String.fromCharCode(...u)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
+    expect([200, 302]).toContain(res.status);
+    expect(loginChallengeRepo.challenges[0].mfaState).toBe("satisfied");
+    expect(passkeyRepository.listCredentials()[0].signCount).toBe(1);
+  });
 
-    let lastRes!: Response;
-    for (let i = 0; i < 5; i++) {
-      const ch = {
-        id: crypto.randomUUID(), tenantId: "tenant_acme",
-        loginChallengeId: loginChallengeRepo.challenges[0].id,
-        challengeHash: "hash" + i,
-        expiresAt: new Date(Date.now() + 60_000).toISOString(),
-        consumedAt: null, createdAt: new Date().toISOString()
+  it("rejects an assertion signed by another key and invalidates the challenge after 5 attempts", async () => {
+    const enrolled = createVirtualAuthenticator();
+    const attacker = createVirtualAuthenticator();
+    const { app, loginChallengeRepo, passkeyRepository, token } = await makeMfaApp({
+      mfaState: "pending_passkey_step_up"
+    });
+    await storeTestPasskey(passkeyRepository, enrolled, "user1");
+
+    const results: Array<{ status: number; error: string }> = [];
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const options = await requestStepUpOptions(app, token);
+      // The attacker presents the enrolled credential ID but signs with its own key.
+      const forged = {
+        ...attacker.createAssertionResponse({
+          challenge: options.challenge, origin: "https://idp.example.test", rpId: "idp.example.test"
+        }),
+        id: enrolled.credentialId,
+        rawId: enrolled.credentialId
       };
-      await mfaPasskeyChallengeRepo.create(ch);
-
-      lastRes = await app.request(
-        "https://idp.example.test/api/login/acme/mfa/passkey/finish",
-        { method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            login_challenge: token,
-            challenge_hash: ch.challengeHash,
-            challenge: "fakenonce" + i,
-            credential_id: "webauthn-credential-id-fixture",
-            response: {
-              authenticator_data: toB64(fakeAuthData),
-              client_data_json: toB64(clientDataJson),
-              signature: toB64(fakeSignature)
-            }
-          }) }
-      );
+      const res = await finishStepUp(app, token, options.challenge, forged);
+      const body = await res.json() as { error: string };
+      results.push({ status: res.status, error: body.error });
     }
 
-    expect(lastRes.status).toBe(401);
-    const body = await lastRes.json() as { error: string };
-    expect(body.error).toBe("challenge_invalidated");
+    expect(results.slice(0, 4)).toEqual(
+      Array.from({ length: 4 }, () => ({ status: 401, error: "passkey_verification_failed" }))
+    );
+    expect(results[4]).toEqual({ status: 401, error: "challenge_invalidated" });
     expect(loginChallengeRepo.challenges[0].consumedAt).not.toBeNull();
+    expect(passkeyRepository.listCredentials()[0].signCount).toBe(0);
+  });
+
+  it("rejects a valid assertion from a credential that belongs to another user", async () => {
+    const otherUsersAuthenticator = createVirtualAuthenticator();
+    const { app, loginChallengeRepo, passkeyRepository, token } = await makeMfaApp({
+      mfaState: "pending_passkey_step_up"
+    });
+    await storeTestPasskey(passkeyRepository, otherUsersAuthenticator, "user2");
+
+    const options = await requestStepUpOptions(app, token);
+    const res = await finishStepUp(app, token, options.challenge, otherUsersAuthenticator.createAssertionResponse({
+      challenge: options.challenge, origin: "https://idp.example.test", rpId: "idp.example.test"
+    }));
+
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toMatchObject({ error: "credential_not_found" });
+    expect(loginChallengeRepo.challenges[0].mfaState).toBe("pending_passkey_step_up");
+    expect(loginChallengeRepo.challenges[0].consumedAt).toBeNull();
+  });
+
+  it("rejects a challenge value that the server did not issue", async () => {
+    const authenticator = createVirtualAuthenticator();
+    const { app, passkeyRepository, token } = await makeMfaApp({
+      mfaState: "pending_passkey_step_up"
+    });
+    await storeTestPasskey(passkeyRepository, authenticator, "user1");
+
+    const notIssued = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+    const res = await finishStepUp(app, token, notIssued, authenticator.createAssertionResponse({
+      challenge: notIssued, origin: "https://idp.example.test", rpId: "idp.example.test"
+    }));
+
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toEqual({ error: "invalid_request" });
   });
 });

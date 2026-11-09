@@ -1,8 +1,11 @@
+import { browserSupportsWebAuthn, startAuthentication, startRegistration } from "@simplewebauthn/browser";
 import { useEffect, useRef, useState } from "react";
 import { useParams, useSearchParams } from "react-router";
 import {
   type ChallengeInfo,
   consumeMagicLink,
+  finishPasskeyEnrollment,
+  finishPasskeyLogin,
   getChallengeInfo,
   loginWithPassword,
   mfaEnrollFinish,
@@ -12,7 +15,9 @@ import {
   mfaSwitchToTotp,
   mfaTotpVerify,
   registerUser,
-  requestMagicLink
+  requestMagicLink,
+  startPasskeyEnrollment,
+  startPasskeyLogin
 } from "../api/client";
 import {
   AuthShell,
@@ -77,8 +82,29 @@ const REGISTER_ERROR_MESSAGES: Record<string, string> = {
   invalid_request: "登录会话已过期，请重新打开登录"
 };
 
+const PASSKEY_LOGIN_ERROR_MESSAGES: Record<string, string> = {
+  invalid_credentials: "通行密钥验证失败，请重试",
+  invalid_request: "登录会话已过期，请重新打开登录",
+  passkey_disabled: "当前未开放通行密钥登录"
+};
+
+const PASSKEY_ENROLLMENT_ERROR_MESSAGES: Record<string, string> = {
+  authentication_required: "登录状态已失效，请重新登录后再添加通行密钥",
+  duplicate_credential: "此通行密钥已添加",
+  invalid_ceremony: "添加会话已过期，请重试",
+  passkey_disabled: "当前未开放通行密钥登录",
+  passkey_enrollment_not_allowed: "当前账号不能添加通行密钥",
+  verification_failed: "通行密钥验证失败，请重试"
+};
+
 function authErrorMessage(code: string | undefined, messages: Record<string, string>, fallback: string): string {
   return (code && messages[code]) ?? fallback;
+}
+
+// Errors from @simplewebauthn/browser carry the DOMException name. Cancelling the prompt is the common case.
+function passkeyCeremonyErrorMessage(err: unknown, fallback: string): string {
+  if (err instanceof Error && err.name === "NotAllowedError") return "通行密钥操作已取消";
+  return fallback;
 }
 
 function ErrorBanner({ message }: { message: string }) {
@@ -237,12 +263,14 @@ function PasswordForm({
   tenantSlug,
   loginChallenge,
   allowRegistration,
-  onMfaRequired
+  onMfaRequired,
+  onPasskeyOffer
 }: {
   tenantSlug: string;
   loginChallenge: string;
   allowRegistration: boolean;
   onMfaRequired: (ctx: { mfaState: MfaState; loginChallenge: string; hasTotpFallback: boolean }) => void;
+  onPasskeyOffer: (redirectUri: string) => void;
 }) {
   const [showRegister, setShowRegister] = useState(false);
   const [username, setUsername] = useState("");
@@ -267,6 +295,7 @@ function PasswordForm({
         mfa_state?: string;
         login_challenge?: string;
         has_totp_fallback?: boolean;
+        passkey_enrollment_offer?: boolean;
       };
       if (body.mfa_state && body.login_challenge) {
         onMfaRequired({
@@ -274,6 +303,11 @@ function PasswordForm({
           loginChallenge: body.login_challenge,
           hasTotpFallback: body.has_totp_fallback ?? false
         });
+        return;
+      }
+      // The session cookie is already set. Offer passkey registration before redirecting.
+      if (body.redirect_uri && body.passkey_enrollment_offer && browserSupportsWebAuthn()) {
+        onPasskeyOffer(body.redirect_uri);
         return;
       }
       if (body.redirect_uri) window.location.href = body.redirect_uri;
@@ -410,29 +444,13 @@ function PasskeyForm({
     setError(null);
     setLoading(true);
     try {
-      const { startPasskeyLogin, finishPasskeyLogin } = await import("../api/client");
-      const startResult = await startPasskeyLogin(tenantSlug, loginChallenge) as {
-        assertion_session_id: string;
-        challenge: string;
-      };
+      const start = await startPasskeyLogin(tenantSlug, loginChallenge);
+      const credential = await startAuthentication({ optionsJSON: start.options });
 
-      const challengeBytes = Uint8Array.from(
-        atob(startResult.challenge.replace(/-/g, "+").replace(/_/g, "/")),
-        c => c.charCodeAt(0)
-      );
-      const credential = await navigator.credentials.get({
-        publicKey: { challenge: challengeBytes, timeout: 60000, userVerification: "preferred" }
-      }) as PublicKeyCredential | null;
-
-      if (!credential) {
-        setError("未选择通行密钥");
-        return;
-      }
-
-      const res = await finishPasskeyLogin(tenantSlug, startResult.assertion_session_id, credential);
+      const res = await finishPasskeyLogin(tenantSlug, start.ceremony_id, loginChallenge, credential);
       if (!res.ok) {
         const body = await res.json().catch(() => ({})) as { error?: string };
-        setError(body.error ?? "通行密钥验证失败");
+        setError(authErrorMessage(body.error, PASSKEY_LOGIN_ERROR_MESSAGES, "通行密钥验证失败"));
         return;
       }
       const body = await res.json().catch(() => ({})) as {
@@ -451,11 +469,7 @@ function PasskeyForm({
       }
       if (body.redirect_uri) window.location.href = body.redirect_uri;
     } catch (err) {
-      if (err instanceof Error && err.name === "NotAllowedError") {
-        setError("通行密钥操作已取消");
-      } else {
-        setError("通行密钥验证失败 — 请重试");
-      }
+      setError(passkeyCeremonyErrorMessage(err, "通行密钥验证失败 — 请重试"));
     } finally {
       setLoading(false);
     }
@@ -478,6 +492,67 @@ function PasskeyForm({
       >
         <PasskeyButtonIcon />
         {loading ? "等待通行密钥…" : "验证通行密钥"}
+      </button>
+    </div>
+  );
+}
+
+// Shown once after a password login when the user has no passkey yet. Both choices continue to
+// the client, so the offer never blocks sign-in.
+function PasskeyEnrollmentOffer({
+  tenantSlug,
+  redirectUri
+}: {
+  tenantSlug: string;
+  redirectUri: string;
+}) {
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const handleAdd = async () => {
+    setError(null);
+    setLoading(true);
+    try {
+      const start = await startPasskeyEnrollment(tenantSlug);
+      const credential = await startRegistration({ optionsJSON: start.options });
+      const res = await finishPasskeyEnrollment(tenantSlug, start.ceremony_id, credential);
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({})) as { error?: string };
+        setError(authErrorMessage(body.error, PASSKEY_ENROLLMENT_ERROR_MESSAGES, "添加通行密钥失败，请重试"));
+        return;
+      }
+      window.location.href = redirectUri;
+    } catch (err) {
+      setError(passkeyCeremonyErrorMessage(err, "添加通行密钥失败，请重试"));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center", paddingTop: "6px" }}>
+      {error && <div style={{ alignSelf: "stretch" }}><ErrorBanner message={error} /></div>}
+      <div style={{ display: "grid", placeItems: "center", width: "64px", height: "64px", borderRadius: "18px", background: "#e7f0e4", marginBottom: "18px" }}>
+        <PasskeyIcon size={30} />
+      </div>
+      <h3 className="font-serif" style={{ margin: "0 0 8px", fontWeight: 600, fontSize: "19px", color: "var(--text-primary)" }}>添加通行密钥</h3>
+      <p style={{ margin: "0 0 24px", fontSize: "13px", lineHeight: 1.6, color: "var(--text-secondary)", maxWidth: "300px" }}>
+        下次可以用设备的指纹、面容或屏幕锁直接登录。现在添加或稍后再说，都不影响本次登录。
+      </p>
+      <button
+        type="button" disabled={loading} onClick={handleAdd}
+        style={{ ...primaryButtonStyle(loading), display: "flex", alignItems: "center", justifyContent: "center", gap: "9px" }}
+        onMouseEnter={hoverPrimary} onMouseLeave={unhoverPrimary}
+      >
+        <PasskeyButtonIcon />
+        {loading ? "等待通行密钥…" : "添加通行密钥"}
+      </button>
+      <button
+        type="button" disabled={loading}
+        onClick={() => { window.location.href = redirectUri; }}
+        style={{ ...linkStyle, color: "var(--text-muted)", marginTop: "16px" }}
+      >
+        暂不添加，继续登录
       </button>
     </div>
   );
@@ -545,17 +620,9 @@ function MfaPasskeyStepUpView({
   const handleStepUp = async () => {
     setError(null); setLoading(true);
     try {
-      const startResult = await mfaPasskeyStart(tenantSlug, loginChallenge);
-      const challengeBytes = Uint8Array.from(
-        atob(startResult.challenge.replace(/-/g, "+").replace(/_/g, "/")),
-        c => c.charCodeAt(0)
-      );
-      const credential = await navigator.credentials.get({
-        publicKey: { challenge: challengeBytes, timeout: 60000, userVerification: "required" }
-      }) as PublicKeyCredential | null;
-      if (!credential) { setError("未选择通行密钥"); return; }
-      // Pass the raw nonce; mfaPasskeyFinish will SHA-256 hash it before sending to the server
-      const res = await mfaPasskeyFinish(tenantSlug, loginChallenge, startResult.challenge, credential);
+      const start = await mfaPasskeyStart(tenantSlug, loginChallenge);
+      const credential = await startAuthentication({ optionsJSON: start.options });
+      const res = await mfaPasskeyFinish(tenantSlug, loginChallenge, start.options.challenge, credential);
       const body = await res.json().catch(() => ({})) as { error?: string; redirect_uri?: string };
       if (body.redirect_uri) { window.location.href = body.redirect_uri; return; }
       if (body.error === "challenge_invalidated") {
@@ -564,8 +631,7 @@ function MfaPasskeyStepUpView({
         setError("通行密钥验证失败 — 请重试");
       }
     } catch (err) {
-      if (err instanceof Error && err.name === "NotAllowedError") setError("通行密钥操作已取消");
-      else setError("通行密钥验证失败 — 请重试");
+      setError(passkeyCeremonyErrorMessage(err, "通行密钥验证失败 — 请重试"));
     } finally { setLoading(false); }
   };
 
@@ -748,6 +814,8 @@ export default function TenantLoginPage() {
     loginChallenge: string;
     hasTotpFallback: boolean;
   } | null>(null);
+  // Redirect target held back while the user decides whether to add a passkey.
+  const [passkeyOfferRedirect, setPasskeyOfferRedirect] = useState<string | null>(null);
 
   useEffect(() => {
     let ignore = false;
@@ -817,6 +885,10 @@ export default function TenantLoginPage() {
           <div style={{ margin: "auto 0" }}>
             <MagicLinkConsuming tenantSlug={tenantSlug!} token={magicLinkToken} />
           </div>
+        ) : passkeyOfferRedirect !== null ? (
+          <div style={{ margin: "auto 0" }}>
+            <PasskeyEnrollmentOffer tenantSlug={tenantSlug!} redirectUri={passkeyOfferRedirect} />
+          </div>
         ) : mfaContext !== null ? (
           <div>
             <div style={{ fontSize: "11px", fontWeight: 700, letterSpacing: "0.18em", textTransform: "uppercase", color: "var(--accent-orange)", marginBottom: "10px" }}>Verify</div>
@@ -865,6 +937,7 @@ export default function TenantLoginPage() {
                 loginChallenge={loginChallenge}
                 allowRegistration={passwordAllowRegistration}
                 onMfaRequired={(ctx) => setMfaContext(ctx)}
+                onPasskeyOffer={(redirectUri) => setPasskeyOfferRedirect(redirectUri)}
               />
             ) : activeMethod === "magic_link" ? (
               <MagicLinkForm tenantSlug={tenantSlug!} loginChallenge={loginChallenge} />

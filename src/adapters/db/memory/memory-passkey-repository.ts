@@ -1,76 +1,72 @@
 import type {
-  PasskeyAssertionSession,
+  PasskeyCeremony,
+  PasskeyCeremonyKind,
   PasskeyCredential,
-  PasskeyEnrollmentSession,
   PasskeyRepository
 } from "../../../domain/authentication/passkey-repository";
 
 export class MemoryPasskeyRepository implements PasskeyRepository {
   private readonly credentials: PasskeyCredential[] = [];
-  private readonly enrollmentSessions: PasskeyEnrollmentSession[] = [];
-  private readonly assertionSessions: PasskeyAssertionSession[] = [];
+  private readonly ceremonies: PasskeyCeremony[] = [];
 
-  async createEnrollmentSession(session: PasskeyEnrollmentSession): Promise<void> {
-    this.enrollmentSessions.push(session);
+  async createCeremony(ceremony: PasskeyCeremony): Promise<void> {
+    this.ceremonies.push({ ...ceremony });
   }
 
-  async findEnrollmentSessionById(id: string): Promise<PasskeyEnrollmentSession | null> {
-    return this.enrollmentSessions.find((s) => s.id === id && s.consumedAt === null) ?? null;
-  }
+  async consumeCeremony(
+    id: string,
+    kind: PasskeyCeremonyKind,
+    now: string
+  ): Promise<PasskeyCeremony | null> {
+    const ceremony = this.ceremonies.find((c) => c.id === id);
 
-  async consumeEnrollmentSession(id: string, consumedAt: string): Promise<boolean> {
-    const session = this.enrollmentSessions.find((s) => s.id === id && s.consumedAt === null);
-    if (session !== undefined) {
-      session.consumedAt = consumedAt;
-      return true;
+    if (
+      ceremony === undefined ||
+      ceremony.kind !== kind ||
+      ceremony.consumedAt !== null ||
+      new Date(ceremony.expiresAt).getTime() <= new Date(now).getTime()
+    ) {
+      return null;
     }
-    return false;
+
+    ceremony.consumedAt = now;
+    return { ...ceremony };
   }
 
   async createCredential(credential: PasskeyCredential): Promise<void> {
-    this.credentials.push(credential);
+    this.credentials.push({ ...credential });
   }
 
   async findCredentialByCredentialId(
     tenantId: string,
     credentialId: string
   ): Promise<PasskeyCredential | null> {
-    return (
-      this.credentials.find(
-        (c) => c.tenantId === tenantId && c.credentialId === credentialId
-      ) ?? null
+    const credential = this.credentials.find(
+      (c) => c.tenantId === tenantId && c.credentialId === credentialId
     );
-  }
-
-  async updateCredentialSignCount(id: string, signCount: number): Promise<void> {
-    const credential = this.credentials.find((c) => c.id === id);
-    if (credential !== undefined) {
-      credential.signCount = signCount;
-    }
+    return credential === undefined ? null : { ...credential };
   }
 
   async listCredentialsByUserId(tenantId: string, userId: string): Promise<PasskeyCredential[]> {
-    return this.credentials.filter(c => c.tenantId === tenantId && c.userId === userId);
+    return this.credentials
+      .filter((c) => c.tenantId === tenantId && c.userId === userId)
+      .map((c) => ({ ...c }));
   }
 
-  async createAssertionSession(session: PasskeyAssertionSession): Promise<void> {
-    this.assertionSessions.push(session);
-  }
+  async updateCredentialAfterAssertion(
+    id: string,
+    update: { signCount: number; backedUp: boolean; updatedAt: string }
+  ): Promise<void> {
+    const credential = this.credentials.find((c) => c.id === id);
 
-  async findAssertionSessionById(id: string): Promise<PasskeyAssertionSession | null> {
-    return this.assertionSessions.find((s) => s.id === id && s.consumedAt === null) ?? null;
-  }
-
-  async consumeAssertionSession(id: string, consumedAt: string): Promise<boolean> {
-    const session = this.assertionSessions.find((s) => s.id === id && s.consumedAt === null);
-    if (session !== undefined) {
-      session.consumedAt = consumedAt;
-      return true;
+    if (credential !== undefined) {
+      credential.signCount = update.signCount;
+      credential.backedUp = update.backedUp;
+      credential.updatedAt = update.updatedAt;
     }
-    return false;
   }
 
   listCredentials(): PasskeyCredential[] {
-    return [...this.credentials];
+    return this.credentials.map((c) => ({ ...c }));
   }
 }
