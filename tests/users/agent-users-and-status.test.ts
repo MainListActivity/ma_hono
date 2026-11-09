@@ -257,9 +257,16 @@ describe("agent accounts never sign in as a person", () => {
       ]
     });
 
+    const relyingParty = {
+      id: "auth.example.test",
+      origin: "https://auth.example.test",
+      name: "CK"
+    };
+
     await expect(
       startPasskeyEnrollment({
         passkeyRepository: new MemoryPasskeyRepository(),
+        relyingParty,
         tenantId,
         userId: "agent_passkey",
         userRepository
@@ -269,6 +276,7 @@ describe("agent accounts never sign in as a person", () => {
     await expect(
       startPasskeyEnrollment({
         passkeyRepository: new MemoryPasskeyRepository(),
+        relyingParty,
         tenantId,
         userId: "user_passkey",
         userRepository

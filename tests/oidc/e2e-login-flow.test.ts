@@ -10,6 +10,7 @@ import { describe, expect, it } from "vitest";
 
 import { MemoryAuditRepository } from "../../src/adapters/db/memory/memory-audit-repository";
 import { MemoryAuthorizationCodeRepository } from "../../src/adapters/db/memory/memory-authorization-code-repository";
+import { MemoryClientAuthMethodPolicyRepository } from "../../src/adapters/db/memory/memory-client-auth-method-policy-repository";
 import { MemoryClientRepository } from "../../src/adapters/db/memory/memory-client-repository";
 import { MemoryMagicLinkRepository } from "../../src/adapters/db/memory/memory-magic-link-repository";
 import { MemoryPasskeyRepository } from "../../src/adapters/db/memory/memory-passkey-repository";
@@ -27,6 +28,7 @@ import type { SigningKeySigner } from "../../src/domain/keys/signer";
 import type { SigningKeyMaterial } from "../../src/domain/keys/types";
 import { hashPassword } from "../../src/domain/users/passwords";
 import { sha256Base64Url } from "../../src/lib/hash";
+import { createVirtualAuthenticator } from "../support/webauthn-authenticator";
 
 const CLIENT_SECRET = "super-secret-value";
 
@@ -255,11 +257,24 @@ const buildApp = async (
   const sessionRepository = new MemoryUserSessionRepository();
   const auditRepository = new MemoryAuditRepository();
   const resolvedUserRepository = userRepository ?? (await buildUserRepository());
+  // Passkey login and the post-password passkey offer both require the client policy to allow passkeys.
+  const clientAuthMethodPolicyRepository = new MemoryClientAuthMethodPolicyRepository();
+  await clientAuthMethodPolicyRepository.create({
+    clientId: "client_record_acme",
+    tenantId: "tenant_acme",
+    password: { enabled: true, allowRegistration: false },
+    emailMagicLink: { enabled: true, allowRegistration: false },
+    passkey: { enabled: true, allowRegistration: false },
+    google: { enabled: false }, apple: { enabled: false },
+    facebook: { enabled: false }, wechat: { enabled: false },
+    mfaRequired: false
+  });
 
   const app = createApp({
     auditRepository,
     authorizationCodeRepository,
     browserSessionRepository: sessionRepository,
+    clientAuthMethodPolicyRepository,
     clientRepository: new MemoryClientRepository(await buildClients()),
     loginChallengeLookupRepository: loginChallengeRepository,
     loginChallengeRepository,
@@ -440,62 +455,111 @@ describe("end-to-end login flows", () => {
     expect(payload.sub).toBe("user_alice");
   });
 
-  it("platform-path issuer: passkey enrollment → passkey login → code → token exchange", async () => {
+  it("platform-path issuer: password login → passkey enrollment → passkey login → code → token exchange", async () => {
     const { app, material } = await buildApp();
     const baseUrl = "https://idp.example.test/t/acme";
     const authBase = "https://auth.example.test";
     const pkce = await buildPkceChallenge("e2e-verifier-platform-passkey");
+    const authenticator = createVirtualAuthenticator();
+    const jsonHeaders = { "content-type": "application/json" };
+    const formHeaders = { "content-type": "application/x-www-form-urlencoded" };
+    // Platform-path login pages run on the auth domain, so that host is the WebAuthn RP.
+    const rpId = "auth.example.test";
 
-    // 1. Enroll passkey (enrollment routes live on auth domain)
+    // 1. Password login. It sets the user_session cookie that enrollment requires, and it
+    //    offers passkey registration because alice has no passkey yet.
+    const firstAuthorize = await doAuthorize(app, baseUrl, pkce);
+    const firstLoginToken = new URL(firstAuthorize.headers.get("location") ?? "")
+      .searchParams.get("login_challenge");
+    expect(firstLoginToken).toBeTruthy();
+
+    const passwordResponse = await app.request(`${authBase}/login/acme/password`, {
+      body: new URLSearchParams({
+        login_challenge: firstLoginToken!,
+        username: "alice",
+        password: "correct-horse-battery-staple"
+      }),
+      headers: formHeaders,
+      method: "POST"
+    });
+    expect(passwordResponse.status).toBe(200);
+    const passwordBody = await passwordResponse.json() as { passkey_enrollment_offer?: boolean };
+    expect(passwordBody.passkey_enrollment_offer).toBe(true);
+    const sessionCookie = (passwordResponse.headers.get("set-cookie") ?? "").split(";")[0];
+    expect(sessionCookie.startsWith("user_session=")).toBe(true);
+
+    // 2. Enrollment runs inside that session. The user_id in the body must be ignored.
     const enrollStart = await app.request(`${authBase}/passkey/acme/enroll/start`, {
-      body: JSON.stringify({ user_id: "user_alice" }),
-      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ user_id: "user_someone_else" }),
+      headers: { ...jsonHeaders, cookie: sessionCookie },
       method: "POST"
     });
     expect(enrollStart.status).toBe(200);
-    const { enrollment_session_id: enrollmentSessionId } = await enrollStart.json() as {
-      enrollment_session_id: string;
+    const enrollStartBody = await enrollStart.json() as {
+      ceremony_id: string;
+      options: { challenge: string };
     };
 
-    const credentialId = "e2e-passkey-credential";
     const enrollFinish = await app.request(`${authBase}/passkey/acme/enroll/finish`, {
       body: JSON.stringify({
-        enrollment_session_id: enrollmentSessionId,
-        credential_id: credentialId,
-        public_key_cbor: "dGVzdC1rZXk=",
-        sign_count: 0
+        ceremony_id: enrollStartBody.ceremony_id,
+        credential: authenticator.createRegistrationResponse({
+          challenge: enrollStartBody.options.challenge,
+          origin: authBase,
+          rpId
+        })
       }),
-      headers: { "content-type": "application/json" },
+      headers: { ...jsonHeaders, cookie: sessionCookie },
       method: "POST"
     });
     expect(enrollFinish.status).toBe(200);
+    expect(await enrollFinish.json()).toEqual({ enrolled: true });
 
-    // 2. /authorize → challenge redirect
-    const authorizeResponse = await doAuthorize(app, baseUrl, pkce);
-    expect(authorizeResponse.status).toBe(302);
-    const loginRedirect = new URL(authorizeResponse.headers.get("location") ?? "");
-    const loginChallengeToken = loginRedirect.searchParams.get("login_challenge");
+    // A user who already has a passkey is not offered registration on the next password login.
+    const repeatAuthorize = await doAuthorize(app, baseUrl, pkce);
+    const repeatLoginToken = new URL(repeatAuthorize.headers.get("location") ?? "")
+      .searchParams.get("login_challenge");
+    const repeatPasswordResponse = await app.request(`${authBase}/login/acme/password`, {
+      body: new URLSearchParams({
+        login_challenge: repeatLoginToken!,
+        username: "alice",
+        password: "correct-horse-battery-staple"
+      }),
+      headers: formHeaders,
+      method: "POST"
+    });
+    expect(repeatPasswordResponse.status).toBe(200);
+    expect(await repeatPasswordResponse.json()).not.toHaveProperty("passkey_enrollment_offer");
+
+    // 3. Passkey login with a fresh login challenge
+    const secondAuthorize = await doAuthorize(app, baseUrl, pkce);
+    expect(secondAuthorize.status).toBe(302);
+    const loginChallengeToken = new URL(secondAuthorize.headers.get("location") ?? "")
+      .searchParams.get("login_challenge");
     expect(loginChallengeToken).toBeTruthy();
 
-    // 3. Passkey login start (login routes live on auth domain)
     const loginStart = await app.request(`${authBase}/login/acme/passkey/start`, {
       body: new URLSearchParams({ login_challenge: loginChallengeToken! }),
-      headers: { "content-type": "application/x-www-form-urlencoded" },
+      headers: formHeaders,
       method: "POST"
     });
     expect(loginStart.status).toBe(200);
-    const { assertion_session_id: assertionSessionId } = await loginStart.json() as {
-      assertion_session_id: string;
+    const loginStartBody = await loginStart.json() as {
+      ceremony_id: string;
+      options: { challenge: string };
     };
 
-    // 4. Passkey login finish → code redirect
     const loginFinish = await app.request(`${authBase}/login/acme/passkey/finish`, {
       body: JSON.stringify({
-        assertion_session_id: assertionSessionId,
-        credential_id: credentialId,
-        sign_count: 1
+        ceremony_id: loginStartBody.ceremony_id,
+        login_challenge: loginChallengeToken,
+        credential: authenticator.createAssertionResponse({
+          challenge: loginStartBody.options.challenge,
+          origin: authBase,
+          rpId
+        })
       }),
-      headers: { "content-type": "application/json" },
+      headers: jsonHeaders,
       method: "POST"
     });
     expect(loginFinish.status).toBe(200);
@@ -504,7 +568,7 @@ describe("end-to-end login flows", () => {
     const code = callbackUrl.searchParams.get("code");
     expect(code).toBeTruthy();
 
-    // 5. Token exchange → id_token
+    // 4. Token exchange → id_token
     const tokenResponse = await doTokenExchange(app, baseUrl, code!, pkce);
     expect(tokenResponse.status).toBe(200);
     const tokenBody = await tokenResponse.json() as { id_token: string };

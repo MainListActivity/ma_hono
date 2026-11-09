@@ -1,7 +1,12 @@
 import { Hono, type Context } from "hono";
+import { getCookie } from "hono/cookie";
 import { cors } from "hono/cors";
 import { ZodError } from "zod";
 import { createLocalJWKSet, jwtVerify } from "jose";
+import type {
+  AuthenticationResponseJSON,
+  RegistrationResponseJSON
+} from "@simplewebauthn/server";
 
 import {
   ACTIVATION_PAGE_HEADERS,
@@ -12,10 +17,19 @@ import { authenticateWithPassword } from "../adapters/auth/local-auth/password-a
 import { consumeMagicLink, requestMagicLink } from "../adapters/auth/local-auth/magic-link-service";
 import { decryptTotpSecret, encryptTotpSecret } from "../adapters/auth/totp/totp-crypto";
 import {
+  mfaPasskeyFinishPayloadSchema,
+  mfaPasskeyStartPayloadSchema,
+  passkeyEnrollFinishPayloadSchema,
+  passkeyLoginFinishPayloadSchema
+} from "../adapters/auth/webauthn/passkey-payloads";
+import {
+  createPasskeyStepUpOptions,
   finishPasskeyEnrollment,
   finishPasskeyLogin,
   startPasskeyEnrollment,
-  startPasskeyLogin
+  startPasskeyLogin,
+  verifyPasskeyAssertion,
+  type PasskeyRelyingParty
 } from "../adapters/auth/webauthn/webauthn-service";
 import { generateTotpSecret, verifyTotpCode } from "../domain/mfa/totp-service";
 import type { MagicLinkRepository } from "../domain/authentication/magic-link-repository";
@@ -43,6 +57,8 @@ import {
 } from "../domain/authentication/login-challenge";
 import type { BrowserSessionRepository } from "../domain/authentication/repository";
 import {
+  authenticateBrowserSession,
+  browserSessionCookieName,
   buildBrowserSessionCookie,
   createBrowserSession
 } from "../domain/authentication/session-service";
@@ -372,16 +388,12 @@ class EmptyMagicLinkRepository implements MagicLinkRepository {
 }
 
 class EmptyPasskeyRepository implements PasskeyRepository {
-  async createEnrollmentSession(): Promise<void> { return; }
-  async findEnrollmentSessionById(): Promise<null> { return null; }
-  async consumeEnrollmentSession(): Promise<false> { return false; }
+  async createCeremony(): Promise<void> { return; }
+  async consumeCeremony(): Promise<null> { return null; }
   async createCredential(): Promise<void> { return; }
   async findCredentialByCredentialId(): Promise<null> { return null; }
-  async updateCredentialSignCount(): Promise<void> { return; }
   async listCredentialsByUserId(): Promise<[]> { return []; }
-  async createAssertionSession(): Promise<void> { return; }
-  async findAssertionSessionById(): Promise<null> { return null; }
-  async consumeAssertionSession(): Promise<false> { return false; }
+  async updateCredentialAfterAssertion(): Promise<void> { return; }
 }
 
 class EmptyTotpRepository implements TotpRepository {
@@ -640,6 +652,73 @@ export const createApp = (options: AppOptions) => {
     }
 
     return resolveIssuerContext({ requestUrl: context.req.url, oidcHost, tenantRepository });
+  };
+
+  /**
+   * WebAuthn relying party for a login page. The browser only runs a ceremony when the RP ID
+   * matches the page host, so the RP ID is the host that serves the login page: the auth domain
+   * for platform-path tenants, the tenant's own domain for custom-domain tenants.
+   */
+  const resolvePasskeyRelyingParty = (
+    issuerContext: import("../domain/tenants/types").ResolvedIssuerContext
+  ): PasskeyRelyingParty => {
+    const host = issuerContext.source === "custom_domain" ? issuerContext.requestHost : authDomain;
+
+    return {
+      id: host,
+      origin: `https://${host}`,
+      name: issuerContext.tenant.displayName
+    };
+  };
+
+  const isPasskeyEnabledForClient = async (oauthClientId: string): Promise<boolean> => {
+    const client = await clientRepository.findByClientId(oauthClientId);
+
+    if (client === null) {
+      return false;
+    }
+
+    const policy = await clientAuthMethodPolicyRepository.findByClientId(client.id);
+    return policy !== null && policy.passkey.enabled;
+  };
+
+  // Returns the user behind the user_session cookie when the session belongs to this tenant.
+  // Eligibility of the user itself (active, human, not expired) is checked by the passkey service.
+  const resolveSessionUserId = async (context: Context, tenantId: string): Promise<string | null> => {
+    const session = await authenticateBrowserSession({
+      sessionRepository: browserSessionRepository,
+      sessionToken: getCookie(context, browserSessionCookieName) ?? ""
+    });
+
+    return session !== null && session.tenantId === tenantId ? session.userId : null;
+  };
+
+  const readJsonBody = async (context: Context): Promise<unknown> => {
+    try {
+      return await context.req.json();
+    } catch {
+      return undefined;
+    }
+  };
+
+  // After a password login, offer passkey registration when the client allows passkeys and the
+  // user has none yet. The offer is skippable and never blocks the login.
+  const shouldOfferPasskeyEnrollment = async (
+    challenge: import("../domain/authorization/types").LoginChallenge,
+    user: User
+  ): Promise<boolean> => {
+    if (user.kind === "agent" || !(await isPasskeyEnabledForClient(challenge.clientId))) {
+      return false;
+    }
+
+    const tenantPolicy = await userRepository.findAuthMethodPolicyByTenantId(user.tenantId);
+
+    if (tenantPolicy !== null && !tenantPolicy.passkey.enabled) {
+      return false;
+    }
+
+    const credentials = await passkeyRepository.listCredentialsByUserId(user.tenantId, user.id);
+    return credentials.length === 0;
   };
 
   const createDefaultClientAuthMethodPolicy = (
@@ -1681,7 +1760,17 @@ export const createApp = (options: AppOptions) => {
       redirectUrl.searchParams.set("state", authorizationResult.request.state);
     }
 
-    return context.json({ redirect_uri: redirectUrl.toString() }, 200);
+    // The user_session cookie is already set, so the login page can offer passkey registration
+    // before it follows redirect_uri. The offer is skippable and never blocks the login.
+    const offerPasskeyEnrollment = await shouldOfferPasskeyEnrollment(result.challenge, result.user);
+
+    return context.json(
+      {
+        redirect_uri: redirectUrl.toString(),
+        ...(offerPasskeyEnrollment ? { passkey_enrollment_offer: true } : {})
+      },
+      200
+    );
   };
 
   const handleMagicLinkRequest = async (context: Context) => {
@@ -1929,17 +2018,19 @@ export const createApp = (options: AppOptions) => {
       return context.notFound();
     }
 
-    let payload: { user_id?: string };
-    try {
-      payload = await context.req.json<{ user_id?: string }>();
-    } catch {
-      return context.json({ error: "invalid_request" }, 400);
+    // Registration only runs inside an authenticated session of this tenant. The user comes from
+    // the session; any user_id in the request body is ignored.
+    const sessionUserId = await resolveSessionUserId(context, issuerContext.tenant.id);
+
+    if (sessionUserId === null) {
+      return context.json({ error: "authentication_required" }, 401);
     }
 
     const result = await startPasskeyEnrollment({
       passkeyRepository,
+      relyingParty: resolvePasskeyRelyingParty(issuerContext),
       tenantId: issuerContext.tenant.id,
-      userId: payload.user_id ?? "",
+      userId: sessionUserId,
       userRepository
     });
 
@@ -1947,12 +2038,12 @@ export const createApp = (options: AppOptions) => {
       if (result.reason === "passkey_disabled") {
         return context.json({ error: "passkey_disabled" }, 403);
       }
-      return context.json({ error: "user_not_found" }, 404);
+      return context.json({ error: "passkey_enrollment_not_allowed" }, 403);
     }
 
     return context.json({
-      challenge: result.challenge,
-      enrollment_session_id: result.enrollmentSessionId
+      ceremony_id: result.ceremonyId,
+      options: result.options
     });
   };
 
@@ -1963,41 +2054,52 @@ export const createApp = (options: AppOptions) => {
       return context.notFound();
     }
 
-    let payload: {
-      enrollment_session_id?: string;
-      credential_id?: string;
-      public_key_cbor?: string;
-      sign_count?: number;
-    };
-    try {
-      payload = await context.req.json();
-    } catch {
+    const sessionUserId = await resolveSessionUserId(context, issuerContext.tenant.id);
+
+    if (sessionUserId === null) {
+      return context.json({ error: "authentication_required" }, 401);
+    }
+
+    const payload = passkeyEnrollFinishPayloadSchema.safeParse(await readJsonBody(context));
+
+    if (!payload.success) {
       return context.json({ error: "invalid_request" }, 400);
     }
 
     const result = await finishPasskeyEnrollment({
-      credentialId: payload.credential_id ?? "",
-      enrollmentSessionId: payload.enrollment_session_id ?? "",
+      ceremonyId: payload.data.ceremony_id,
       passkeyRepository,
-      publicKeyCbor: payload.public_key_cbor ?? "",
-      signCount: payload.sign_count ?? 0
+      relyingParty: resolvePasskeyRelyingParty(issuerContext),
+      response: payload.data.credential as unknown as RegistrationResponseJSON,
+      tenantId: issuerContext.tenant.id,
+      userId: sessionUserId
     });
 
     if (result.kind === "rejected") {
-      if (result.reason === "duplicate_credential") {
-        return context.json({ error: "duplicate_credential" }, 409);
-      }
-      return context.json({ error: "invalid_session" }, 400);
+      await recordAuditEventBestEffort({
+        actorType: "end_user",
+        actorId: sessionUserId,
+        tenantId: issuerContext.tenant.id,
+        eventType: "user.passkey.enrollment.failed",
+        targetType: "user",
+        targetId: sessionUserId,
+        payload: { reason: result.reason }
+      });
+
+      return context.json(
+        { error: result.reason },
+        result.reason === "duplicate_credential" ? 409 : 400
+      );
     }
 
     await recordAuditEventBestEffort({
       actorType: "end_user",
-      actorId: null,
+      actorId: sessionUserId,
       tenantId: issuerContext.tenant.id,
       eventType: "user.passkey.enrollment.succeeded",
       targetType: "user",
-      targetId: null,
-      payload: { credential_id: payload.credential_id }
+      targetId: sessionUserId,
+      payload: { credential_id: result.credentialId }
     });
 
     return context.json({ enrolled: true });
@@ -2017,11 +2119,26 @@ export const createApp = (options: AppOptions) => {
       return context.json({ error: "invalid_request" }, 400);
     }
 
+    const loginChallengeToken = String(formData.get("login_challenge") ?? "");
+    const loginChallenge = await findActiveLoginChallengeForTenant(
+      loginChallengeToken,
+      issuerContext.tenant.id
+    );
+
+    if (loginChallenge === null) {
+      return context.json({ error: "invalid_request" }, 400);
+    }
+
+    if (!(await isPasskeyEnabledForClient(loginChallenge.clientId))) {
+      return context.json({ error: "passkey_disabled" }, 403);
+    }
+
     const result = await startPasskeyLogin({
       issuer: issuerContext.issuer,
       loginChallengeRepository: loginChallengeLookupRepository,
-      loginChallengeToken: String(formData.get("login_challenge") ?? ""),
+      loginChallengeToken,
       passkeyRepository,
+      relyingParty: resolvePasskeyRelyingParty(issuerContext),
       tenantId: issuerContext.tenant.id,
       userRepository
     });
@@ -2034,8 +2151,8 @@ export const createApp = (options: AppOptions) => {
     }
 
     return context.json({
-      challenge: result.challenge,
-      assertion_session_id: result.assertionSessionId
+      ceremony_id: result.ceremonyId,
+      options: result.options
     });
   };
 
@@ -2046,26 +2163,34 @@ export const createApp = (options: AppOptions) => {
       return context.notFound();
     }
 
-    let payload: {
-      assertion_session_id?: string;
-      credential_id?: string;
-      sign_count?: number;
-      login_challenge?: string;
-    };
-    try {
-      payload = await context.req.json();
-    } catch {
+    const payload = passkeyLoginFinishPayloadSchema.safeParse(await readJsonBody(context));
+
+    if (!payload.success) {
       return context.json({ error: "invalid_request" }, 400);
     }
 
-    const loginChallengeToken = String(payload.login_challenge ?? "");
+    const loginChallengeToken = payload.data.login_challenge;
+    const loginChallenge = await findActiveLoginChallengeForTenant(
+      loginChallengeToken,
+      issuerContext.tenant.id
+    );
+
+    if (loginChallenge === null) {
+      return context.json({ error: "invalid_request" }, 400);
+    }
+
+    if (!(await isPasskeyEnabledForClient(loginChallenge.clientId))) {
+      return context.json({ error: "passkey_disabled" }, 403);
+    }
 
     const result = await finishPasskeyLogin({
-      assertionSessionId: payload.assertion_session_id ?? "",
-      credentialId: payload.credential_id ?? "",
+      ceremonyId: payload.data.ceremony_id,
       loginChallengeRepository: loginChallengeLookupRepository,
+      loginChallengeToken,
       passkeyRepository,
-      signCount: payload.sign_count ?? 0,
+      relyingParty: resolvePasskeyRelyingParty(issuerContext),
+      response: payload.data.credential as unknown as AuthenticationResponseJSON,
+      tenantId: issuerContext.tenant.id,
       userRepository
     });
 
@@ -2443,16 +2568,11 @@ export const createApp = (options: AppOptions) => {
     const issuerContext = await resolveLoginIssuerContext(context);
     if (issuerContext === null) return context.notFound();
 
-    let payload: { login_challenge?: string };
-    try { payload = await context.req.json(); } catch {
-      return context.json({ error: "invalid_request" }, 400);
-    }
-
-    const token = (payload.login_challenge ?? "").trim();
-    if (!token) return context.json({ error: "invalid_request" }, 400);
+    const payload = mfaPasskeyStartPayloadSchema.safeParse(await readJsonBody(context));
+    if (!payload.success) return context.json({ error: "invalid_request" }, 400);
 
     const challenge = await findActiveLoginChallengeForTenant(
-      token,
+      payload.data.login_challenge.trim(),
       issuerContext.tenant.id
     );
 
@@ -2467,57 +2587,39 @@ export const createApp = (options: AppOptions) => {
       challenge.tenantId, challenge.authenticatedUserId
     );
 
-    const nonceBytes = crypto.getRandomValues(new Uint8Array(32));
-    const nonce = btoa(String.fromCharCode(...nonceBytes))
-      .replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
-    const challengeHash = await sha256Base64Url(nonce);
-    const now = new Date();
+    const options = await createPasskeyStepUpOptions({
+      credentials,
+      relyingParty: resolvePasskeyRelyingParty(issuerContext)
+    });
 
+    // Only the hash is stored. The finish call must echo the challenge back.
     await mfaPasskeyChallengeRepository.create({
       id: crypto.randomUUID(),
       tenantId: challenge.tenantId,
       loginChallengeId: challenge.id,
-      challengeHash,
+      challengeHash: await sha256Base64Url(options.challenge),
       expiresAt: challenge.expiresAt,
       consumedAt: null,
-      createdAt: now.toISOString()
+      createdAt: new Date().toISOString()
     });
 
-    return context.json({
-      challenge: nonce,
-      allowed_credentials: credentials.map(c => c.credentialId)
-    });
+    return context.json({ options });
   };
 
   const handleMfaPasskeyFinish = async (context: Context) => {
     const issuerContext = await resolveLoginIssuerContext(context);
     if (issuerContext === null) return context.notFound();
 
-    let payload: {
-      login_challenge?: string;
-      challenge_hash?: string;
-      challenge?: string;
-      credential_id?: string;
-      response?: {
-        authenticator_data?: string;
-        client_data_json?: string;
-        signature?: string;
-      };
-    };
-    try { payload = await context.req.json(); } catch {
+    const payload = mfaPasskeyFinishPayloadSchema.safeParse(await readJsonBody(context));
+    if (!payload.success) {
       return context.json({ error: "invalid_request" }, 400);
     }
 
-    const token = (payload.login_challenge ?? "").trim();
-    const challengeHash = (payload.challenge_hash ?? "").trim();
-    const challengeNonce = (payload.challenge ?? "").trim();
-    const credentialId = (payload.credential_id ?? "").trim();
-    if (!token || !challengeHash || !challengeNonce || !credentialId) {
-      return context.json({ error: "invalid_request" }, 400);
-    }
+    const challengeValue = payload.data.challenge;
+    const assertion = payload.data.credential;
 
     const challenge = await findActiveLoginChallengeForTenant(
-      token,
+      payload.data.login_challenge.trim(),
       issuerContext.tenant.id
     );
 
@@ -2528,18 +2630,26 @@ export const createApp = (options: AppOptions) => {
       return context.json({ error: "invalid_mfa_state" }, 400);
     }
 
+    // The challenge must be one this server issued for this login, and it is single-use.
     const now = new Date().toISOString();
     const mfaChallenge = await mfaPasskeyChallengeRepository.consumeByChallengeHash(
-      challengeHash, now, now
+      await sha256Base64Url(challengeValue),
+      now,
+      now
     );
-    if (mfaChallenge === null) {
+    if (mfaChallenge === null || mfaChallenge.loginChallengeId !== challenge.id) {
       return context.json({ error: "invalid_request" }, 400);
     }
 
     const credential = await passkeyRepository.findCredentialByCredentialId(
-      challenge.tenantId, credentialId
+      challenge.tenantId,
+      assertion.id
     );
-    if (credential === null) {
+    // Only a credential owned by the user who passed the first factor can complete the step-up.
+    const ownedCredential =
+      credential !== null && credential.userId === challenge.authenticatedUserId ? credential : null;
+
+    const rejectAttempt = async (error: "credential_not_found" | "passkey_verification_failed") => {
       const newCount = await loginChallengeLookupRepository.incrementMfaAttemptCount(challenge.id);
       if (newCount >= 5) {
         await loginChallengeLookupRepository.consume(challenge.id, new Date().toISOString());
@@ -2550,61 +2660,37 @@ export const createApp = (options: AppOptions) => {
         });
         return context.json({ error: "challenge_invalidated" }, 401);
       }
-      return context.json({ error: "credential_not_found", remaining_attempts: 5 - newCount }, 400);
-    }
-
-    // Attempt to verify the WebAuthn assertion using @simplewebauthn/server
-    let verificationSucceeded = false;
-    try {
-      const { verifyAuthenticationResponse } = await import("@simplewebauthn/server");
-      const authResponse = payload.response ?? {};
-      const verificationResult = await verifyAuthenticationResponse({
-        response: {
-          id: credentialId,
-          rawId: credentialId,
-          type: "public-key",
-          response: {
-            authenticatorData: authResponse.authenticator_data ?? "",
-            clientDataJSON: authResponse.client_data_json ?? "",
-            signature: authResponse.signature ?? ""
-          }
-        } as Parameters<typeof verifyAuthenticationResponse>[0]["response"],
-        expectedChallenge: challengeNonce,
-        expectedOrigin: new URL(issuerContext.issuer).origin,
-        expectedRPID: new URL(issuerContext.issuer).hostname,
-        credential: {
-          id: credentialId,
-          publicKey: Uint8Array.from(
-            atob(credential.publicKeyCbor.replace(/-/g, "+").replace(/_/g, "/")),
-            c => c.charCodeAt(0)
-          ),
-          counter: credential.signCount,
-          transports: undefined
-        }
-      });
-      verificationSucceeded = verificationResult.verified;
-    } catch {
-      verificationSucceeded = false;
-    }
-
-    if (!verificationSucceeded) {
-      const newCount = await loginChallengeLookupRepository.incrementMfaAttemptCount(challenge.id);
-      if (newCount >= 5) {
-        await loginChallengeLookupRepository.consume(challenge.id, new Date().toISOString());
-        await recordAuditEventBestEffort({
-          actorType: "user", actorId: challenge.authenticatedUserId,
-          tenantId: challenge.tenantId, eventType: "mfa.challenge.invalidated",
-          targetType: "login_challenge", targetId: challenge.id, payload: null
-        });
-        return context.json({ error: "challenge_invalidated" }, 401);
+      if (error === "credential_not_found") {
+        return context.json({ error, remaining_attempts: 5 - newCount }, 400);
       }
       await recordAuditEventBestEffort({
         actorType: "user", actorId: challenge.authenticatedUserId,
         tenantId: challenge.tenantId, eventType: "mfa.passkey_stepup.failed",
         targetType: "login_challenge", targetId: challenge.id, payload: null
       });
-      return context.json({ error: "passkey_verification_failed", remaining_attempts: 5 - newCount }, 401);
+      return context.json({ error, remaining_attempts: 5 - newCount }, 401);
+    };
+
+    if (ownedCredential === null) {
+      return rejectAttempt("credential_not_found");
     }
+
+    const assertionResult = await verifyPasskeyAssertion({
+      credential: ownedCredential,
+      expectedChallenge: challengeValue,
+      relyingParty: resolvePasskeyRelyingParty(issuerContext),
+      response: assertion as unknown as AuthenticationResponseJSON
+    });
+
+    if (assertionResult === null) {
+      return rejectAttempt("passkey_verification_failed");
+    }
+
+    await passkeyRepository.updateCredentialAfterAssertion(ownedCredential.id, {
+      signCount: assertionResult.newCounter,
+      backedUp: assertionResult.backedUp,
+      updatedAt: now
+    });
 
     const consumed = await loginChallengeLookupRepository.consume(
       challenge.id,
@@ -3256,13 +3342,14 @@ export const createApp = (options: AppOptions) => {
   app.post("/login/:tenant/passkey/start", handlePasskeyLoginStart);
   app.post("/login/:tenant/passkey/finish", handlePasskeyLoginFinish);
 
-  // MFA endpoints (platform-path: /api/login/:tenant/mfa/*)
-  app.post("/api/login/:tenant/mfa/totp/verify", handleMfaTotpVerify);
-  app.post("/api/login/:tenant/mfa/passkey/start", handleMfaPasskeyStart);
-  app.post("/api/login/:tenant/mfa/passkey/finish", handleMfaPasskeyFinish);
-  app.post("/api/login/:tenant/mfa/switch-to-totp", handleMfaSwitchToTotp);
-  app.post("/api/login/:tenant/mfa/totp/enroll/start", handleMfaTotpEnrollStart);
-  app.post("/api/login/:tenant/mfa/totp/enroll/finish", handleMfaTotpEnrollFinish);
+  // MFA endpoints (platform-path: /login/:tenant/mfa/*, served as /api/login/... on auth.{domain};
+  // the /api prefix is added by the host router, so it must not appear here)
+  app.post("/login/:tenant/mfa/totp/verify", handleMfaTotpVerify);
+  app.post("/login/:tenant/mfa/passkey/start", handleMfaPasskeyStart);
+  app.post("/login/:tenant/mfa/passkey/finish", handleMfaPasskeyFinish);
+  app.post("/login/:tenant/mfa/switch-to-totp", handleMfaSwitchToTotp);
+  app.post("/login/:tenant/mfa/totp/enroll/start", handleMfaTotpEnrollStart);
+  app.post("/login/:tenant/mfa/totp/enroll/finish", handleMfaTotpEnrollFinish);
 
   // MFA endpoints (custom-domain: /mfa/*)
   app.post("/mfa/totp/verify", handleMfaTotpVerify);

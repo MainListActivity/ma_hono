@@ -41,6 +41,8 @@ import type {
   AccessTokenRevocationRepository
 } from "../../../domain/tokens/access-token-revocation-repository";
 import type {
+  PasskeyCeremony,
+  PasskeyCeremonyKind,
   PasskeyCredential,
   PasskeyRepository
 } from "../../../domain/authentication/passkey-repository";
@@ -96,6 +98,7 @@ import {
   userPasswordCredentials,
   users,
   webauthnCredentials,
+  passkeyCeremonies,
   totpCredentials,
   mfaPasskeyChallenges
 } from "./schema";
@@ -1885,18 +1888,50 @@ export class D1MfaPasskeyChallengeRepository implements MfaPasskeyChallengeRepos
 export class D1PasskeyRepository implements PasskeyRepository {
   constructor(private readonly db: ReturnType<typeof drizzle>) {}
 
-  async createEnrollmentSession(): Promise<void> {
-    // TODO: Implement passkey enrollment sessions
+  async createCeremony(ceremony: PasskeyCeremony): Promise<void> {
+    await this.db.insert(passkeyCeremonies).values({
+      id: ceremony.id,
+      tenantId: ceremony.tenantId,
+      kind: ceremony.kind,
+      challenge: ceremony.challenge,
+      userId: ceremony.userId,
+      loginChallengeId: ceremony.loginChallengeId,
+      expiresAt: ceremony.expiresAt,
+      consumedAt: ceremony.consumedAt,
+      createdAt: ceremony.createdAt
+    });
   }
 
-  async findEnrollmentSessionById(): Promise<null> {
-    // TODO: Implement passkey enrollment sessions
-    return null;
-  }
+  async consumeCeremony(
+    id: string,
+    kind: PasskeyCeremonyKind,
+    now: string
+  ): Promise<PasskeyCeremony | null> {
+    const [row] = await this.db
+      .update(passkeyCeremonies)
+      .set({ consumedAt: now })
+      .where(
+        and(
+          eq(passkeyCeremonies.id, id),
+          eq(passkeyCeremonies.kind, kind),
+          isNull(passkeyCeremonies.consumedAt),
+          sql`${passkeyCeremonies.expiresAt} > ${now}`
+        )
+      )
+      .returning();
 
-  async consumeEnrollmentSession(): Promise<false> {
-    // TODO: Implement passkey enrollment sessions
-    return false;
+    if (row === undefined) return null;
+    return {
+      id: row.id,
+      tenantId: row.tenantId,
+      kind: row.kind === "registration" ? "registration" : "authentication",
+      challenge: row.challenge,
+      userId: row.userId,
+      loginChallengeId: row.loginChallengeId,
+      expiresAt: row.expiresAt,
+      consumedAt: row.consumedAt,
+      createdAt: row.createdAt
+    };
   }
 
   async createCredential(credential: PasskeyCredential): Promise<void> {
@@ -1905,11 +1940,11 @@ export class D1PasskeyRepository implements PasskeyRepository {
       tenantId: credential.tenantId,
       userId: credential.userId,
       credentialId: credential.credentialId,
-      publicKey: credential.publicKeyCbor,
+      publicKey: credential.publicKey,
       counter: credential.signCount,
-      transports: null,
-      deviceType: "",
-      backedUp: false,
+      transports: credential.transports,
+      deviceType: credential.deviceType,
+      backedUp: credential.backedUp,
       createdAt: credential.createdAt,
       updatedAt: credential.updatedAt
     });
@@ -1927,23 +1962,20 @@ export class D1PasskeyRepository implements PasskeyRepository {
       )
       .limit(1);
 
-    if (row === undefined) return null;
-    return {
-      id: row.id,
-      tenantId: row.tenantId,
-      userId: row.userId,
-      credentialId: row.credentialId,
-      publicKeyCbor: row.publicKey,
-      signCount: row.counter,
-      createdAt: row.createdAt,
-      updatedAt: row.updatedAt
-    };
+    return row === undefined ? null : toPasskeyCredential(row);
   }
 
-  async updateCredentialSignCount(id: string, signCount: number): Promise<void> {
+  async updateCredentialAfterAssertion(
+    id: string,
+    update: { signCount: number; backedUp: boolean; updatedAt: string }
+  ): Promise<void> {
     await this.db
       .update(webauthnCredentials)
-      .set({ counter: signCount })
+      .set({
+        counter: update.signCount,
+        backedUp: update.backedUp,
+        updatedAt: update.updatedAt
+      })
       .where(eq(webauthnCredentials.id, id));
   }
 
@@ -1958,32 +1990,23 @@ export class D1PasskeyRepository implements PasskeyRepository {
         )
       );
 
-    return rows.map(r => ({
-      id: r.id,
-      tenantId: r.tenantId,
-      userId: r.userId,
-      credentialId: r.credentialId,
-      publicKeyCbor: r.publicKey,
-      signCount: r.counter,
-      createdAt: r.createdAt,
-      updatedAt: r.updatedAt
-    }));
-  }
-
-  async createAssertionSession(): Promise<void> {
-    // TODO: Implement passkey assertion sessions
-  }
-
-  async findAssertionSessionById(): Promise<null> {
-    // TODO: Implement passkey assertion sessions
-    return null;
-  }
-
-  async consumeAssertionSession(): Promise<false> {
-    // TODO: Implement passkey assertion sessions
-    return false;
+    return rows.map(toPasskeyCredential);
   }
 }
+
+const toPasskeyCredential = (row: typeof webauthnCredentials.$inferSelect): PasskeyCredential => ({
+  id: row.id,
+  tenantId: row.tenantId,
+  userId: row.userId,
+  credentialId: row.credentialId,
+  publicKey: row.publicKey,
+  signCount: row.counter,
+  transports: Array.isArray(row.transports) ? row.transports : null,
+  deviceType: row.deviceType === "multiDevice" ? "multiDevice" : "singleDevice",
+  backedUp: row.backedUp,
+  createdAt: row.createdAt,
+  updatedAt: row.updatedAt
+});
 
 class D1RemoteGrantRepository implements RemoteGrantRepository {
   constructor(private readonly db: ReturnType<typeof drizzle>) {}
@@ -2048,6 +2071,7 @@ const EXPIRED_USER_TABLES = [
   { table: remoteGrants, column: remoteGrants.userId },
   { table: emailLoginTokens, column: emailLoginTokens.userId },
   { table: loginChallenges, column: loginChallenges.authenticatedUserId },
+  { table: passkeyCeremonies, column: passkeyCeremonies.userId },
   { table: totpCredentials, column: totpCredentials.userId }
 ];
 
@@ -2142,6 +2166,7 @@ export const createRuntimeRepositories = async (config: RuntimeConfig) => {
     tenantRepository,
     totpRepository: new D1TotpRepository(db),
     mfaPasskeyChallengeRepository: new D1MfaPasskeyChallengeRepository(db),
+    passkeyRepository: new D1PasskeyRepository(db),
     close: async () => undefined
   };
 };

@@ -156,6 +156,7 @@ export default {
       tenantRepository: repositories.tenantRepository,
       totpRepository: repositories.totpRepository,
       mfaPasskeyChallengeRepository: repositories.mfaPasskeyChallengeRepository,
+      passkeyRepository: repositories.passkeyRepository,
       totpEncryptionKey,
       userRepository: repositories.userRepository
     });

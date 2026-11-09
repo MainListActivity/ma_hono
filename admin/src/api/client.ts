@@ -1,3 +1,10 @@
+import type {
+  AuthenticationResponseJSON,
+  PublicKeyCredentialCreationOptionsJSON,
+  PublicKeyCredentialRequestOptionsJSON,
+  RegistrationResponseJSON
+} from "@simplewebauthn/browser";
+
 // SPA and Worker API share the same origin (auth.{domain}), so use a relative base path.
 const BASE_URL = "/api";
 
@@ -409,10 +416,15 @@ export const consumeMagicLink = async (
   });
 };
 
+export interface PasskeyLoginStart {
+  ceremony_id: string;
+  options: PublicKeyCredentialRequestOptionsJSON;
+}
+
 export const startPasskeyLogin = async (
   tenantSlug: string,
   loginChallenge: string
-): Promise<unknown> => {
+): Promise<PasskeyLoginStart> => {
   const body = new URLSearchParams({ login_challenge: loginChallenge });
   const res = await fetch(`${BASE_URL}/login/${tenantSlug}/passkey/start`, {
     method: "POST",
@@ -420,32 +432,51 @@ export const startPasskeyLogin = async (
     body
   });
   if (!res.ok) throw new ApiError(res.status, "Failed to start passkey login");
-  return res.json();
+  return res.json() as Promise<PasskeyLoginStart>;
 };
 
-export const finishPasskeyLogin = async (
+export const finishPasskeyLogin = (
   tenantSlug: string,
-  assertionSessionId: string,
-  credential: PublicKeyCredential
-): Promise<Response> => {
-  const assertion = credential.response as AuthenticatorAssertionResponse;
-  const toBase64 = (buf: ArrayBuffer) =>
-    btoa(String.fromCharCode(...new Uint8Array(buf)));
-  return fetch(`${BASE_URL}/login/${tenantSlug}/passkey/finish`, {
+  ceremonyId: string,
+  loginChallenge: string,
+  credential: AuthenticationResponseJSON
+): Promise<Response> =>
+  fetch(`${BASE_URL}/login/${tenantSlug}/passkey/finish`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
-      assertion_session_id: assertionSessionId,
-      credential_id: credential.id,
-      sign_count: 0, // will be overridden by server if authenticator reports it
-      response: {
-        authenticator_data: toBase64(assertion.authenticatorData),
-        client_data_json: toBase64(assertion.clientDataJSON),
-        signature: toBase64(assertion.signature)
-      }
+      ceremony_id: ceremonyId,
+      login_challenge: loginChallenge,
+      credential
     }),
   });
+
+export interface PasskeyEnrollmentStart {
+  ceremony_id: string;
+  options: PublicKeyCredentialCreationOptionsJSON;
+}
+
+// Registration runs inside the user_session cookie that the password login sets.
+export const startPasskeyEnrollment = async (
+  tenantSlug: string
+): Promise<PasskeyEnrollmentStart> => {
+  const res = await fetch(`${BASE_URL}/passkey/${tenantSlug}/enroll/start`, {
+    method: "POST"
+  });
+  if (!res.ok) throw new ApiError(res.status, "Failed to start passkey enrollment");
+  return res.json() as Promise<PasskeyEnrollmentStart>;
 };
+
+export const finishPasskeyEnrollment = (
+  tenantSlug: string,
+  ceremonyId: string,
+  credential: RegistrationResponseJSON
+): Promise<Response> =>
+  fetch(`${BASE_URL}/passkey/${tenantSlug}/enroll/finish`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ ceremony_id: ceremonyId, credential }),
+  });
 
 // ─── MFA API ─────────────────────────────────────────────────────────────────
 
@@ -466,48 +497,35 @@ export const mfaTotpVerify = async (
     body: JSON.stringify({ login_challenge: loginChallenge, code }),
   });
 
+export interface MfaPasskeyStart {
+  options: PublicKeyCredentialRequestOptionsJSON;
+}
+
 export const mfaPasskeyStart = async (
   tenantSlug: string,
   loginChallenge: string
-): Promise<{ challenge: string; allowed_credentials: string[] }> => {
+): Promise<MfaPasskeyStart> => {
   const res = await fetch(`${BASE_URL}/login/${tenantSlug}/mfa/passkey/start`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ login_challenge: loginChallenge })
   });
   if (!res.ok) throw new ApiError(res.status, "Failed to start passkey step-up");
-  return res.json() as Promise<{ challenge: string; allowed_credentials: string[] }>;
+  return res.json() as Promise<MfaPasskeyStart>;
 };
 
-export const mfaPasskeyFinish = async (
+// `challenge` is options.challenge from mfaPasskeyStart. The server only accepts challenges it issued.
+export const mfaPasskeyFinish = (
   tenantSlug: string,
   loginChallenge: string,
-  rawNonce: string,        // the raw base64url nonce from mfaPasskeyStart — NOT yet hashed
-  credential: PublicKeyCredential
-): Promise<Response> => {
-  const assertion = credential.response as AuthenticatorAssertionResponse;
-  const toBase64 = (buf: ArrayBuffer) => btoa(String.fromCharCode(...new Uint8Array(buf)));
-  // The server looks up MfaPasskeyChallenge by SHA-256(nonce), so hash before sending
-  const nonceBytes = Uint8Array.from(atob(rawNonce.replace(/-/g, "+").replace(/_/g, "/")), c => c.charCodeAt(0));
-  const hashBuf = await crypto.subtle.digest("SHA-256", nonceBytes);
-  const challengeHash = btoa(String.fromCharCode(...new Uint8Array(hashBuf)))
-    .replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
-  return fetch(`${BASE_URL}/login/${tenantSlug}/mfa/passkey/finish`, {
+  challenge: string,
+  credential: AuthenticationResponseJSON
+): Promise<Response> =>
+  fetch(`${BASE_URL}/login/${tenantSlug}/mfa/passkey/finish`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      login_challenge: loginChallenge,
-      challenge_hash: challengeHash,
-      challenge: rawNonce,  // also send the raw nonce for WebAuthn expectedChallenge
-      credential_id: credential.id,
-      response: {
-        authenticator_data: toBase64(assertion.authenticatorData),
-        client_data_json: toBase64(assertion.clientDataJSON),
-        signature: toBase64(assertion.signature)
-      }
-    }),
+    body: JSON.stringify({ login_challenge: loginChallenge, challenge, credential }),
   });
-};
 
 export const mfaSwitchToTotp = async (
   tenantSlug: string,
