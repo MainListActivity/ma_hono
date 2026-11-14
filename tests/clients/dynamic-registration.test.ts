@@ -6,6 +6,7 @@ import { MemoryRegistrationAccessTokenRepository } from "../../src/adapters/db/m
 import { MemoryTenantRepository } from "../../src/adapters/db/memory/memory-tenant-repository";
 import { MemoryTotpRepository } from "../../src/adapters/db/memory/memory-totp-repository";
 import { MemoryMfaPasskeyChallengeRepository } from "../../src/adapters/db/memory/memory-mfa-passkey-challenge-repository";
+import { MemoryClientAuthMethodPolicyRepository } from "../../src/adapters/db/memory/memory-client-auth-method-policy-repository";
 import { createApp } from "../../src/app/app";
 import type { AuditRepository } from "../../src/domain/audit/repository";
 import type { RegistrationAccessTokenRecord, RegistrationAccessTokenRepository } from "../../src/domain/clients/registration-access-token-repository";
@@ -474,6 +475,40 @@ describe("Dynamic Client Registration", () => {
     expect(stored?.applicationType).toBe("web");
     expect(stored?.trustLevel).toBe("third_party");
     expect(stored?.allowedScopes).toEqual(["content.read"]);
+  });
+
+  it("gives a newly registered MCP client usable first-factor login methods without self-registration", async () => {
+    const clientRepository = new MemoryClientRepository();
+    const policies = new MemoryClientAuthMethodPolicyRepository();
+    const app = createApp({
+      clientRepository,
+      clientAuthMethodPolicyRepository: policies,
+      registrationAccessTokenRepository: new MemoryRegistrationAccessTokenRepository(),
+      adminBootstrapPasswordHash: "",
+      adminWhitelist: [],
+      managementApiToken: "manage-acme",
+      mcpResource: "https://auth.example.test/ops",
+      oidcHost: "idp.example.test",
+      authDomain: "auth.example.test",
+      tenantRepository,
+      totpRepository: new MemoryTotpRepository(),
+      mfaPasskeyChallengeRepository: new MemoryMfaPasskeyChallengeRepository(),
+      totpEncryptionKey: new Uint8Array(32).fill(0)
+    });
+
+    const response = await app.request("https://idp.example.test/t/acme/connect/mcp/register", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ client_name: "Connector", redirect_uris: ["https://connectors.example.test/cb"], scope: "content.read" })
+    });
+    expect(response.status).toBe(201);
+    const { client_id } = (await response.json()) as { client_id: string };
+    const stored = await clientRepository.findByClientId(client_id);
+    const policy = await policies.findByClientId(stored!.id);
+    expect(policy?.password).toMatchObject({ enabled: true, allowRegistration: false });
+    expect(policy?.passkey).toMatchObject({ enabled: true, allowRegistration: false });
+    expect(policy?.emailMagicLink).toMatchObject({ enabled: true, allowRegistration: false });
+    expect(policy?.google.enabled).toBe(false);
   });
 
   it("accepts refresh-token grant metadata from MCP clients", async () => {

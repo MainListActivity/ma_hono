@@ -3577,6 +3577,17 @@ export const createApp = (options: AppOptions) => {
       const tokenHash = await sha256Base64Url(result.registrationAccessToken);
 
       try {
+        // A client with no auth-method policy row denies every login method, so a freshly
+        // registered connector would land on a login page with nothing to choose. MCP
+        // clients sign existing tenant users in with their usual first-factor methods;
+        // they never open self-registration.
+        const defaults = createDefaultClientAuthMethodPolicy(result.client.id, issuerContext.tenant.id);
+        await clientAuthMethodPolicyRepository.create({
+          ...defaults,
+          password: { ...defaults.password, enabled: true, allowRegistration: false },
+          emailMagicLink: { ...defaults.emailMagicLink, enabled: true, allowRegistration: false },
+          passkey: { ...defaults.passkey, enabled: true, allowRegistration: false }
+        });
         await registrationAccessTokenRepository.store({
           clientId: result.client.clientId,
           expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
