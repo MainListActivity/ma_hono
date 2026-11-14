@@ -636,6 +636,9 @@ export const createApp = (options: AppOptions) => {
   app.use("/revoke", tokenCors);
   app.use("/t/:tenant/revoke", tokenCors);
   app.use("/t/:tenant/.well-known/openid-configuration", tokenCors);
+  app.use("/t/:tenant/.well-known/oauth-authorization-server", tokenCors);
+  app.use("/.well-known/oauth-authorization-server/t/:tenant", tokenCors);
+  app.use("/.well-known/openid-configuration/t/:tenant", tokenCors);
   app.use("/t/:tenant/jwks.json", tokenCors);
   app.use("/db/execTemplate", tokenCors);
 
@@ -3291,6 +3294,42 @@ export const createApp = (options: AppOptions) => {
 
     return metadata === null ? context.notFound() : context.json(metadata);
   });
+
+  // RFC 8414 discovery aliases. MCP clients look up the authorization server
+  // by inserting the well-known segment before the issuer path
+  // (/.well-known/oauth-authorization-server/t/<tenant>) or by appending it
+  // (/t/<tenant>/.well-known/oauth-authorization-server). Both serve the same
+  // metadata as the issuer's openid-configuration.
+  const issuerDiscoveryUrl = (requestUrl: string, tenant: string) => {
+    const url = new URL(requestUrl);
+    url.pathname = `/t/${encodeURIComponent(tenant)}/.well-known/openid-configuration`;
+    url.search = "";
+    return url.toString();
+  };
+
+  app.get("/.well-known/oauth-authorization-server", async (context) => {
+    const metadata = await handleDiscovery(context.req.url);
+
+    return metadata === null ? context.notFound() : context.json(metadata);
+  });
+
+  app.get("/t/:tenant/.well-known/oauth-authorization-server", async (context) => {
+    const metadata = await handleDiscovery(
+      issuerDiscoveryUrl(context.req.url, context.req.param("tenant"))
+    );
+
+    return metadata === null ? context.notFound() : context.json(metadata);
+  });
+
+  for (const wellKnown of ["oauth-authorization-server", "openid-configuration"]) {
+    app.get(`/.well-known/${wellKnown}/t/:tenant`, async (context) => {
+      const metadata = await handleDiscovery(
+        issuerDiscoveryUrl(context.req.url, context.req.param("tenant"))
+      );
+
+      return metadata === null ? context.notFound() : context.json(metadata);
+    });
+  }
 
   app.get("/jwks.json", async (context) => {
     const issuerContext = await resolveIssuerContext({

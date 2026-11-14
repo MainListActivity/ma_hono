@@ -436,6 +436,46 @@ describe("Dynamic Client Registration", () => {
     expect(body.registration_access_token).not.toBe("manage-acme");
   });
 
+  it("registers a minimal RFC 7591 MCP client with public-PKCE defaults", async () => {
+    const clientRepository = new MemoryClientRepository();
+    const app = createApp({
+      clientRepository,
+      registrationAccessTokenRepository: new MemoryRegistrationAccessTokenRepository(),
+      adminBootstrapPasswordHash: "",
+      adminWhitelist: [],
+      managementApiToken: "manage-acme",
+      mcpResource: "https://auth.example.test/ops",
+      oidcHost: "idp.example.test",
+      authDomain: "auth.example.test",
+      tenantRepository,
+      totpRepository: new MemoryTotpRepository(),
+      mfaPasskeyChallengeRepository: new MemoryMfaPasskeyChallengeRepository(),
+      totpEncryptionKey: new Uint8Array(32).fill(0)
+    });
+
+    const response = await app.request("https://idp.example.test/t/acme/connect/mcp/register", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        client_name: "Connector platform",
+        redirect_uris: ["https://connectors.example.test/oauth/callback"],
+        scope: "content.read",
+        logo_uri: "https://connectors.example.test/logo.png",
+        software_id: "connector-platform",
+        trust_level: "first_party_trusted"
+      })
+    });
+
+    expect(response.status).toBe(201);
+    const body = (await response.json()) as DynamicClientRegistrationResponse & { scope: string; token_endpoint_auth_method: string };
+    expect(body.scope).toBe("openid content.read");
+    expect(body.token_endpoint_auth_method).toBe("none");
+    const stored = await clientRepository.findByClientId(body.client_id);
+    expect(stored?.applicationType).toBe("web");
+    expect(stored?.trustLevel).toBe("third_party");
+    expect(stored?.allowedScopes).toEqual(["content.read"]);
+  });
+
   it("accepts refresh-token grant metadata from MCP clients", async () => {
     const clientRepository = new MemoryClientRepository();
     const app = createApp({

@@ -94,6 +94,40 @@ describe("OIDC discovery", () => {
     });
   });
 
+  it("serves RFC 8414 path-inserted and appended aliases for a platform-path issuer", async () => {
+    const app = createApp({
+      adminBootstrapPasswordHash: "",
+      adminWhitelist: [],
+      managementApiToken: "",
+      oidcHost: "idp.example.test", authDomain: "auth.example.test",
+      tenantRepository,
+      totpRepository: new MemoryTotpRepository(),
+      mfaPasskeyChallengeRepository: new MemoryMfaPasskeyChallengeRepository(),
+      totpEncryptionKey: new Uint8Array(32).fill(0)
+    });
+
+    const canonical = await (
+      await app.request("https://idp.example.test/t/acme/.well-known/openid-configuration")
+    ).json();
+
+    for (const path of [
+      "/.well-known/oauth-authorization-server/t/acme",
+      "/.well-known/openid-configuration/t/acme",
+      "/t/acme/.well-known/oauth-authorization-server"
+    ]) {
+      const response = await app.request(`https://idp.example.test${path}`);
+      expect(response.status, path).toBe(200);
+      await expect(response.json()).resolves.toEqual(canonical);
+    }
+
+    const custom = await app.request("https://login.acme.test/.well-known/oauth-authorization-server");
+    expect(custom.status).toBe(200);
+    await expect(custom.json()).resolves.toMatchObject({ issuer: "https://login.acme.test" });
+
+    expect((await app.request("https://idp.example.test/.well-known/oauth-authorization-server/t/missing")).status).toBe(404);
+    expect((await app.request("https://idp.example.test/.well-known/oauth-authorization-server/t/disabled")).status).toBe(404);
+  });
+
   it("returns issuer-correct metadata for a custom-domain issuer", async () => {
     const app = createApp({
       adminBootstrapPasswordHash: "",
