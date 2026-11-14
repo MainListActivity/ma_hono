@@ -45,15 +45,23 @@ const mcpScopeSchema = z.string().trim().min(1).superRefine((value, context) => 
   }
 });
 
-/** Public DCR accepts only the metadata needed for an MCP PKCE client. */
+/**
+ * Public DCR accepts only the metadata needed for an MCP PKCE client.
+ * Connector platforms often send minimal RFC 7591 metadata: omitted fields take the
+ * public-PKCE defaults, unknown descriptive fields (logo_uri, client_uri, software_id…)
+ * are dropped rather than failing the registration, and a scope without openid gets it
+ * added. Security-relevant fields are still validated strictly and never taken from the
+ * request (trust, audience and hooks are server-assigned).
+ */
 export const mcpClientRegistrationSchema = z
   .object({
-    client_name: z.string().trim().min(1).max(200),
-    application_type: z.enum(["web", "native"]),
+    client_name: z.string().trim().min(1).max(200).default("MCP client"),
+    application_type: z.enum(["web", "native"]).default("web"),
     grant_types: z
       .array(z.enum(["authorization_code", "refresh_token"]))
       .min(1)
       .max(2)
+      .default(["authorization_code"])
       .superRefine((value, context) => {
         if (!value.includes("authorization_code")) {
           context.addIssue({
@@ -71,21 +79,19 @@ export const mcpClientRegistrationSchema = z
         }
       }),
     redirect_uris: z.array(mcpRedirectUriSchema).min(1).max(16),
-    response_types: z.array(z.literal("code")).length(1),
-    token_endpoint_auth_method: z.literal("none"),
+    response_types: z.array(z.literal("code")).length(1).default(["code"]),
+    token_endpoint_auth_method: z.literal("none").default("none"),
     resource: z.string().trim().min(1).optional(),
     scope: z
       .string()
       .trim()
       .default(`openid ${DEFAULT_MCP_SCOPES[0]}`)
-      .superRefine((value, context) => {
+      .transform((value) => {
         const scopes = [...new Set(value.split(/\s+/u).filter(Boolean))];
-        if (!scopes.includes("openid")) {
-          context.addIssue({
-            code: z.ZodIssueCode.custom,
-            message: "scope must include openid"
-          });
-        }
+        return (scopes.includes("openid") ? scopes : ["openid", ...scopes]).join(" ");
+      })
+      .superRefine((value, context) => {
+        const scopes = value.split(" ");
         for (const scope of scopes.filter((entry) => entry !== "openid")) {
           mcpScopeSchema.safeParse(scope).success ||
             context.addIssue({
@@ -96,7 +102,7 @@ export const mcpClientRegistrationSchema = z
         }
       })
   })
-  .strict()
+  .strip()
   .superRefine((value, context) => {
     if (value.application_type === "web") {
       for (const redirectUri of value.redirect_uris) {
