@@ -157,7 +157,17 @@ describe("OIDC discovery", () => {
         "content.withdraw",
         "content.restore",
         "content.source.manage",
-        "test.provision"
+        "test.provision",
+        "activation.summary.read",
+        "activation.followup.read",
+        "activation.followup.write",
+        "activation.proposal.read",
+        "activation.proposal.submit",
+        "activation.proposal.review",
+        "activation.proposal.execute",
+        "activation.proposal.takeover",
+        "activation.autonomy.read",
+        "activation.autonomy.manage"
       ],
       resource_indicators_supported: true,
       resource_parameter_supported: true,
