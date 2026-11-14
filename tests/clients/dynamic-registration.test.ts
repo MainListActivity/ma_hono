@@ -467,7 +467,7 @@ describe("Dynamic Client Registration", () => {
     });
 
     expect(response.status).toBe(201);
-    const body = (await response.json()) as DynamicClientRegistrationResponse & { scope: string };
+    const body = (await response.json()) as DynamicClientRegistrationResponse & { scope: string; token_endpoint_auth_method: string };
     expect(body.scope).toBe("openid content.read");
     expect(body.token_endpoint_auth_method).toBe("none");
     const stored = await clientRepository.findByClientId(body.client_id);
