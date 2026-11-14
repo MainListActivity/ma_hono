@@ -11,7 +11,9 @@ export const DEFAULT_MCP_SCOPES = [
   "content.publish",
   "content.withdraw",
   "content.restore",
-  "content.source.manage"
+  "content.source.manage",
+  // surreal_ck 运营 MCP 测试物料自助（test_kit_* 工具）；只有被登记为测试物料 agent 的主体才真正持有该能力。
+  "test.provision"
 ] as const;
 
 export interface ManagedResourcePolicy {
