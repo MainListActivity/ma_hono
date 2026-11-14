@@ -13,7 +13,18 @@ export const DEFAULT_MCP_SCOPES = [
   "content.restore",
   "content.source.manage",
   // surreal_ck 运营 MCP 测试物料自助（test_kit_* 工具）；只有被登记为测试物料 agent 的主体才真正持有该能力。
-  "test.provision"
+  "test.provision",
+  // surreal_ck 运营 MCP 公布的启用运营 scope；与其 MCP_SCOPES 保持一致，否则请求全部公布 scope 的连接器会被拒。
+  "activation.summary.read",
+  "activation.followup.read",
+  "activation.followup.write",
+  "activation.proposal.read",
+  "activation.proposal.submit",
+  "activation.proposal.review",
+  "activation.proposal.execute",
+  "activation.proposal.takeover",
+  "activation.autonomy.read",
+  "activation.autonomy.manage"
 ] as const;
 
 export interface ManagedResourcePolicy {
