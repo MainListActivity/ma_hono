@@ -156,7 +156,8 @@ describe("OIDC discovery", () => {
         "content.publish",
         "content.withdraw",
         "content.restore",
-        "content.source.manage"
+        "content.source.manage",
+        "test.provision"
       ],
       resource_indicators_supported: true,
       resource_parameter_supported: true,
