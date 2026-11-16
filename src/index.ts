@@ -71,11 +71,14 @@ export default {
       return createSetupApp(runtimeConfig.db).fetch(request);
     }
 
+    const oidcHost = `o.${platformConfig.rootDomain}`;
+    const authDomain = `auth.${platformConfig.rootDomain}`;
+    const browserRedirect = browserAuthorizationRedirect(request, oidcHost, authDomain);
+    if (browserRedirect) return browserRedirect;
+
     const contentReaderPolicy = await loadContentReaderIssuancePolicy(runtimeConfig.db);
     const repositories = await createRuntimeRepositories(runtimeConfig);
     const browserSessionRepository = createKvBrowserSessionRepository(runtimeConfig.userSessionsKv);
-    const oidcHost = `o.${platformConfig.rootDomain}`;
-    const authDomain = `auth.${platformConfig.rootDomain}`;
 
     let totpKeyObject = await runtimeConfig.keyMaterialBucket.get("totp-encryption-key");
     if (totpKeyObject === null) {
@@ -174,8 +177,6 @@ export default {
         : new Hono().route("/api", app);
 
     try {
-      const browserRedirect = browserAuthorizationRedirect(request, oidcHost, authDomain);
-      if (browserRedirect) return browserRedirect;
       return await root.fetch(request, env, executionContext);
     } finally {
       await repositories.close();
