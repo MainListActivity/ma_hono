@@ -11,13 +11,13 @@ const platformConfigRows = [
   { key: "root_domain", value: "example.test" }
 ];
 
-const createRecordingD1 = () => {
+const createRecordingD1 = (platformConfigured: boolean) => {
   const statements: D1StatementRecord[] = [];
   const buildStatement = (sql: string, params: unknown[]) => {
     const execute = (method: string) => {
       statements.push({ sql, params, method });
       const results =
-        sql.includes("platform_config") && params.includes("root_domain")
+        platformConfigured && sql.includes("platform_config") && params.includes("root_domain")
           ? platformConfigRows
           : [];
       if (method === "run") {
@@ -32,6 +32,8 @@ const createRecordingD1 = () => {
       return { results, success: true, meta: {} };
     };
     return {
+      sql,
+      params,
       bind: (...bound: unknown[]) => buildStatement(sql, bound),
       all: async () => execute("all"),
       first: async () => execute("first"),
@@ -41,40 +43,45 @@ const createRecordingD1 = () => {
   };
   const db = {
     prepare: (sql: string) => buildStatement(sql, []),
-    batch: async (stmts: unknown[]) =>
-      (stmts as Array<{ run: () => Promise<unknown> }>).map(() => ({
-        success: true,
-        results: []
-      })),
-    exec: async () => ({ count: 0, duration: 0 })
+    // One record per batch call, so a batched write cannot bypass the zero-I/O assertions.
+    batch: async (stmts: unknown[]) => {
+      const batched = stmts as Array<{ sql: string; params: unknown[] }>;
+      statements.push({
+        sql: batched.map((stmt) => stmt.sql).join("; "),
+        params: batched.flatMap((stmt) => stmt.params),
+        method: "batch"
+      });
+      return batched.map(() => ({ success: true, results: [] }));
+    },
+    exec: async (sql: string) => {
+      statements.push({ sql, params: [], method: "exec" });
+      return { count: 0, duration: 0 };
+    }
   } as unknown as D1Database;
   return { db, statements };
 };
 
-const createRecordingKv = () => {
-  const calls: string[] = [];
-  const kv = {
+const createRecordingKv = (binding: string, calls: string[]) =>
+  ({
     get: async () => {
-      calls.push("get");
+      calls.push(`${binding}.get`);
       return null;
     },
     getWithMetadata: async () => {
-      calls.push("getWithMetadata");
+      calls.push(`${binding}.getWithMetadata`);
       return { value: null, metadata: null };
     },
     put: async () => {
-      calls.push("put");
+      calls.push(`${binding}.put`);
     },
     delete: async () => {
-      calls.push("delete");
+      calls.push(`${binding}.delete`);
     },
     list: async () => {
-      calls.push("list");
+      calls.push(`${binding}.list`);
       return { keys: [], list_complete: true, cacheStatus: null };
     }
-  } as unknown as KVNamespace;
-  return { kv, calls };
-};
+  }) as unknown as KVNamespace;
 
 const createRecordingR2 = () => {
   const calls: string[] = [];
@@ -102,28 +109,24 @@ const createRecordingR2 = () => {
   return { bucket, calls };
 };
 
-const createInstrumentedEnv = () => {
-  const d1 = createRecordingD1();
+const createInstrumentedEnv = ({ platformConfigured = true } = {}) => {
+  const d1 = createRecordingD1(platformConfigured);
   const r2 = createRecordingR2();
-  const adminSessionsKv = createRecordingKv();
-  const registrationTokensKv = createRecordingKv();
-  const userSessionsKv = createRecordingKv();
+  // Every KV binding appends to this one array. Callers hold the reference before
+  // the request runs, so it must stay live; a copy taken at construction would miss later calls.
+  const kvCalls: string[] = [];
   const env = {
-    ADMIN_SESSIONS_KV: adminSessionsKv.kv,
+    ADMIN_SESSIONS_KV: createRecordingKv("ADMIN_SESSIONS_KV", kvCalls),
     DB: d1.db,
     KEY_MATERIAL_R2: r2.bucket,
-    REGISTRATION_TOKENS_KV: registrationTokensKv.kv,
-    USER_SESSIONS_KV: userSessionsKv.kv
+    REGISTRATION_TOKENS_KV: createRecordingKv("REGISTRATION_TOKENS_KV", kvCalls),
+    USER_SESSIONS_KV: createRecordingKv("USER_SESSIONS_KV", kvCalls)
   };
   return {
     env,
     d1Statements: d1.statements,
     r2Calls: r2.calls,
-    kvCalls: [
-      ...adminSessionsKv.calls,
-      ...registrationTokensKv.calls,
-      ...userSessionsKv.calls
-    ]
+    kvCalls
   };
 };
 
@@ -160,6 +163,27 @@ describe("worker fetch entry: o-host browser authorize redirect", () => {
     expect(kvCalls).toEqual([]);
   });
 
+  it("keeps the setup wizard ahead of the redirect when platform config is missing", async () => {
+    const { env, d1Statements, r2Calls, kvCalls } = createInstrumentedEnv({
+      platformConfigured: false
+    });
+
+    const response = await worker.fetch(
+      new Request("https://o.example.test/t/acme/authorize?client_id=web"),
+      env,
+      executionContext
+    );
+
+    // The setup app has no route for this path, so it answers 404 and never redirects.
+    expect(response.status).toBe(404);
+    expect(response.headers.get("location")).toBeNull();
+    // Only the platform_config probe runs; no repositories, keys, or sessions are built.
+    expect(d1Statements).toHaveLength(1);
+    expect(d1Statements[0]!.sql).toContain("platform_config");
+    expect(r2Calls).toEqual([]);
+    expect(kvCalls).toEqual([]);
+  });
+
   it("still runs full repository init for non-matching requests on the o host", async () => {
     const { env, d1Statements, r2Calls } = createInstrumentedEnv();
 
@@ -190,5 +214,25 @@ describe("worker fetch entry: o-host browser authorize redirect", () => {
     expect(r2Calls).toContain("get");
     const location = response.headers.get("location") ?? "";
     expect(location).not.toContain("/api/t/acme/authorize");
+  });
+});
+
+describe("instrumented env negative controls", () => {
+  it("reports a KV read made after the env was built", async () => {
+    const { env, kvCalls } = createInstrumentedEnv();
+
+    await env.USER_SESSIONS_KV.get("user_session:negative-control");
+
+    expect(kvCalls).toEqual(["USER_SESSIONS_KV.get"]);
+  });
+
+  it("reports a D1 batch as one statement record", async () => {
+    const { env, d1Statements } = createInstrumentedEnv();
+
+    await env.DB.batch([env.DB.prepare("INSERT INTO probe (id) VALUES (?)").bind("p_1")]);
+
+    expect(d1Statements).toEqual([
+      { sql: "INSERT INTO probe (id) VALUES (?)", params: ["p_1"], method: "batch" }
+    ]);
   });
 });
