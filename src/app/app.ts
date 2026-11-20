@@ -485,6 +485,11 @@ export interface AppOptions {
   mcpResource?: string;
   /** Optional server-side scope ceiling for the operations MCP. */
   mcpScopes?: string[];
+  /**
+   * Optional per-tenant MCP resource overrides keyed by tenant slug. Tenants not
+   * listed here fall back to `mcpResource`/`mcpScopes`.
+   */
+  mcpResourcesByTenant?: Record<string, { resource: string; scopes: readonly string[] }>;
   mfaPasskeyChallengeRepository: MfaPasskeyChallengeRepository;
   passkeyRepository?: PasskeyRepository;
   totpRepository: TotpRepository;
@@ -542,6 +547,18 @@ export const createApp = (options: AppOptions) => {
           resource: options.mcpResource,
           scopes: options.mcpScopes ?? DEFAULT_MCP_SCOPES
         });
+  const mcpResourcePolicyByTenant = new Map<string, ManagedResourcePolicy>(
+    Object.entries(options.mcpResourcesByTenant ?? {}).map(([slug, policy]) => [
+      slug,
+      createManagedResourcePolicy(policy)
+    ])
+  );
+  const mcpResourcePolicyFor = (
+    issuerContext: import("../domain/tenants/types").ResolvedIssuerContext | null
+  ): ManagedResourcePolicy | null =>
+    issuerContext === null
+      ? mcpResourcePolicy
+      : (mcpResourcePolicyByTenant.get(issuerContext.tenant.slug) ?? mcpResourcePolicy);
   const mfaPasskeyChallengeRepository = options.mfaPasskeyChallengeRepository;
   const passkeyRepository = options.passkeyRepository ?? new EmptyPasskeyRepository();
   const totpRepository = options.totpRepository;
@@ -892,7 +909,7 @@ export const createApp = (options: AppOptions) => {
     return issuerContext === null
       ? null
       : buildDiscoveryMetadata(issuerContext, {
-          mcpResourcePolicy
+          mcpResourcePolicy: mcpResourcePolicyFor(issuerContext)
         });
   };
 
@@ -1102,7 +1119,7 @@ export const createApp = (options: AppOptions) => {
         codeChallengeMethod: url.searchParams.get("code_challenge_method")
       },
       session,
-      resourcePolicy: mcpResourcePolicy
+      resourcePolicy: mcpResourcePolicyFor(issuerContext)
     });
 
     if (result.kind === "error") {
@@ -1355,7 +1372,7 @@ export const createApp = (options: AppOptions) => {
         codeChallengeMethod: challenge.codeChallengeMethod
       },
       session,
-      resourcePolicy: mcpResourcePolicy,
+      resourcePolicy: mcpResourcePolicyFor(issuerContext),
       consentGranted: true
     });
 
@@ -1668,7 +1685,7 @@ export const createApp = (options: AppOptions) => {
         userId: result.user.id,
         tenantId: result.user.tenantId
       },
-      resourcePolicy: mcpResourcePolicy
+      resourcePolicy: mcpResourcePolicyFor(issuerContext)
     });
 
     if (authorizationResult.kind === "error") {
@@ -1930,7 +1947,7 @@ export const createApp = (options: AppOptions) => {
         userId: result.user.id,
         tenantId: result.user.tenantId
       },
-      resourcePolicy: mcpResourcePolicy
+      resourcePolicy: mcpResourcePolicyFor(issuerContext)
     });
 
     if (authorizationResult.kind === "error") {
@@ -2293,7 +2310,7 @@ export const createApp = (options: AppOptions) => {
         userId: result.user.id,
         tenantId: result.user.tenantId
       },
-      resourcePolicy: mcpResourcePolicy
+      resourcePolicy: mcpResourcePolicyFor(issuerContext)
     });
 
     if (authorizationResult.kind === "error") {
@@ -2417,7 +2434,7 @@ export const createApp = (options: AppOptions) => {
         codeChallengeMethod: challenge.codeChallengeMethod
       },
       session: { userId, tenantId: challenge.tenantId },
-      resourcePolicy: mcpResourcePolicy
+      resourcePolicy: mcpResourcePolicyFor(issuerContext)
     });
 
     if (authorizationResult.kind === "error") {
@@ -3550,7 +3567,8 @@ export const createApp = (options: AppOptions) => {
       return { status: 404 as const };
     }
 
-    if (mcpResourcePolicy === null) {
+    const resourcePolicy = mcpResourcePolicyFor(issuerContext);
+    if (resourcePolicy === null) {
       return { status: 404 as const };
     }
 
@@ -3572,7 +3590,7 @@ export const createApp = (options: AppOptions) => {
         clientRepository,
         input: payload,
         issuerContext,
-        resourcePolicy: mcpResourcePolicy
+        resourcePolicy
       });
       const tokenHash = await sha256Base64Url(result.registrationAccessToken);
 
@@ -3607,7 +3625,7 @@ export const createApp = (options: AppOptions) => {
           payload: {
             application_type: result.client.applicationType,
             client_name: result.client.clientName,
-            resource: mcpResourcePolicy.resource,
+            resource: resourcePolicy.resource,
             scopes: result.client.allowedScopes ?? []
           },
           occurredAt: new Date().toISOString()
@@ -3634,7 +3652,7 @@ export const createApp = (options: AppOptions) => {
           grant_types: result.client.grantTypes,
           response_types: result.client.responseTypes,
           scope: ["openid", ...(result.client.allowedScopes ?? [])].join(" "),
-          resource: mcpResourcePolicy.resource
+          resource: resourcePolicy.resource
         }
       };
     } catch (error) {
@@ -3685,7 +3703,8 @@ export const createApp = (options: AppOptions) => {
       tenantRepository
     });
 
-    if (issuerContext === null || mcpResourcePolicy === null) {
+    const resourcePolicy = issuerContext === null ? null : mcpResourcePolicyFor(issuerContext);
+    if (issuerContext === null || resourcePolicy === null) {
       return { kind: "not_found" as const };
     }
 
@@ -3714,12 +3733,12 @@ export const createApp = (options: AppOptions) => {
       || client.tenantId !== issuerContext.tenant.id
       || client.tokenEndpointAuthMethod !== "none"
       || client.trustLevel !== "third_party"
-      || client.accessTokenAudience !== mcpResourcePolicy.resource
+      || client.accessTokenAudience !== resourcePolicy.resource
     ) {
       return { kind: "not_found" as const };
     }
 
-    return { kind: "authorized" as const, client, token };
+    return { kind: "authorized" as const, client, token, resourcePolicy };
   };
 
   app.post("/connect/register", async (context) => {
@@ -3821,7 +3840,7 @@ export const createApp = (options: AppOptions) => {
         eventType: "oidc.client.deleted",
         targetType: "oidc_client",
         targetId: result.client.clientId,
-        payload: { resource: mcpResourcePolicy?.resource ?? null }
+        payload: { resource: result.resourcePolicy.resource }
       });
       return context.body(null, 204);
     }
@@ -3978,7 +3997,7 @@ export const createApp = (options: AppOptions) => {
         codeChallengeMethod: challenge.codeChallengeMethod
       },
       session: { userId: newUser.id, tenantId: newUser.tenantId },
-      resourcePolicy: mcpResourcePolicy
+      resourcePolicy: mcpResourcePolicyFor(issuerContext)
     });
 
     if (authorizationResult.kind === "error") {
