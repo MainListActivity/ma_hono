@@ -189,4 +189,38 @@ describe("MCP resource indicators", () => {
     });
     expect(replay.status).toBe(400);
   });
+
+  const consentPageCsp = async (redirectUri: string): Promise<string> => {
+    const app = createPolicyApp(
+      new MemoryClientRepository([{ ...mcpClient, redirectUris: [redirectUri] }])
+    );
+    const authorizeResponse = await app.request(
+      `https://idp.example.test/t/acme/authorize?client_id=mcp-client&redirect_uri=${encodeURIComponent(
+        redirectUri
+      )}&response_type=code&scope=${encodeURIComponent("openid content.read")}&resource=${encodeURIComponent(
+        resource
+      )}&state=state-csp&code_challenge=challenge&code_challenge_method=S256`
+    );
+    expect(authorizeResponse.status).toBe(302);
+    const consentLocation = new URL(authorizeResponse.headers.get("location") ?? "");
+    const consentPage = await app.request(consentLocation.toString());
+    expect(consentPage.status).toBe(200);
+    return consentPage.headers.get("content-security-policy") ?? "";
+  };
+
+  it("consent CSP allows the full https redirect chain (multi-hop callbacks)", async () => {
+    const csp = await consentPageCsp("https://api.devin.ai/mcp/oauth/callback");
+    expect(csp).toContain("form-action 'self' https:");
+    expect(csp).not.toContain("https://api.devin.ai");
+  });
+
+  it("consent CSP keeps loopback http callbacks in form-action", async () => {
+    const csp = await consentPageCsp("http://127.0.0.1:43123/callback");
+    expect(csp).toContain("form-action 'self' https: http://127.0.0.1:43123");
+  });
+
+  it("consent CSP keeps custom-scheme callbacks in form-action", async () => {
+    const csp = await consentPageCsp("devin-mcp://oauth/callback");
+    expect(csp).toContain("form-action 'self' https: devin-mcp:");
+  });
 });
