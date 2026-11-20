@@ -1269,10 +1269,14 @@ export const createApp = (options: AppOptions) => {
       return context.json({ error: "invalid_consent_challenge" }, 400);
     }
 
-    // Chromium applies form-action to the POST's redirect as well. The callback
-    // was validated against the registered client before creating this challenge.
+    // Chromium 对表单提交后的整条 302 重定向链都执行 form-action（例如
+    // api.devin.ai 回调后会再跳 app.devin.ai），所以 'self' https: 放行任意
+    // https 跳转；非 https 回调（回环 http://127.0.0.1:port、origin 为 "null" 的
+    // 自定义协议）不在 https: 覆盖内，仍须显式加入。
+    // The callback was validated against the registered client before creating this challenge.
     const callbackUrl = new URL(challenge.redirectUri);
-    const formAction = callbackUrl.origin === "null" ? callbackUrl.protocol : callbackUrl.origin;
+    const callbackOrigin = callbackUrl.origin === "null" ? callbackUrl.protocol : callbackUrl.origin;
+    const formAction = callbackOrigin.startsWith("https:") ? "https:" : `https: ${callbackOrigin}`;
     context.header("Content-Security-Policy", `default-src 'none'; form-action 'self' ${formAction}; style-src 'unsafe-inline'`);
     context.header("Cache-Control", "no-store");
     return context.html(
