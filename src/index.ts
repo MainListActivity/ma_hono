@@ -149,6 +149,13 @@ export default {
       // OIDC audience used to validate its bearer token.  Codex and other MCP
       // clients require the metadata resource to match the URL they connect to.
       mcpResource: `https://l.${platformConfig.rootDomain}/api/ops/mcp`,
+      // company 租户挂独立 MCP 资源，scope 只有 company.work；其余租户沿用上面全局策略。
+      mcpResourcesByTenant: {
+        company: {
+          resource: `https://company.${platformConfig.rootDomain}/api/mcp`,
+          scopes: ["company.work"]
+        }
+      },
       contentReaderPolicy,
       oidcHost,
       browserSessionRepository,
