@@ -29,7 +29,7 @@ export interface PasswordCredential {
   updatedAt: string;
 }
 
-export type UserInvitationPurpose = "account_activation";
+export type UserInvitationPurpose = "account_activation" | "provision_cancellation";
 
 export interface UserInvitation {
   id: string;

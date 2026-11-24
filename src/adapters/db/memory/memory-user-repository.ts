@@ -51,7 +51,9 @@ export class MemoryUserRepository implements UserRepository {
     now,
     tokenHash
   }: ActivateUserByInvitationTokenInput): Promise<ActivateUserByInvitationTokenResult> {
-    const index = this.invitations.findIndex((invitation) => invitation.tokenHash === tokenHash);
+    const index = this.invitations.findIndex((invitation) =>
+      invitation.tokenHash === tokenHash && invitation.purpose === "account_activation"
+    );
 
     if (index === -1) {
       return {
@@ -151,6 +153,7 @@ export class MemoryUserRepository implements UserRepository {
   }
 
   async createProvisionedUserWithInvitation({
+    cancellation,
     invitation,
     user
   }: CreateProvisionedUserWithInvitationInput): Promise<void> {
@@ -162,6 +165,23 @@ export class MemoryUserRepository implements UserRepository {
 
     this.users.push(user);
     this.invitations.push(invitation);
+    if (cancellation) this.invitations.push(cancellation);
+  }
+
+  async cancelProvisionedUser(tenantId: string, tokenHash: string) {
+    const proof = this.invitations.find((invitation) =>
+      invitation.tenantId === tenantId && invitation.tokenHash === tokenHash && invitation.purpose === "provision_cancellation"
+    );
+    if (!proof) return "absent";
+    const index = this.users.findIndex((user) => user.tenantId === tenantId && user.id === proof.userId);
+    const user = this.users[index];
+    if (!user || user.status !== "provisioned" || user.kind === "agent" || user.emailVerified) return "not_provisioned";
+    this.users.splice(index, 1);
+    for (let i = this.invitations.length - 1; i >= 0; i--) {
+      const invitation = this.invitations[i];
+      if (invitation?.tenantId === tenantId && invitation.userId === user.id) this.invitations.splice(i, 1);
+    }
+    return { userId: user.id };
   }
 
   private assertUserUnique(user: User): void {
@@ -242,6 +262,7 @@ export class MemoryUserRepository implements UserRepository {
       if (
         storedInvitation.tenantId === tenantId &&
         storedInvitation.userId === userId &&
+        storedInvitation.purpose === "account_activation" &&
         storedInvitation.consumedAt === null
       ) {
         this.invitations[index] = { ...storedInvitation, expiresAt: nowIso };

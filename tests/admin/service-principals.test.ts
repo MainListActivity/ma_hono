@@ -190,6 +190,35 @@ describe("admin service principals", () => {
     expect(JSON.stringify(provisioned)).not.toContain(provisionBody.activation_url);
   });
 
+  it("cancels only a pending user bound to the original provision proof", async () => {
+    const { app, userRepository, auditRepository } = createFixture();
+    const session = await loginAsAdmin(app);
+    const principal = await mintPrincipal(app, session);
+    const readOnly = await mintPrincipal(app, session, ["user.read"]);
+    const endpoint = "https://idp.example.test/admin/tenants/tenant_ck/users";
+    const post = (path: string, body: object, bearer = principal.token) => app.request(`${endpoint}${path}`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${bearer}`, "content-type": "application/json" },
+      body: JSON.stringify(body)
+    });
+    const proof = crypto.randomUUID();
+    const cancelled = await post("", {
+      email: "cancel@example.test", display_name: "Cancel",
+      cancellation_token_hash: await sha256Base64Url(proof)
+    });
+    expect(cancelled.status).toBe(201);
+    expect(await cancelled.json()).toMatchObject({ cancellable: true });
+    expect((await post("", { email: "keep@example.test", display_name: "Keep" })).status).toBe(201);
+    expect((await post("/cancel-provision", { cancellation_token: proof }, readOnly.token)).status).toBe(403);
+    expect((await post("/cancel-provision", { cancellation_token: crypto.randomUUID() })).status).toBe(204);
+    expect(userRepository.listUsers()).toHaveLength(2);
+    expect((await post("/cancel-provision", { cancellation_token: proof })).status).toBe(204);
+    expect((await post("/cancel-provision", { cancellation_token: proof })).status).toBe(204);
+    expect(userRepository.listUsers().map((user) => user.email)).toEqual(["keep@example.test"]);
+    expect(auditRepository.listEvents().filter((event) => event.eventType === "user.provision_cancelled")).toHaveLength(1);
+    expect(JSON.stringify(auditRepository.listEvents())).not.toContain(proof);
+  });
+
   it("rejects a revoked service token with 403 and does not create a user", async () => {
     const { app, userRepository } = createFixture();
     const sessionToken = await loginAsAdmin(app);

@@ -1197,7 +1197,7 @@ export class D1UserRepository implements UserRepository {
     const [invitationRow] = await this.db
       .select()
       .from(userInvitations)
-      .where(eq(userInvitations.tokenHash, tokenHash))
+      .where(and(eq(userInvitations.tokenHash, tokenHash), eq(userInvitations.purpose, "account_activation")))
       .limit(1);
 
     if (invitationRow === undefined) {
@@ -1356,6 +1356,7 @@ export class D1UserRepository implements UserRepository {
   }
 
   async createProvisionedUserWithInvitation({
+    cancellation,
     invitation,
     user
   }: CreateProvisionedUserWithInvitationInput): Promise<void> {
@@ -1372,17 +1373,26 @@ export class D1UserRepository implements UserRepository {
         createdAt: user.createdAt,
         updatedAt: user.updatedAt
       }),
-      this.db.insert(userInvitations).values({
-        id: invitation.id,
-        tenantId: invitation.tenantId,
-        userId: invitation.userId,
-        tokenHash: invitation.tokenHash,
-        purpose: invitation.purpose,
-        expiresAt: invitation.expiresAt,
-        consumedAt: invitation.consumedAt,
-        createdAt: invitation.createdAt
-      })
+      this.db.insert(userInvitations).values(cancellation ? [invitation, cancellation] : [invitation])
     ]);
+  }
+
+  async cancelProvisionedUser(tenantId: string, tokenHash: string) {
+    const proof = this.db.select({ userId: userInvitations.userId }).from(userInvitations).where(and(
+      eq(userInvitations.tenantId, tenantId),
+      eq(userInvitations.tokenHash, tokenHash),
+      eq(userInvitations.purpose, "provision_cancellation")
+    ));
+    const [deleted] = await this.db.delete(users).where(and(
+      eq(users.tenantId, tenantId),
+      eq(users.id, proof),
+      eq(users.kind, "human"),
+      eq(users.status, "provisioned"),
+      eq(users.emailVerified, false)
+    )).returning({ id: users.id });
+    if (deleted) return { userId: deleted.id };
+    const [remaining] = await proof;
+    return remaining ? "not_provisioned" as const : "absent" as const;
   }
 
   async findAuthMethodPolicyByTenantId(tenantId: string): Promise<TenantAuthMethodPolicy | null> {
@@ -1490,6 +1500,7 @@ export class D1UserRepository implements UserRepository {
           and(
             eq(userInvitations.tenantId, tenantId),
             eq(userInvitations.userId, userId),
+            eq(userInvitations.purpose, "account_activation"),
             isNull(userInvitations.consumedAt)
           )
         ),

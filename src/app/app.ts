@@ -408,6 +408,10 @@ class EmptyMfaPasskeyChallengeRepository implements MfaPasskeyChallengeRepositor
 }
 
 class EmptyUserRepository implements UserRepository {
+  async cancelProvisionedUser(): Promise<never> {
+    throw new Error("User repository unavailable");
+  }
+
   async activateUserByInvitationToken() {
     return {
       kind: "not_found" as const
@@ -4336,16 +4340,20 @@ export const createApp = (options: AppOptions) => {
       email?: string;
       kind?: unknown;
       username?: string | null;
+      cancellation_token_hash?: unknown;
     }>();
     const email = payload.email?.trim() ?? "";
     const displayName = payload.display_name?.trim() ?? "";
     const username = payload.username?.trim();
     const requestedKind = payload.kind ?? "human";
+    const cancellationTokenHash = payload.cancellation_token_hash;
 
     if (
       email.length === 0 ||
       displayName.length === 0 ||
-      (requestedKind !== "human" && requestedKind !== "agent")
+      (requestedKind !== "human" && requestedKind !== "agent") ||
+      (cancellationTokenHash !== undefined &&
+        (requestedKind !== "human" || typeof cancellationTokenHash !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(cancellationTokenHash)))
     ) {
       return context.json({ error: "invalid_request" }, 400);
     }
@@ -4369,6 +4377,7 @@ export const createApp = (options: AppOptions) => {
         provisioned = { user, invitationToken: null };
       } else {
         const result = await provisionUser({
+          cancellationTokenHash: typeof cancellationTokenHash === "string" ? cancellationTokenHash : undefined,
           userRepository,
           tenantId,
           email,
@@ -4421,10 +4430,35 @@ export const createApp = (options: AppOptions) => {
       {
         user: userAdminWire(provisioned.user),
         invitation_token: provisioned.invitationToken,
-        activation_url: activationUrl
+        activation_url: activationUrl,
+        ...(cancellationTokenHash ? { cancellable: true } : {})
       },
       201
     );
+  });
+
+  app.post("/admin/tenants/:tenantId/users/cancel-provision", async (context) => {
+    const scopeGate = await requireAdminScope(context.req.header("authorization"), ["user.provision", "user.write"]);
+    if (!scopeGate.ok) return context.json({ error: scopeGate.error }, scopeGate.status);
+
+    const tenantId = context.req.param("tenantId");
+    const payload = await context.req.json<{ cancellation_token?: unknown }>().catch(() => null);
+    const proof = payload?.cancellation_token;
+    if (typeof proof !== "string" || !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(proof)) {
+      return context.json({ error: "invalid_request" }, 400);
+    }
+    if ((await tenantRepository.findById(tenantId)) === null) return context.json({ error: "tenant_not_found" }, 404);
+
+    const result = await userRepository.cancelProvisionedUser(tenantId, await sha256Base64Url(proof));
+    if (result === "not_provisioned") return context.json({ error: "invalid_state" }, 409);
+    if (typeof result === "object") {
+      const actor = auditActorFromAuthorization(scopeGate.auth);
+      await recordAuditEventBestEffort({
+        actorType: actor.actorType, actorId: actor.actorId, tenantId,
+        eventType: "user.provision_cancelled", targetType: "user", targetId: result.userId, payload: {}
+      });
+    }
+    return context.body(null, 204);
   });
 
   app.post("/admin/tenants/:tenantId/users/:userId/reissue-activation", async (context) => {
