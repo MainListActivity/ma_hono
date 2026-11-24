@@ -221,7 +221,7 @@ describe("admin service principals", () => {
   });
 
   it("rejects a provision after its proof was cancelled and never cancels an active user", async () => {
-    const { app, userRepository } = createFixture();
+    const { app, userRepository, auditRepository } = createFixture();
     const principal = await mintPrincipal(app, await loginAsAdmin(app));
     const post = (path: string, body: object) => app.request(`https://idp.example.test${path}`, {
       method: "POST",
@@ -237,6 +237,9 @@ describe("admin service principals", () => {
     expect((await cancel(earlyProof)).status).toBe(204);
     expect((await provision("delayed@example.test", earlyProof)).status).toBe(409);
     expect(userRepository.listUsers()).toHaveLength(0);
+    const reservations = auditRepository.listEvents().filter((event) => event.eventType === "user.provision_cancellation_reserved");
+    expect(reservations).toMatchObject([{ actorId: principal.id, tenantId: "tenant_ck", payload: {} }]);
+    expect(JSON.stringify(reservations)).not.toContain(earlyProof);
 
     const activeProof = crypto.randomUUID();
     const created = await provision("active@example.test", activeProof);

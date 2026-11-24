@@ -114,7 +114,7 @@ it("persists early cancellation, cascades pending invitations, and preserves act
     const makeProof = () => sha256Base64Url(crypto.randomUUID());
 
     const earlyProof = await makeProof();
-    expect(await repo.cancelProvisionedUser(tenantId, earlyProof)).toBe("absent");
+    expect(await repo.cancelProvisionedUser(tenantId, earlyProof)).toBe("reserved");
     await expect(provision("late@example.test", earlyProof)).rejects.toThrow();
     expect(await db.prepare("SELECT COUNT(*) AS n FROM users").first("n")).toBe(0);
 

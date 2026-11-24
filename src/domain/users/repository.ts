@@ -70,7 +70,7 @@ export interface UserRepository {
   ): Promise<ActivateUserByInvitationTokenResult>;
   createAgentUser(input: CreateAgentUserInput): Promise<void>;
   createProvisionedUserWithInvitation(input: CreateProvisionedUserWithInvitationInput): Promise<void>;
-  cancelProvisionedUser(tenantId: string, tokenHash: string): Promise<{ userId: string } | "absent" | "not_provisioned">;
+  cancelProvisionedUser(tenantId: string, tokenHash: string): Promise<{ userId: string } | "reserved" | "absent" | "not_provisioned">;
   findAuthMethodPolicyByTenantId(tenantId: string): Promise<TenantAuthMethodPolicy | null>;
   findPasswordCredentialByUserId(
     tenantId: string,

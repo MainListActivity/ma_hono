@@ -1387,8 +1387,9 @@ export class D1UserRepository implements UserRepository {
       eq(userInvitations.tokenHash, tokenHash),
       eq(userInvitations.purpose, "provision_cancellation")
     ));
-    const [, [deleted], [remaining]] = await this.db.batch([
-      this.db.insert(userProvisionProofs).values({ tenantId, tokenHash }).onConflictDoNothing(),
+    const [[reserved], [deleted], [remaining]] = await this.db.batch([
+      this.db.insert(userProvisionProofs).values({ tenantId, tokenHash }).onConflictDoNothing()
+        .returning({ tenantId: userProvisionProofs.tenantId }),
       this.db.delete(users).where(and(
         eq(users.tenantId, tenantId),
         eq(users.id, proof),
@@ -1399,7 +1400,7 @@ export class D1UserRepository implements UserRepository {
       proof.limit(1)
     ]);
     if (deleted) return { userId: deleted.id };
-    return remaining ? "not_provisioned" as const : "absent" as const;
+    return remaining ? "not_provisioned" as const : reserved ? "reserved" as const : "absent" as const;
   }
 
   async findAuthMethodPolicyByTenantId(tenantId: string): Promise<TenantAuthMethodPolicy | null> {

@@ -1073,9 +1073,13 @@ export const createApp = (options: AppOptions) => {
   };
 
   const isProvisionConflictError = (error: unknown) => {
+    return error instanceof Error && /already exists|duplicate|unique constraint failed/i.test(error.message);
+  };
+
+  const isAdminProvisionConflictError = (error: unknown) => {
     const seen = new Set<Error>();
     while (error instanceof Error && !seen.has(error)) {
-      if (/already exists|duplicate|unique constraint failed/i.test(error.message)) return true;
+      if (isProvisionConflictError(error)) return true;
       seen.add(error);
       error = error.cause;
     }
@@ -4397,7 +4401,8 @@ export const createApp = (options: AppOptions) => {
         }
       });
 
-      return context.json({ error: isProvisionConflictError(error) ? "conflict" : "internal_error" }, isProvisionConflictError(error) ? 409 : 500);
+      const conflict = isAdminProvisionConflictError(error);
+      return context.json({ error: conflict ? "conflict" : "internal_error" }, conflict ? 409 : 500);
     }
 
     let activationUrl: string | null = null;
@@ -4448,11 +4453,12 @@ export const createApp = (options: AppOptions) => {
 
     const result = await userRepository.cancelProvisionedUser(tenantId, await sha256Base64Url(validatedProof.data));
     if (result === "not_provisioned") return context.json({ error: "invalid_state" }, 409);
-    if (typeof result === "object") {
+    if (typeof result === "object" || result === "reserved") {
       const actor = auditActorFromAuthorization(scopeGate.auth);
       await recordAuditEventBestEffort({
         actorType: actor.actorType, actorId: actor.actorId, tenantId,
-        eventType: "user.provision_cancelled", targetType: "user", targetId: result.userId, payload: {}
+        eventType: result === "reserved" ? "user.provision_cancellation_reserved" : "user.provision_cancelled",
+        targetType: "user", targetId: result === "reserved" ? null : result.userId, payload: {}
       });
     }
     return context.body(null, 204);

@@ -175,11 +175,13 @@ export class MemoryUserRepository implements UserRepository {
   }
 
   async cancelProvisionedUser(tenantId: string, tokenHash: string) {
-    this.provisionProofs.add(JSON.stringify([tenantId, tokenHash]));
+    const key = JSON.stringify([tenantId, tokenHash]);
+    const reserved = !this.provisionProofs.has(key);
+    this.provisionProofs.add(key);
     const proof = this.invitations.find((invitation) =>
       invitation.tenantId === tenantId && invitation.tokenHash === tokenHash && invitation.purpose === "provision_cancellation"
     );
-    if (!proof) return "absent";
+    if (!proof) return reserved ? "reserved" : "absent";
     const index = this.users.findIndex((user) => user.tenantId === tenantId && user.id === proof.userId);
     const user = this.users[index];
     if (!user || user.status !== "provisioned" || user.kind === "agent" || user.emailVerified) return "not_provisioned";
