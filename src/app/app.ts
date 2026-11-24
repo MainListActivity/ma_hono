@@ -4444,7 +4444,7 @@ export const createApp = (options: AppOptions) => {
     const tenantId = context.req.param("tenantId");
     const payload = await context.req.json<{ cancellation_token?: unknown }>().catch(() => null);
     const proof = payload?.cancellation_token;
-    if (typeof proof !== "string" || !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(proof)) {
+    if (typeof proof !== "string" || !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(proof)) {
       return context.json({ error: "invalid_request" }, 400);
     }
     if ((await tenantRepository.findById(tenantId)) === null) return context.json({ error: "tenant_not_found" }, 404);

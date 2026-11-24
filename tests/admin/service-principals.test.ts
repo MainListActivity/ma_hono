@@ -201,7 +201,7 @@ describe("admin service principals", () => {
       headers: { authorization: `Bearer ${bearer}`, "content-type": "application/json" },
       body: JSON.stringify(body)
     });
-    const proof = crypto.randomUUID();
+    const proof = crypto.randomUUID().toUpperCase();
     const cancelled = await post("", {
       email: "cancel@example.test", display_name: "Cancel",
       cancellation_token_hash: await sha256Base64Url(proof)
