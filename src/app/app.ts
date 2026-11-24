@@ -1,7 +1,7 @@
 import { Hono, type Context } from "hono";
 import { getCookie } from "hono/cookie";
 import { cors } from "hono/cors";
-import { ZodError } from "zod";
+import { z, ZodError } from "zod";
 import { createLocalJWKSet, jwtVerify } from "jose";
 import type {
   AuthenticationResponseJSON,
@@ -4444,12 +4444,13 @@ export const createApp = (options: AppOptions) => {
     const tenantId = context.req.param("tenantId");
     const payload = await context.req.json<{ cancellation_token?: unknown }>().catch(() => null);
     const proof = payload?.cancellation_token;
-    if (typeof proof !== "string" || !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(proof)) {
+    const validatedProof = z.guid().safeParse(proof);
+    if (!validatedProof.success) {
       return context.json({ error: "invalid_request" }, 400);
     }
     if ((await tenantRepository.findById(tenantId)) === null) return context.json({ error: "tenant_not_found" }, 404);
 
-    const result = await userRepository.cancelProvisionedUser(tenantId, await sha256Base64Url(proof));
+    const result = await userRepository.cancelProvisionedUser(tenantId, await sha256Base64Url(validatedProof.data));
     if (result === "not_provisioned") return context.json({ error: "invalid_state" }, 409);
     if (typeof result === "object") {
       const actor = auditActorFromAuthorization(scopeGate.auth);

@@ -190,7 +190,7 @@ describe("admin service principals", () => {
     expect(JSON.stringify(provisioned)).not.toContain(provisionBody.activation_url);
   });
 
-  it("cancels only a pending user bound to the original provision proof", async () => {
+  it.each(["lowercase", "uppercase"])("cancels only a pending user bound to the original %s provision proof", async (format) => {
     const { app, userRepository, auditRepository } = createFixture();
     const session = await loginAsAdmin(app);
     const principal = await mintPrincipal(app, session);
@@ -201,7 +201,8 @@ describe("admin service principals", () => {
       headers: { authorization: `Bearer ${bearer}`, "content-type": "application/json" },
       body: JSON.stringify(body)
     });
-    const proof = crypto.randomUUID().toUpperCase();
+    const uuid = crypto.randomUUID();
+    const proof = format === "uppercase" ? uuid.toUpperCase() : uuid;
     const cancelled = await post("", {
       email: "cancel@example.test", display_name: "Cancel",
       cancellation_token_hash: await sha256Base64Url(proof)
