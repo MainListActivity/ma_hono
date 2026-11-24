@@ -4,6 +4,11 @@ import { describe, expect, it, vi } from "vitest";
 import { getPlatformProxy, unstable_splitSqlQuery } from "wrangler";
 
 import { D1UserRepository } from "../../src/adapters/db/drizzle/runtime";
+import { MemoryAdminRepository } from "../../src/adapters/db/memory/memory-admin-repository";
+import { MemoryMfaPasskeyChallengeRepository } from "../../src/adapters/db/memory/memory-mfa-passkey-challenge-repository";
+import { MemoryTenantRepository } from "../../src/adapters/db/memory/memory-tenant-repository";
+import { MemoryTotpRepository } from "../../src/adapters/db/memory/memory-totp-repository";
+import { createApp } from "../../src/app/app";
 import { provisionUser } from "../../src/domain/users/provision-user";
 import { sha256Base64Url } from "../../src/lib/hash";
 
@@ -113,9 +118,37 @@ it("persists early cancellation, cascades pending invitations, and preserves act
     });
     const makeProof = () => sha256Base64Url(crypto.randomUUID());
 
-    const earlyProof = await makeProof();
-    expect(await repo.cancelProvisionedUser(tenantId, earlyProof)).toBe("reserved");
-    await expect(provision("late@example.test", earlyProof)).rejects.toThrow();
+    const earlyProof = crypto.randomUUID();
+    const bearer = crypto.randomUUID();
+    const app = createApp({
+      adminBootstrapPasswordHash: "", adminWhitelist: [], managementApiToken: "",
+      authDomain: "example.test", oidcHost: "idp.example.test",
+      adminRepository: new MemoryAdminRepository({ servicePrincipals: [{
+        id: "provisioner", label: "Fixture", tokenHash: await sha256Base64Url(bearer),
+        scopes: ["user.provision"], status: "active",
+        createdAt: new Date().toISOString(), revokedAt: null, createdBy: "fixture"
+      }] }),
+      tenantRepository: new MemoryTenantRepository([{
+        id: tenantId, slug: "acme", displayName: "Acme", status: "active", issuers: []
+      }]),
+      totpRepository: new MemoryTotpRepository(),
+      totpEncryptionKey: new Uint8Array(32),
+      mfaPasskeyChallengeRepository: new MemoryMfaPasskeyChallengeRepository(),
+      userRepository: repo
+    });
+    const post = (path: string, body: object) => app.request(`https://idp.example.test/admin/tenants/${tenantId}/users${path}`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${bearer}`, "content-type": "application/json" },
+      body: JSON.stringify(body)
+    });
+    expect((await post("/cancel-provision", { cancellation_token: earlyProof })).status).toBe(204);
+    const rejected = await post("", {
+      email: "late@example.test",
+      display_name: "Fixture",
+      cancellation_token_hash: await sha256Base64Url(earlyProof)
+    });
+    expect(rejected.status).toBe(409);
+    expect(await rejected.json()).toEqual({ error: "conflict" });
     expect(await db.prepare("SELECT COUNT(*) AS n FROM users").first("n")).toBe(0);
 
     const pendingProof = await makeProof();
