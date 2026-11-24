@@ -40,6 +40,8 @@ Provisioning a company tenant (see `docs/company-tenant.md`) also creates tenant
 
 For a multi-step provision, generate a fresh random UUID and persist it before the request. Include its unpadded base64url SHA-256 as `cancellation_token_hash` when provisioning a human. A compatible IdP returns `cancellable: true`. To roll back, send the original UUID as `cancellation_token` to `POST /admin/tenants/:tenantId/users/cancel-provision`. The operation only deletes an unactivated human backed by that tenant's original proof (204 on success or absence, 409 if the user is no longer pending). Activation tokens and reissued links are not cancellation proofs.
 
+Cancellation also reserves the proof if the request has not committed yet. A delayed provision using that proof is rejected; never reuse a proof for a new attempt.
+
 These routes are human-only. A service principal gets **403** on them whatever its scopes:
 
 - `GET /admin/service-principals`, `POST /admin/service-principals`, `POST /admin/service-principals/:principalId/revoke` (mint, list, revoke)

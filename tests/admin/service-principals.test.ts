@@ -220,6 +220,35 @@ describe("admin service principals", () => {
     expect(JSON.stringify(auditRepository.listEvents())).not.toContain(proof);
   });
 
+  it("rejects a provision after its proof was cancelled and never cancels an active user", async () => {
+    const { app, userRepository } = createFixture();
+    const principal = await mintPrincipal(app, await loginAsAdmin(app));
+    const post = (path: string, body: object) => app.request(`https://idp.example.test${path}`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${principal.token}`, "content-type": "application/json" },
+      body: JSON.stringify(body)
+    });
+    const usersPath = "/admin/tenants/tenant_ck/users";
+    const cancel = (proof: string) => post(`${usersPath}/cancel-provision`, { cancellation_token: proof });
+    const provision = async (email: string, proof: string) => post(usersPath, {
+      email, display_name: "Fixture", cancellation_token_hash: await sha256Base64Url(proof)
+    });
+    const earlyProof = crypto.randomUUID();
+    expect((await cancel(earlyProof)).status).toBe(204);
+    expect((await provision("delayed@example.test", earlyProof)).status).toBe(409);
+    expect(userRepository.listUsers()).toHaveLength(0);
+
+    const activeProof = crypto.randomUUID();
+    const created = await provision("active@example.test", activeProof);
+    expect(created.status).toBe(201);
+    const { invitation_token } = await created.json() as { invitation_token: string };
+    expect((await post("/activate-account", {
+      invitation_token, password: "FixturePasswordOnly!42"
+    })).status).toBe(200);
+    expect((await cancel(activeProof)).status).toBe(409);
+    expect(userRepository.listUsers()).toMatchObject([{ email: "active@example.test", status: "active" }]);
+  });
+
   it("rejects a revoked service token with 403 and does not create a user", async () => {
     const { app, userRepository } = createFixture();
     const sessionToken = await loginAsAdmin(app);

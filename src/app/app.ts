@@ -1073,17 +1073,13 @@ export const createApp = (options: AppOptions) => {
   };
 
   const isProvisionConflictError = (error: unknown) => {
-    if (!(error instanceof Error)) {
-      return false;
+    const seen = new Set<Error>();
+    while (error instanceof Error && !seen.has(error)) {
+      if (/already exists|duplicate|unique constraint failed/i.test(error.message)) return true;
+      seen.add(error);
+      error = error.cause;
     }
-
-    const message = error.message.toLowerCase();
-
-    return (
-      message.includes("already exists") ||
-      message.includes("duplicate") ||
-      message.includes("unique constraint failed")
-    );
+    return false;
   };
 
   const handleAuthorize = async (context: Context) => {

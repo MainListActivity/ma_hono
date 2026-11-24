@@ -15,6 +15,7 @@ import type {
 } from "../../../domain/users/types";
 
 export class MemoryUserRepository implements UserRepository {
+  private readonly provisionProofs = new Set<string>();
   private readonly invitations: UserInvitation[];
   private readonly passwordCredentials: PasswordCredential[];
   private readonly policies: TenantAuthMethodPolicy[];
@@ -163,12 +164,18 @@ export class MemoryUserRepository implements UserRepository {
       throw new Error("simulated provision commit failure");
     }
 
+    if (cancellation) {
+      const key = JSON.stringify([user.tenantId, cancellation.tokenHash]);
+      if (this.provisionProofs.has(key)) throw new Error("provision proof already exists");
+      this.provisionProofs.add(key);
+    }
     this.users.push(user);
     this.invitations.push(invitation);
     if (cancellation) this.invitations.push(cancellation);
   }
 
   async cancelProvisionedUser(tenantId: string, tokenHash: string) {
+    this.provisionProofs.add(JSON.stringify([tenantId, tokenHash]));
     const proof = this.invitations.find((invitation) =>
       invitation.tenantId === tenantId && invitation.tokenHash === tokenHash && invitation.purpose === "provision_cancellation"
     );

@@ -94,6 +94,7 @@ import {
   tenantIssuers,
   tenants,
   userInvitations,
+  userProvisionProofs,
   remoteGrants,
   userPasswordCredentials,
   users,
@@ -1360,21 +1361,24 @@ export class D1UserRepository implements UserRepository {
     invitation,
     user
   }: CreateProvisionedUserWithInvitationInput): Promise<void> {
-    await this.db.batch([
-      this.db.insert(users).values({
-        id: user.id,
-        tenantId: user.tenantId,
-        email: user.email,
-        emailVerified: user.emailVerified,
-        username: user.username,
-        displayName: user.displayName,
-        status: user.status,
-        kind: user.kind ?? "human",
-        createdAt: user.createdAt,
-        updatedAt: user.updatedAt
-      }),
-      this.db.insert(userInvitations).values(cancellation ? [invitation, cancellation] : [invitation])
-    ]);
+    const insertUser = this.db.insert(users).values({
+      id: user.id,
+      tenantId: user.tenantId,
+      email: user.email,
+      emailVerified: user.emailVerified,
+      username: user.username,
+      displayName: user.displayName,
+      status: user.status,
+      kind: user.kind ?? "human",
+      createdAt: user.createdAt,
+      updatedAt: user.updatedAt
+    });
+    const insertInvitations = this.db.insert(userInvitations).values(cancellation ? [invitation, cancellation] : [invitation]);
+    // The proof reserves a single attempt whether provision or cancel reaches D1 first.
+    await this.db.batch(cancellation
+      ? [this.db.insert(userProvisionProofs).values({ tenantId: user.tenantId, tokenHash: cancellation.tokenHash }),
+          insertUser, insertInvitations]
+      : [insertUser, insertInvitations]);
   }
 
   async cancelProvisionedUser(tenantId: string, tokenHash: string) {
@@ -1383,15 +1387,18 @@ export class D1UserRepository implements UserRepository {
       eq(userInvitations.tokenHash, tokenHash),
       eq(userInvitations.purpose, "provision_cancellation")
     ));
-    const [deleted] = await this.db.delete(users).where(and(
-      eq(users.tenantId, tenantId),
-      eq(users.id, proof),
-      eq(users.kind, "human"),
-      eq(users.status, "provisioned"),
-      eq(users.emailVerified, false)
-    )).returning({ id: users.id });
+    const [, [deleted], [remaining]] = await this.db.batch([
+      this.db.insert(userProvisionProofs).values({ tenantId, tokenHash }).onConflictDoNothing(),
+      this.db.delete(users).where(and(
+        eq(users.tenantId, tenantId),
+        eq(users.id, proof),
+        eq(users.kind, "human"),
+        eq(users.status, "provisioned"),
+        eq(users.emailVerified, false)
+      )).returning({ id: users.id }),
+      proof.limit(1)
+    ]);
     if (deleted) return { userId: deleted.id };
-    const [remaining] = await proof;
     return remaining ? "not_provisioned" as const : "absent" as const;
   }
 
