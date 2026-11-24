@@ -3,6 +3,7 @@ import {
   foreignKey,
   index,
   integer,
+  primaryKey,
   sqliteTable,
   text,
   uniqueIndex
@@ -352,6 +353,15 @@ export const clientAuthMethodPolicies = sqliteTable(
   (table) => ({
     tenantIdIdx: index("client_auth_method_policies_tenant_id_idx").on(table.tenantId)
   })
+);
+
+export const userProvisionProofs = sqliteTable(
+  "user_provision_proofs",
+  {
+    tenantId: text("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+    tokenHash: text("token_hash").notNull()
+  },
+  (table) => [primaryKey({ columns: [table.tenantId, table.tokenHash] })]
 );
 
 export const userInvitations = sqliteTable(

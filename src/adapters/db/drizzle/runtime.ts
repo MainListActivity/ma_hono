@@ -94,6 +94,7 @@ import {
   tenantIssuers,
   tenants,
   userInvitations,
+  userProvisionProofs,
   remoteGrants,
   userPasswordCredentials,
   users,
@@ -1197,7 +1198,7 @@ export class D1UserRepository implements UserRepository {
     const [invitationRow] = await this.db
       .select()
       .from(userInvitations)
-      .where(eq(userInvitations.tokenHash, tokenHash))
+      .where(and(eq(userInvitations.tokenHash, tokenHash), eq(userInvitations.purpose, "account_activation")))
       .limit(1);
 
     if (invitationRow === undefined) {
@@ -1356,33 +1357,50 @@ export class D1UserRepository implements UserRepository {
   }
 
   async createProvisionedUserWithInvitation({
+    cancellation,
     invitation,
     user
   }: CreateProvisionedUserWithInvitationInput): Promise<void> {
-    await this.db.batch([
-      this.db.insert(users).values({
-        id: user.id,
-        tenantId: user.tenantId,
-        email: user.email,
-        emailVerified: user.emailVerified,
-        username: user.username,
-        displayName: user.displayName,
-        status: user.status,
-        kind: user.kind ?? "human",
-        createdAt: user.createdAt,
-        updatedAt: user.updatedAt
-      }),
-      this.db.insert(userInvitations).values({
-        id: invitation.id,
-        tenantId: invitation.tenantId,
-        userId: invitation.userId,
-        tokenHash: invitation.tokenHash,
-        purpose: invitation.purpose,
-        expiresAt: invitation.expiresAt,
-        consumedAt: invitation.consumedAt,
-        createdAt: invitation.createdAt
-      })
+    const insertUser = this.db.insert(users).values({
+      id: user.id,
+      tenantId: user.tenantId,
+      email: user.email,
+      emailVerified: user.emailVerified,
+      username: user.username,
+      displayName: user.displayName,
+      status: user.status,
+      kind: user.kind ?? "human",
+      createdAt: user.createdAt,
+      updatedAt: user.updatedAt
+    });
+    const insertInvitations = this.db.insert(userInvitations).values(cancellation ? [invitation, cancellation] : [invitation]);
+    // The proof reserves a single attempt whether provision or cancel reaches D1 first.
+    await this.db.batch(cancellation
+      ? [this.db.insert(userProvisionProofs).values({ tenantId: user.tenantId, tokenHash: cancellation.tokenHash }),
+          insertUser, insertInvitations]
+      : [insertUser, insertInvitations]);
+  }
+
+  async cancelProvisionedUser(tenantId: string, tokenHash: string) {
+    const proof = this.db.select({ userId: userInvitations.userId }).from(userInvitations).where(and(
+      eq(userInvitations.tenantId, tenantId),
+      eq(userInvitations.tokenHash, tokenHash),
+      eq(userInvitations.purpose, "provision_cancellation")
+    ));
+    const [[reserved], [deleted], [remaining]] = await this.db.batch([
+      this.db.insert(userProvisionProofs).values({ tenantId, tokenHash }).onConflictDoNothing()
+        .returning({ tenantId: userProvisionProofs.tenantId }),
+      this.db.delete(users).where(and(
+        eq(users.tenantId, tenantId),
+        eq(users.id, proof),
+        eq(users.kind, "human"),
+        eq(users.status, "provisioned"),
+        eq(users.emailVerified, false)
+      )).returning({ id: users.id }),
+      proof.limit(1)
     ]);
+    if (deleted) return { userId: deleted.id };
+    return remaining ? "not_provisioned" as const : reserved ? "reserved" as const : "absent" as const;
   }
 
   async findAuthMethodPolicyByTenantId(tenantId: string): Promise<TenantAuthMethodPolicy | null> {
@@ -1490,6 +1508,7 @@ export class D1UserRepository implements UserRepository {
           and(
             eq(userInvitations.tenantId, tenantId),
             eq(userInvitations.userId, userId),
+            eq(userInvitations.purpose, "account_activation"),
             isNull(userInvitations.consumedAt)
           )
         ),

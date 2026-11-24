@@ -1,7 +1,7 @@
 import { Hono, type Context } from "hono";
 import { getCookie } from "hono/cookie";
 import { cors } from "hono/cors";
-import { ZodError } from "zod";
+import { z, ZodError } from "zod";
 import { createLocalJWKSet, jwtVerify } from "jose";
 import type {
   AuthenticationResponseJSON,
@@ -408,6 +408,10 @@ class EmptyMfaPasskeyChallengeRepository implements MfaPasskeyChallengeRepositor
 }
 
 class EmptyUserRepository implements UserRepository {
+  async cancelProvisionedUser(): Promise<never> {
+    throw new Error("User repository unavailable");
+  }
+
   async activateUserByInvitationToken() {
     return {
       kind: "not_found" as const
@@ -1069,17 +1073,17 @@ export const createApp = (options: AppOptions) => {
   };
 
   const isProvisionConflictError = (error: unknown) => {
-    if (!(error instanceof Error)) {
-      return false;
+    return error instanceof Error && /already exists|duplicate|unique constraint failed/i.test(error.message);
+  };
+
+  const isAdminProvisionConflictError = (error: unknown) => {
+    const seen = new Set<Error>();
+    while (error instanceof Error && !seen.has(error)) {
+      if (isProvisionConflictError(error)) return true;
+      seen.add(error);
+      error = error.cause;
     }
-
-    const message = error.message.toLowerCase();
-
-    return (
-      message.includes("already exists") ||
-      message.includes("duplicate") ||
-      message.includes("unique constraint failed")
-    );
+    return false;
   };
 
   const handleAuthorize = async (context: Context) => {
@@ -4336,16 +4340,20 @@ export const createApp = (options: AppOptions) => {
       email?: string;
       kind?: unknown;
       username?: string | null;
+      cancellation_token_hash?: unknown;
     }>();
     const email = payload.email?.trim() ?? "";
     const displayName = payload.display_name?.trim() ?? "";
     const username = payload.username?.trim();
     const requestedKind = payload.kind ?? "human";
+    const cancellationTokenHash = payload.cancellation_token_hash;
 
     if (
       email.length === 0 ||
       displayName.length === 0 ||
-      (requestedKind !== "human" && requestedKind !== "agent")
+      (requestedKind !== "human" && requestedKind !== "agent") ||
+      (cancellationTokenHash !== undefined &&
+        (requestedKind !== "human" || typeof cancellationTokenHash !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(cancellationTokenHash)))
     ) {
       return context.json({ error: "invalid_request" }, 400);
     }
@@ -4369,6 +4377,7 @@ export const createApp = (options: AppOptions) => {
         provisioned = { user, invitationToken: null };
       } else {
         const result = await provisionUser({
+          cancellationTokenHash: typeof cancellationTokenHash === "string" ? cancellationTokenHash : undefined,
           userRepository,
           tenantId,
           email,
@@ -4392,7 +4401,8 @@ export const createApp = (options: AppOptions) => {
         }
       });
 
-      return context.json({ error: isProvisionConflictError(error) ? "conflict" : "internal_error" }, isProvisionConflictError(error) ? 409 : 500);
+      const conflict = isAdminProvisionConflictError(error);
+      return context.json({ error: conflict ? "conflict" : "internal_error" }, conflict ? 409 : 500);
     }
 
     let activationUrl: string | null = null;
@@ -4421,10 +4431,37 @@ export const createApp = (options: AppOptions) => {
       {
         user: userAdminWire(provisioned.user),
         invitation_token: provisioned.invitationToken,
-        activation_url: activationUrl
+        activation_url: activationUrl,
+        ...(cancellationTokenHash ? { cancellable: true } : {})
       },
       201
     );
+  });
+
+  app.post("/admin/tenants/:tenantId/users/cancel-provision", async (context) => {
+    const scopeGate = await requireAdminScope(context.req.header("authorization"), ["user.provision", "user.write"]);
+    if (!scopeGate.ok) return context.json({ error: scopeGate.error }, scopeGate.status);
+
+    const tenantId = context.req.param("tenantId");
+    const payload = await context.req.json<{ cancellation_token?: unknown }>().catch(() => null);
+    const proof = payload?.cancellation_token;
+    const validatedProof = z.guid().safeParse(proof);
+    if (!validatedProof.success) {
+      return context.json({ error: "invalid_request" }, 400);
+    }
+    if ((await tenantRepository.findById(tenantId)) === null) return context.json({ error: "tenant_not_found" }, 404);
+
+    const result = await userRepository.cancelProvisionedUser(tenantId, await sha256Base64Url(validatedProof.data));
+    if (result === "not_provisioned") return context.json({ error: "invalid_state" }, 409);
+    if (typeof result === "object" || result === "reserved") {
+      const actor = auditActorFromAuthorization(scopeGate.auth);
+      await recordAuditEventBestEffort({
+        actorType: actor.actorType, actorId: actor.actorId, tenantId,
+        eventType: result === "reserved" ? "user.provision_cancellation_reserved" : "user.provision_cancelled",
+        targetType: "user", targetId: result === "reserved" ? null : result.userId, payload: {}
+      });
+    }
+    return context.body(null, 204);
   });
 
   app.post("/admin/tenants/:tenantId/users/:userId/reissue-activation", async (context) => {

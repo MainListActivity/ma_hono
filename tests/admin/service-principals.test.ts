@@ -190,6 +190,68 @@ describe("admin service principals", () => {
     expect(JSON.stringify(provisioned)).not.toContain(provisionBody.activation_url);
   });
 
+  it.each(["lowercase", "uppercase"])("cancels only a pending user bound to the original %s provision proof", async (format) => {
+    const { app, userRepository, auditRepository } = createFixture();
+    const session = await loginAsAdmin(app);
+    const principal = await mintPrincipal(app, session);
+    const readOnly = await mintPrincipal(app, session, ["user.read"]);
+    const endpoint = "https://idp.example.test/admin/tenants/tenant_ck/users";
+    const post = (path: string, body: object, bearer = principal.token) => app.request(`${endpoint}${path}`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${bearer}`, "content-type": "application/json" },
+      body: JSON.stringify(body)
+    });
+    const uuid = crypto.randomUUID();
+    const proof = format === "uppercase" ? uuid.toUpperCase() : uuid;
+    const cancelled = await post("", {
+      email: "cancel@example.test", display_name: "Cancel",
+      cancellation_token_hash: await sha256Base64Url(proof)
+    });
+    expect(cancelled.status).toBe(201);
+    expect(await cancelled.json()).toMatchObject({ cancellable: true });
+    expect((await post("", { email: "keep@example.test", display_name: "Keep" })).status).toBe(201);
+    expect((await post("/cancel-provision", { cancellation_token: proof }, readOnly.token)).status).toBe(403);
+    expect((await post("/cancel-provision", { cancellation_token: crypto.randomUUID() })).status).toBe(204);
+    expect(userRepository.listUsers()).toHaveLength(2);
+    expect((await post("/cancel-provision", { cancellation_token: proof })).status).toBe(204);
+    expect((await post("/cancel-provision", { cancellation_token: proof })).status).toBe(204);
+    expect(userRepository.listUsers().map((user) => user.email)).toEqual(["keep@example.test"]);
+    expect(auditRepository.listEvents().filter((event) => event.eventType === "user.provision_cancelled")).toHaveLength(1);
+    expect(JSON.stringify(auditRepository.listEvents())).not.toContain(proof);
+  });
+
+  it("rejects a provision after its proof was cancelled and never cancels an active user", async () => {
+    const { app, userRepository, auditRepository } = createFixture();
+    const principal = await mintPrincipal(app, await loginAsAdmin(app));
+    const post = (path: string, body: object) => app.request(`https://idp.example.test${path}`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${principal.token}`, "content-type": "application/json" },
+      body: JSON.stringify(body)
+    });
+    const usersPath = "/admin/tenants/tenant_ck/users";
+    const cancel = (proof: string) => post(`${usersPath}/cancel-provision`, { cancellation_token: proof });
+    const provision = async (email: string, proof: string) => post(usersPath, {
+      email, display_name: "Fixture", cancellation_token_hash: await sha256Base64Url(proof)
+    });
+    const earlyProof = crypto.randomUUID();
+    expect((await cancel(earlyProof)).status).toBe(204);
+    expect((await provision("delayed@example.test", earlyProof)).status).toBe(409);
+    expect(userRepository.listUsers()).toHaveLength(0);
+    const reservations = auditRepository.listEvents().filter((event) => event.eventType === "user.provision_cancellation_reserved");
+    expect(reservations).toMatchObject([{ actorId: principal.id, tenantId: "tenant_ck", payload: {} }]);
+    expect(JSON.stringify(reservations)).not.toContain(earlyProof);
+
+    const activeProof = crypto.randomUUID();
+    const created = await provision("active@example.test", activeProof);
+    expect(created.status).toBe(201);
+    const { invitation_token } = await created.json() as { invitation_token: string };
+    expect((await post("/activate-account", {
+      invitation_token, password: "FixturePasswordOnly!42"
+    })).status).toBe(200);
+    expect((await cancel(activeProof)).status).toBe(409);
+    expect(userRepository.listUsers()).toMatchObject([{ email: "active@example.test", status: "active" }]);
+  });
+
   it("rejects a revoked service token with 403 and does not create a user", async () => {
     const { app, userRepository } = createFixture();
     const sessionToken = await loginAsAdmin(app);

@@ -30,13 +30,17 @@ Provisioning a company tenant (see `docs/company-tenant.md`) also creates tenant
 | `tenant.read` | `GET /admin/tenants` |
 | `tenant.write` | `POST /admin/tenants`, `PATCH /admin/tenants/:tenantId` |
 | `user.read` | `GET /admin/tenants/:tenantId/users` |
-| `user.provision` | `POST /admin/tenants/:tenantId/users`, `POST /admin/tenants/:tenantId/users/:userId/reissue-activation` |
-| `user.write` | `POST /admin/tenants/:tenantId/users`, `POST /admin/tenants/:tenantId/users/:userId/reissue-activation`, `PATCH /admin/tenants/:tenantId/users/:userId` |
+| `user.provision` | Provision and reissue activation; cancel a pending provision with its original proof |
+| `user.write` | All provision operations plus `PATCH /admin/tenants/:tenantId/users/:userId` |
 | `client.read` | `GET /admin/tenants/:tenantId/clients`, `GET /admin/tenants/:tenantId/clients/:clientId` |
 | `client.write` | `POST /admin/tenants/:tenantId/clients`, `PATCH /admin/tenants/:tenantId/clients/:clientId`, `DELETE /admin/tenants/:tenantId/clients/:clientId`, `POST /admin/tenants/:tenantId/clients/:clientId/secret/reset`, `PATCH /admin/tenants/:tenantId/clients/:clientId/auth-method-policy` |
 | `key.rotate` | `POST /admin/tenants/:tenantId/keys/rotate` |
 
 `user.provision` is kept for compatibility: it opens users and reissues activation, as `user.write` does. A principal without the route's scope gets **403**. Human admin sessions are not limited by scope.
+
+For a multi-step provision, generate a fresh random UUID and persist it before the request. Include its unpadded base64url SHA-256 as `cancellation_token_hash` when provisioning a human. A compatible IdP returns `cancellable: true`. To roll back, send the original UUID as `cancellation_token` to `POST /admin/tenants/:tenantId/users/cancel-provision`. The operation only deletes an unactivated human backed by that tenant's original proof (204 on success or absence, 409 if the user is no longer pending). Activation tokens and reissued links are not cancellation proofs.
+
+Cancellation also reserves the proof if the request has not committed yet. A delayed provision using that proof is rejected; never reuse a proof for a new attempt.
 
 These routes are human-only. A service principal gets **403** on them whatever its scopes:
 

@@ -19,6 +19,7 @@ const normalizeUsername = (username: string | null | undefined) => {
 };
 
 export const provisionUser = async ({
+  cancellationTokenHash,
   displayName,
   email,
   invitationTtlMs = defaultInvitationTtlMs,
@@ -27,6 +28,7 @@ export const provisionUser = async ({
   userRepository,
   username
 }: {
+  cancellationTokenHash?: string;
   displayName: string;
   email: string;
   invitationTtlMs?: number;
@@ -66,6 +68,12 @@ export const provisionUser = async ({
 
   await userRepository.createProvisionedUserWithInvitation({
     invitation,
+    cancellation: cancellationTokenHash ? {
+      ...invitation,
+      id: crypto.randomUUID(),
+      tokenHash: cancellationTokenHash,
+      purpose: "provision_cancellation"
+    } : undefined,
     user
   });
 
